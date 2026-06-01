@@ -681,11 +681,7 @@ class PressureMapPanelMixin:
         ]
         package_ids = list(dict.fromkeys(package_ids))
 
-        show_controls = bool(
-            package_ids
-            and hasattr(self, "is_array_sensor_selection_mode")
-            and self.is_array_sensor_selection_mode()
-        )
+        show_controls = bool(package_ids)
         self.pressure_package_gain_group.setVisible(show_controls)
 
         # If the set of packages hasn't changed, update spin values in-place so

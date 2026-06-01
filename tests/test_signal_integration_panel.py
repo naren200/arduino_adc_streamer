@@ -617,6 +617,21 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         finally:
             tab.close()
 
+    def test_manual_single_package_shows_pressure_gain_controls(self):
+        harness = SignalIntegrationPanelHarness()
+
+        tab = harness.create_signal_integration_tab()
+        try:
+            harness._refresh_pressure_package_gain_controls()
+
+            self.assertFalse(harness.pressure_package_gain_group.isHidden())
+            self.assertEqual(
+                set(harness.pressure_package_gain_spins["PACKAGE1"]),
+                set(SHEAR_SENSOR_POSITIONS),
+            )
+        finally:
+            tab.close()
+
     def test_switching_to_settings_stops_pending_signal_integration_timer(self):
         harness = SignalIntegrationPanelHarness()
 
