@@ -9,6 +9,7 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 - `Teensy/`: Teensy ADC and 555-resistance streamer variants
 - `PCB1.0_SPI/`: Teensy+MG24 SPI array firmware for PCB v1.0
 - `PCB1.5_SPI/`: Teensy+MG24 SPI array firmware for PCB v1.5 (DRDY-enabled path)
+- `PCB1.7_SPI/`: Teensy+MG24 SPI array firmware for PCB v1.7 (DRDY + combined PZT/RS mode)
 
 ## Current Sketch Map
 
@@ -20,6 +21,7 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 | Teensy | 555 resistance / displacement streamer | `Teensy/Teensy555_streamer/Teensy555_streamer.ino` | 555-based resistance timing measurements used with the GUI `555` mode | `# Teensy555` |
 | Teensy + MG24 SPI (PCB1.0) | Mixed PZT/PZR array pair | `PCB1.0_SPI/Teensy_SPI_Master_Array_PZT_PZR1.ino` + `PCB1.0_SPI/MG24_Dual_MUX_SPI_Slave.ino` | Legacy board revision v1.0 | `# Array_PZT_PZR1` |
 | Teensy + MG24 SPI (PCB1.5) | Mixed PZT/PZR array pair with DRDY | `PCB1.5_SPI/Teensy_SPI_Master_Array_PZT_PZR1.5_DRDY.ino` + `PCB1.5_SPI/MG24_Dual_MUX_SPI_Slave1.5_DRDY.ino` | Current board revision v1.5, DRDY-synchronized streaming | `# Array_PZT_PZR1` |
+| Teensy + MG24 SPI (PCB1.7) | Mixed PZT/PZR/RS array pair with DRDY and combined mode | `PCB1.7_SPI/Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY.ino` + `PCB1.7_SPI/MG24_Dual_MUX_SPI_Slave1.7_DRDY.ino` | PCB v1.7 with `PZT_RS` combined stream (`PZT_MUX1`,`PZT_MUX2`,`RS_hold`) | `# Array_PZT_PZR1.7` |
 
 ## Which Sketch Should You Flash
 
@@ -27,19 +29,22 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 - Use `MG24/ADC_Streamer_binary_scan_with_ADG1206_mux/` when the hardware includes the external ADG1206 MUX path.
 - Use `Teensy/ADC_Streamer_binary_scan2/` for normal Teensy ADC capture.
 - Use `Teensy/Teensy555_streamer/` when the GUI is being used in 555 / displacement mode.
-- Use `PCB1.5_SPI/` for the current Teensy+MG24 dual-board array hardware (recommended).
+- Use `PCB1.7_SPI/` for PCB v1.7 hardware, including the combined `PZT_RS` mode (recommended for v1.7).
+- Use `PCB1.5_SPI/` for PCB v1.5 dual-board array hardware.
 - Use `PCB1.0_SPI/` only for legacy PCB v1.0 hardware.
 
 ## Teensy+MG24 Pairing Notes
 
-For `PCB1.0_SPI/` and `PCB1.5_SPI/`, flash both boards with the matching pair:
+For `PCB1.0_SPI/`, `PCB1.5_SPI/`, and `PCB1.7_SPI/`, flash both boards with the matching pair:
 
 - Teensy: `Teensy_SPI_Master_Array_PZT_PZR1...`
 - MG24: `MG24_Dual_MUX_SPI_Slave...`
 
-Do not mix a Teensy sketch from one PCB folder with an MG24 sketch from the other folder.
+Do not mix a Teensy sketch from one PCB folder with an MG24 sketch from a different folder.
 
-On PCB1.5, DRDY is used as the primary stream synchronization signal from MG24 to Teensy. The Teensy firmware still includes a guarded fallback polling path for safety if DRDY stalls.
+On PCB1.5 and PCB1.7, DRDY is used as the primary stream synchronization signal from MG24 to Teensy. The Teensy firmware still includes a guarded fallback polling path for safety if DRDY stalls.
+
+On PCB1.7, the Teensy sketch also supports `mode PZT_RS*`, which augments each PZT pair with a synchronized held RS value.
 
 ## Shared Serial Protocol
 
@@ -69,6 +74,12 @@ channels 14,15,16,17,18*
 repeat 20*
 buffer 10*
 run*
+```
+
+PCB1.7 also supports mode switching to combined stream mode:
+
+```text
+mode PZT_RS*
 ```
 
 ### Acknowledgments
@@ -204,6 +215,17 @@ Example frame layout:
 [0xAA][0x55][countL][countH][samples...][avg_dt_us][block_start_us][block_end_us]
 ```
 
+### PCB1.7 `PZT_RS` Combined Payload
+
+When `mode PZT_RS*` is active on `# Array_PZT_PZR1.7`, each logical slot emits three `uint16` values:
+
+```text
+[PZT_MUX1][PZT_MUX2][RS_hold]
+```
+
+- `RS_hold` is the latest available Rosette/RS value for that channel and may repeat across adjacent PZT slots until a newer RS measurement is ready.
+- Header/trailer framing is unchanged; only payload ordering/count differ from pure PZT mode.
+
 ## Sample Ordering
 
 Within each sweep:
@@ -228,6 +250,8 @@ ch14 s1, ch14 s2, ch14 s3, ch14 s4, ch15 s1, ch15 s2
 
 - Configure the device using text commands before switching the host parser into binary-frame mode.
 - Use `mcu*` to identify the connected firmware variant.
+- For `# Array_PZT_PZR1.7`, use `mode PZT|PZR|PZT_RS*` to select stream type before `run*`.
+- In `PZT_RS` mode, decode payload as triplets (`PZT_MUX1`,`PZT_MUX2`,`RS_hold`) instead of PZT-only pairs.
 - After `stop*`, expect text responses again on the same port.
 - The desktop app handles mixed text/binary transitions for the standard sketches listed above.
 
