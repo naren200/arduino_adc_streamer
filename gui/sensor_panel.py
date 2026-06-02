@@ -282,13 +282,19 @@ class SensorPanelMixin:
         # ============================================================
         mux_config_group = QGroupBox("MUX Configuration")
         mux_config_layout = QVBoxLayout()
-        mux_config_layout.addWidget(QLabel("For each sensor, specify MUX and physical channels (0-15):"))
+        mux_config_layout.addWidget(QLabel("For each sensor, specify MUX, PZT/PZR channels, and optional PZT RS_MUX channels (0-15):"))
 
         self.array_mux_table = QTableWidget()
-        self.array_mux_table.setColumnCount(3)
-        self.array_mux_table.setHorizontalHeaderLabels(["Sensor", "MUX (1-2)", "Channels (comma-separated)"])
+        self.array_mux_table.setColumnCount(4)
+        self.array_mux_table.setHorizontalHeaderLabels([
+            "Sensor",
+            "MUX (1-2)",
+            "Channels (comma-separated)",
+            "RS_MUX Channels",
+        ])
         self.array_mux_table.setMinimumHeight(150)
         self.array_mux_table.setColumnWidth(2, 320)
+        self.array_mux_table.setColumnWidth(3, 180)
         self.array_mux_table.itemChanged.connect(self.on_array_mux_table_item_changed)
         mux_config_layout.addWidget(self.array_mux_table)
 
@@ -437,6 +443,10 @@ class SensorPanelMixin:
             channels_item = QTableWidgetItem(channels_str)
             self.array_mux_table.setItem(row_idx, 2, channels_item)
 
+            rs_channels = mux_mapping[sensor_id].get("rs_channels", [])
+            rs_channels_str = ",".join(str(c) for c in rs_channels)
+            self.array_mux_table.setItem(row_idx, 3, QTableWidgetItem(rs_channels_str))
+
         self.array_mux_table.blockSignals(False)
 
     def _sync_mux_table_from_cells(self):
@@ -456,15 +466,17 @@ class SensorPanelMixin:
                     grid_sensors.add(cell_value)
 
         # Collect existing table entries (preserve current values)
-        existing: dict[str, tuple[str, str]] = {}  # sensor_id -> (mux_str, channels_str)
+        existing: dict[str, tuple[str, str, str]] = {}  # sensor_id -> (mux_str, channels_str, rs_channels_str)
         for row_idx in range(self.array_mux_table.rowCount()):
             s_item = self.array_mux_table.item(row_idx, 0)
             m_item = self.array_mux_table.item(row_idx, 1)
             c_item = self.array_mux_table.item(row_idx, 2)
+            rs_item = self.array_mux_table.item(row_idx, 3)
             if s_item:
                 existing[s_item.text()] = (
                     m_item.text() if m_item else "1",
                     c_item.text() if c_item else "",
+                    rs_item.text() if rs_item else "",
                 )
 
         # Rebuild table with sensors in the grid, sorted
@@ -478,9 +490,10 @@ class SensorPanelMixin:
             sensor_item.setFlags(sensor_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.array_mux_table.setItem(row_idx, 0, sensor_item)
 
-            mux_str, channels_str = existing.get(sensor_id, ("1", ""))
+            mux_str, channels_str, rs_channels_str = existing.get(sensor_id, ("1", "", ""))
             self.array_mux_table.setItem(row_idx, 1, QTableWidgetItem(mux_str))
             self.array_mux_table.setItem(row_idx, 2, QTableWidgetItem(channels_str))
+            self.array_mux_table.setItem(row_idx, 3, QTableWidgetItem(rs_channels_str))
 
         self.array_mux_table.blockSignals(False)
 
@@ -529,6 +542,7 @@ class SensorPanelMixin:
             sensor_item = self.array_mux_table.item(row_idx, 0)
             mux_item = self.array_mux_table.item(row_idx, 1)
             channels_item = self.array_mux_table.item(row_idx, 2)
+            rs_channels_item = self.array_mux_table.item(row_idx, 3)
 
             if not all([sensor_item, mux_item, channels_item]):
                 continue
@@ -540,6 +554,7 @@ class SensorPanelMixin:
             try:
                 mux_text = mux_item.text().strip()
                 channels_str = channels_item.text().strip()
+                rs_channels_str = rs_channels_item.text().strip() if rs_channels_item else ""
 
                 if not mux_text:
                     raise ValueError("MUX value is required")
@@ -548,6 +563,7 @@ class SensorPanelMixin:
 
                 mux_num = int(mux_text)
                 channels = [int(c.strip()) for c in channels_str.split(",") if c.strip()]
+                rs_channels = [int(c.strip()) for c in rs_channels_str.split(",") if c.strip()]
 
                 if mux_num not in (1, 2):
                     raise ValueError("MUX must be 1 or 2")
@@ -559,10 +575,19 @@ class SensorPanelMixin:
                     raise ValueError("Channels must be in range 0-15")
                 if len(set(channels)) != len(channels):
                     raise ValueError("Duplicate channels are not allowed")
+                if any(channel < 0 or channel > 15 for channel in rs_channels):
+                    raise ValueError("RS_MUX channels must be in range 0-15")
+                if len(set(rs_channels)) != len(rs_channels):
+                    raise ValueError("Duplicate RS_MUX channels are not allowed")
+                if sensor_id.startswith("PZT") and rs_channels and len(rs_channels) != 2:
+                    raise ValueError("PZT RS_MUX channels must contain exactly two channels")
+                if not sensor_id.startswith("PZT") and rs_channels:
+                    raise ValueError("RS_MUX channels are only valid for PZT sensors")
 
                 mux_mapping[sensor_id] = {
                     "mux": mux_num,
                     "channels": channels,
+                    "rs_channels": rs_channels,
                 }
             except ValueError as e:
                 raise ValueError(f"Invalid entry in MUX table for {sensor_id}: {str(e)}")

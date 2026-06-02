@@ -266,6 +266,7 @@ def normalize_mux_mapping(
         try:
             mux_num = int(mapping_data.get("mux", 0))
             channels_raw = mapping_data.get("channels", [])
+            rs_channels_raw = mapping_data.get("rs_channels", [])
             
             if mux_num < SENSOR_CONFIG_MUX_MIN or mux_num > SENSOR_CONFIG_MUX_MAX:
                 return None
@@ -279,10 +280,23 @@ def normalize_mux_mapping(
                 return None
             if len(set(channels)) != len(channels):  # Check for duplicates
                 return None
+
+            rs_channels = []
+            if isinstance(rs_channels_raw, list):
+                rs_channels = [int(c) for c in rs_channels_raw]
+                if len(rs_channels) > 2:
+                    return None
+                if any(c < SENSOR_CONFIG_CHANNEL_MIN or c > SENSOR_CONFIG_CHANNEL_MAX for c in rs_channels):
+                    return None
+                if len(set(rs_channels)) != len(rs_channels):
+                    return None
+            elif rs_channels_raw not in (None, ""):
+                return None
             
             normalized[sensor_id] = {
                 "mux": mux_num,
-                "channels": sorted(channels)
+                "channels": sorted(channels),
+                "rs_channels": rs_channels,
             }
         except (ValueError, TypeError):
             return None

@@ -76,13 +76,47 @@ class ConfigurationMixin:
         """Return True when MCU supports runtime PZT/PZR mode switching."""
         return resolve_mcu_profile(self.current_mcu).is_array_dual
 
+    def get_supported_array_operation_modes(self) -> tuple[str, ...]:
+        """Return runtime operation modes supported by the current Array MCU."""
+        return resolve_mcu_profile(self.current_mcu).array_operation_modes
+
+    def is_array_pzt_rs_mode(self) -> bool:
+        """Return True when the active Array mode is combined PZT + Rosette."""
+        return resolve_mcu_profile(
+            self.current_mcu,
+            selected_array_mode=self.get_selected_array_operation_mode(),
+        ).is_pzt_rs_mode
+
     def get_selected_array_operation_mode(self) -> str:
         """Return selected operation mode for dual Array_PZT_PZR devices."""
         if self.is_array_pzt_pzr_mode() and hasattr(self, 'array_mode_combo'):
             selected = (self.array_mode_combo.currentText() or "PZT").strip().upper()
-            if selected in ("PZT", "PZR"):
+            if selected in self.get_supported_array_operation_modes():
                 return selected
         return "PZR" if getattr(self, 'device_mode', 'adc') == '555' else "PZT"
+
+    def update_array_mode_options(self):
+        """Keep Array mode combo entries aligned with MCU capabilities."""
+        if not hasattr(self, 'array_mode_combo'):
+            return
+
+        supported_modes = self.get_supported_array_operation_modes()
+        current = (self.array_mode_combo.currentText() or "PZT").strip().upper()
+        if current not in supported_modes:
+            current = "PZT"
+
+        existing = tuple(
+            self.array_mode_combo.itemText(index)
+            for index in range(self.array_mode_combo.count())
+        )
+        if existing == supported_modes and self.array_mode_combo.currentText() == current:
+            return
+
+        self.array_mode_combo.blockSignals(True)
+        self.array_mode_combo.clear()
+        self.array_mode_combo.addItems(list(supported_modes))
+        self.array_mode_combo.setCurrentText(current)
+        self.array_mode_combo.blockSignals(False)
 
     def update_array_acquisition_inputs_visibility(self):
         """Show PZT/PZR selectors only for Array* MCU modes."""
@@ -95,7 +129,7 @@ class ConfigurationMixin:
         if hasattr(self, 'array_mode_combo'):
             self.array_mode_combo.setVisible(is_dual_mode)
 
-        show_pzt = is_array and (not is_dual_mode or selected_mode == "PZT")
+        show_pzt = is_array and (not is_dual_mode or selected_mode in ("PZT", "PZT_RS"))
         show_pzr = is_array and (not is_dual_mode or selected_mode == "PZR")
 
         if hasattr(self, 'pzt_sequence_label'):
@@ -222,8 +256,38 @@ class ConfigurationMixin:
 
         return channels, ",".join(str(c) for c in channels), "array", requested_sensors
 
+    def get_rs_mux_channels_for_arduino_command(self) -> list[int]:
+        """Return RS_MUX channels aligned to PZT_RS PZT channel slots."""
+        if not self.is_array_pzt_rs_mode() or not self.is_array_sensor_selection_mode():
+            return []
+
+        active_config = self.get_active_sensor_configuration() if hasattr(self, 'get_active_sensor_configuration') else {}
+        mux_mapping = active_config.get('mux_mapping', {}) if isinstance(active_config, dict) else {}
+        if not isinstance(mux_mapping, dict):
+            return []
+
+        rs_channels: list[int] = []
+        for sensor_id in list(self.config.get('selected_array_sensors', [])):
+            mapping = mux_mapping.get(sensor_id, {})
+            if not isinstance(mapping, dict) or not str(sensor_id).startswith("PZT"):
+                continue
+
+            sensor_channels = list(mapping.get('channels', []))
+            sensor_rs_channels = [int(value) for value in mapping.get('rs_channels', [])]
+            if len(sensor_rs_channels) != 2:
+                raise ValueError(f"{sensor_id} must define exactly two RS_MUX channels for PZT_RS mode")
+            if any(channel < 0 or channel > 15 for channel in sensor_rs_channels):
+                raise ValueError(f"{sensor_id} RS_MUX channels must be in range 0-15")
+
+            for _channel in sensor_channels:
+                rs_channels.extend(sensor_rs_channels)
+
+        return rs_channels
+
     def get_effective_channel_multiplier(self) -> int:
         """Return how many physical samples each requested channel produces."""
+        if self.is_array_pzt_rs_mode():
+            return 4
         return 2 if self.is_array_pzt1_mode() else 1
 
     def is_array_sensor_selection_mode(self) -> bool:
@@ -330,6 +394,9 @@ class ConfigurationMixin:
         if not channels:
             return []
 
+        if self.is_array_pzt_rs_mode() and self.is_array_sensor_selection_mode():
+            return channels
+
         if self.is_array_sensor_selection_mode():
             return unique_channels_in_order(channels)
 
@@ -413,7 +480,13 @@ class ConfigurationMixin:
                 for local_idx, channel in enumerate(sensor_channels):
                     sample_indices = []
                     if local_idx < len(seq_positions):
-                        if self.is_array_pzt1_mode():
+                        if self.is_array_pzt_rs_mode():
+                            seq_idx = int(seq_positions[local_idx])
+                            mux_index = max(0, min(1, mux_num - 1))
+                            base_idx = seq_idx * repeat_count * 4
+                            for repeat_idx in range(repeat_count):
+                                sample_indices.append(base_idx + (repeat_idx * 4) + mux_index)
+                        elif self.is_array_pzt1_mode():
                             unique_idx = unique_channel_positions.get(channel)
                             if unique_idx is not None:
                                 mux_index = max(0, min(1, mux_num - 1))
@@ -437,6 +510,26 @@ class ConfigurationMixin:
 
             if specs:
                 return specs
+
+        if self.is_array_pzt_rs_mode():
+            for mux_index in range(2):
+                mux_number = mux_index + 1
+                for display_order, channel in enumerate(unique_channels):
+                    sample_indices = []
+                    for seq_idx, seq_channel in enumerate(channels):
+                        if seq_channel != channel:
+                            continue
+                        base_idx = seq_idx * repeat_count * 4
+                        for repeat_idx in range(repeat_count):
+                            sample_indices.append(base_idx + (repeat_idx * 4) + mux_index)
+
+                    specs.append({
+                        'key': ('mux', mux_number, channel),
+                        'label': f"M{mux_number}_Ch{channel}",
+                        'sample_indices': sample_indices,
+                        'color_slot': mux_index * max(1, len(unique_channels)) + display_order,
+                    })
+            return specs
 
         if self.is_array_pzt1_mode():
             for mux_index in range(2):
@@ -473,6 +566,77 @@ class ConfigurationMixin:
                 'label': grouped_manual_labels.get(channel, f"Ch {channel}"),
                 'sample_indices': sample_indices,
                 'color_slot': display_order,
+            })
+
+        return specs
+
+    def get_rosette_display_channel_specs(self, channels=None, repeat_count=None):
+        """Build Rosette/RS display specs from PZT_RS held-value slots."""
+        if not self.is_array_pzt_rs_mode():
+            return []
+        if channels is None:
+            channels = self.config.get('channels', [])
+        if repeat_count is None:
+            repeat_count = self.config.get('repeat', 1)
+        repeat_count = max(1, int(repeat_count))
+
+        unique_channels = self._get_unique_channels_in_order(channels)
+        specs = []
+
+        selection_source = str(self.config.get('channel_selection_source', 'manual')).lower()
+        selected_array_sensors = self.config.get('selected_array_sensors', [])
+        if self.is_array_mcu_mode() and selection_source == 'array' and selected_array_sensors:
+            sensor_groups = self.get_array_selected_sensor_groups()
+            color_slot = 0
+            for group in sensor_groups:
+                sensor_id = str(group.get('sensor_id', ''))
+                if not sensor_id.startswith("PZT"):
+                    continue
+                mapping = {}
+                active_config = self.get_active_sensor_configuration() if hasattr(self, 'get_active_sensor_configuration') else {}
+                mux_mapping = active_config.get('mux_mapping', {}) if isinstance(active_config, dict) else {}
+                if isinstance(mux_mapping, dict):
+                    mapping = mux_mapping.get(sensor_id, {})
+                rs_channels = list(mapping.get('rs_channels', [])) if isinstance(mapping, dict) else []
+                seq_positions = list(group.get('positions', []))
+
+                for rs_idx, rs_channel in enumerate(rs_channels[:2]):
+                    sample_indices = []
+                    for seq_idx in seq_positions:
+                        base_idx = int(seq_idx) * repeat_count * 4
+                        for repeat_idx in range(repeat_count):
+                            sample_indices.append(base_idx + (repeat_idx * 4) + 2 + rs_idx)
+
+                    specs.append({
+                        'key': ('rs', sensor_id, int(rs_idx) + 1, int(rs_channel)),
+                        'label': f"{sensor_id}_RS{int(rs_idx) + 1}",
+                        'sample_indices': sample_indices,
+                        'color_slot': color_slot,
+                        'stream': 'rs',
+                    })
+                    color_slot += 1
+
+            if specs:
+                return specs
+
+        for display_order, channel in enumerate(unique_channels):
+            sample_indices = []
+            for seq_idx, seq_channel in enumerate(list(channels or [])):
+                if seq_channel != channel:
+                    continue
+                base_idx = seq_idx * repeat_count * 4
+                for repeat_idx in range(repeat_count):
+                    sample_indices.extend([
+                        base_idx + (repeat_idx * 4) + 2,
+                        base_idx + (repeat_idx * 4) + 3,
+                    ])
+
+            specs.append({
+                'key': ('rs', channel),
+                'label': f"RS_Ch{channel}",
+                'sample_indices': sample_indices,
+                'color_slot': display_order,
+                'stream': 'rs',
             })
 
         return specs
@@ -568,7 +732,7 @@ class ConfigurationMixin:
             self.save_last_heatmap_settings()
 
         mode = (text or "PZT").strip().upper()
-        if mode not in ("PZT", "PZR"):
+        if mode not in self.get_supported_array_operation_modes():
             mode = "PZT"
 
         self.config['array_operation_mode'] = mode
@@ -690,6 +854,7 @@ class ConfigurationMixin:
             device_mode=str(getattr(self, 'device_mode', 'adc')),
             channels=list(self.config.get('channels', [])),
             channels_to_send=self.get_channels_for_arduino_command(),
+            rs_channels_to_send=self.get_rs_mux_channels_for_arduino_command(),
             repeat=snapshot.repeat,
             use_ground=snapshot.use_ground,
             ground_pin=snapshot.ground_pin,
@@ -836,7 +1001,14 @@ class ConfigurationMixin:
 
         self.config_check_timer.start()
 
-        request = self._build_adc_configuration_request()
+        try:
+            request = self._build_adc_configuration_request()
+        except ValueError as exc:
+            self.config_check_timer.stop()
+            self.log_status(f"ERROR: {exc}")
+            self._apply_configure_button_state(build_configuration_failed_state())
+            return
+
         started = self.adc_configuration_runner.start(self.serial_port, request, max_attempts=3)
         if not started:
             self.config_check_timer.stop()
@@ -955,6 +1127,7 @@ class ConfigurationMixin:
         self._reset_force_channel_checkbox_refs()
 
         if not self.config['channels']:
+            self.update_rosette_channel_list()
             return
 
         display_specs = self.get_display_channel_specs()
@@ -973,6 +1146,42 @@ class ConfigurationMixin:
             self.channel_checkboxes[spec['key']] = checkbox
 
         self._add_force_channel_checkboxes(start_index=len(display_specs))
+        self.update_rosette_channel_list()
+
+    def update_rosette_channel_list(self):
+        """Update Rosette selector checkboxes for PZT_RS mode."""
+        if not hasattr(self, 'rosette_channel_checkboxes_layout'):
+            return
+        if not hasattr(self, 'rosette_channel_checkboxes'):
+            self.rosette_channel_checkboxes = {}
+
+        previous_state = {
+            key: checkbox.isChecked()
+            for key, checkbox in getattr(self, 'rosette_channel_checkboxes', {}).items()
+        }
+        for checkbox in getattr(self, 'rosette_channel_checkboxes', {}).values():
+            checkbox.deleteLater()
+        self.rosette_channel_checkboxes.clear()
+
+        while self.rosette_channel_checkboxes_layout.count():
+            item = self.rosette_channel_checkboxes_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not (hasattr(self, 'is_array_pzt_rs_mode') and self.is_array_pzt_rs_mode()):
+            return
+
+        display_specs = self.get_rosette_display_channel_specs()
+        for idx, spec in enumerate(display_specs):
+            from PyQt6.QtWidgets import QCheckBox
+            checkbox = QCheckBox(spec['label'])
+            checkbox.setChecked(previous_state.get(spec['key'], True))
+            checkbox.stateChanged.connect(self.trigger_plot_update)
+
+            row = idx // MAX_PLOT_COLUMNS
+            col = idx % MAX_PLOT_COLUMNS
+            self.rosette_channel_checkboxes_layout.addWidget(checkbox, row, col)
+            self.rosette_channel_checkboxes[spec['key']] = checkbox
 
     def select_all_channels(self):
         """Select all channel checkboxes."""
@@ -985,6 +1194,16 @@ class ConfigurationMixin:
         for checkbox in self.channel_checkboxes.values():
             checkbox.setChecked(False)
         self._set_force_channel_checkboxes_checked(False)
+
+    def select_all_rosette_channels(self):
+        """Select all Rosette channel checkboxes."""
+        for checkbox in getattr(self, 'rosette_channel_checkboxes', {}).values():
+            checkbox.setChecked(True)
+
+    def deselect_all_rosette_channels(self):
+        """Deselect all Rosette channel checkboxes."""
+        for checkbox in getattr(self, 'rosette_channel_checkboxes', {}).values():
+            checkbox.setChecked(False)
 
     # ========================================================================
     # Plot Update Triggers

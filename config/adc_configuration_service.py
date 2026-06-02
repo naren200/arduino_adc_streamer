@@ -14,6 +14,7 @@ from config.channel_utils import unique_channels_in_order
 from config.buffer_utils import validate_and_limit_sweeps_per_block
 from constants.serial import INTER_COMMAND_DELAY
 from constants.serial import ARRAY_PZT_MAX_MUX_PAIRS_PER_BLOCK
+from constants.serial import ARRAY_PZT_RS_MAX_SWEEPS_PER_BLOCK
 from serial_communication.adc_connection_state import ArduinoStatus, build_default_arduino_status
 
 
@@ -38,6 +39,7 @@ class ADCConfigurationRequest:
     cf_farads: float
     rxmax_ohms: float
     array_operation_mode: str
+    rs_channels_to_send: list[int]
     is_array_mcu: bool
     is_array_pzt_pzr_mode: bool
     is_array_sensor_selection_mode: bool
@@ -183,6 +185,20 @@ class ADCConfigurationService:
             else:
                 all_success = False
         time.sleep(0.05)
+
+        if request.is_array_pzt_pzr_mode and str(request.array_operation_mode).strip().upper() == "PZT_RS":
+            rs_channels_text = ",".join(str(channel) for channel in request.rs_channels_to_send)
+            if not rs_channels_text:
+                messages.append("PZT_RS config command failed: missing RS_MUX channel routing")
+                all_success = False
+            else:
+                success, received = self._send_command_and_wait_ack(f"rschannels {rs_channels_text}", rs_channels_text)
+                if success:
+                    messages.append(f"Set PZT_RS RS_MUX channels: {received or rs_channels_text}")
+                else:
+                    messages.append(f"PZT_RS config command failed: rschannels {rs_channels_text}")
+                    all_success = False
+            time.sleep(0.05)
 
         repeat_text = str(request.repeat)
         success, received = self._send_command_and_wait_ack(f"repeat {repeat_text}", repeat_text)
@@ -347,4 +363,6 @@ class ADCConfigurationService:
             if mux_pair_count > 0:
                 max_sweeps_by_pair_buffer = ARRAY_PZT_MAX_MUX_PAIRS_PER_BLOCK // mux_pair_count
                 normalized = min(normalized, max(1, max_sweeps_by_pair_buffer))
+        if request.is_array_pzt_pzr_mode and str(request.array_operation_mode).strip().upper() == "PZT_RS":
+            normalized = min(normalized, ARRAY_PZT_RS_MAX_SWEEPS_PER_BLOCK)
         return normalized

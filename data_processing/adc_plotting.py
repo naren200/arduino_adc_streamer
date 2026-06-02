@@ -15,6 +15,7 @@ from constants.plotting import (
     MAX_PLOT_SWEEPS,
     MAX_TOTAL_POINTS_TO_DISPLAY,
     PLOT_COLORS,
+    ROSETTE_BASELINE_SAMPLE_COUNT,
 )
 
 
@@ -109,9 +110,58 @@ class ADCPlottingMixin:
         if self.capture_current_plot_baselines():
             self.trigger_plot_update()
 
+    def capture_current_rosette_plot_baselines(self, sample_count=None, log_message=True):
+        """Zero Rosette traces from the latest samples in each RS display stream."""
+        snapshot = self._get_ordered_active_buffer_snapshot()
+        if snapshot is None:
+            if log_message:
+                self.log_status("No Rosette data available to zero signals")
+            return False
+
+        data_array, _timestamps_array, _avg_sample_time_sec = snapshot
+        display_specs = self.get_rosette_display_channel_specs()
+        if not display_specs:
+            if log_message:
+                self.log_status("No Rosette channels available to zero signals")
+            return False
+
+        baseline_sample_count = max(1, int(sample_count or ROSETTE_BASELINE_SAMPLE_COUNT))
+        self.rosette_plot_baselines = {}
+        for spec in display_specs:
+            sample_indices = spec.get('sample_indices', [])
+            if not sample_indices:
+                continue
+
+            sample_index_array = np.asarray(sample_indices, dtype=np.int32)
+            channel_data = data_array[:, sample_index_array].reshape(-1)
+            baseline_samples = channel_data[-baseline_sample_count:]
+            self.rosette_plot_baselines[spec['key']] = (
+                float(np.mean(baseline_samples)) if baseline_samples.size else 0.0
+            )
+
+        if (
+            getattr(self, 'rosette_subtract_baseline_check', None) is not None
+            and not self.rosette_subtract_baseline_check.isChecked()
+        ):
+            self.rosette_subtract_baseline_check.setChecked(True)
+
+        if log_message:
+            self.log_status(f"Zeroed Rosette signals using last {baseline_sample_count} samples")
+        return True
+
+    def zero_rosette_plot_baselines(self):
+        """Zero out Rosette plot baselines using current data."""
+        if self.capture_current_rosette_plot_baselines():
+            self.trigger_plot_update()
+
     def _hide_all_adc_curves(self):
         """Hide every ADC curve currently attached to the plot."""
         for curve in self._adc_curves.values():
+            curve.setVisible(False)
+
+    def _hide_all_rosette_curves(self):
+        """Hide every Rosette curve currently attached to the RS plot."""
+        for curve in getattr(self, '_rosette_curves', {}).values():
             curve.setVisible(False)
 
     def _get_selected_plot_channels(self):
@@ -121,6 +171,33 @@ class ADCPlottingMixin:
             for channel_key, checkbox in self.channel_checkboxes.items()
             if checkbox.isChecked()
         }
+
+    def _get_selected_rosette_plot_channels(self):
+        """Return currently selected Rosette channel keys."""
+        return {
+            channel_key
+            for channel_key, checkbox in getattr(self, 'rosette_channel_checkboxes', {}).items()
+            if checkbox.isChecked()
+        }
+
+    @staticmethod
+    def _apply_trailing_moving_average(values, window_size):
+        """Return a same-length trailing moving average."""
+        values = np.asarray(values, dtype=np.float64)
+        if values.size == 0:
+            return values
+
+        window_size = max(1, int(window_size))
+        if window_size <= 1:
+            return values
+
+        cumsum = np.cumsum(values, dtype=np.float64)
+        padded = np.concatenate(([0.0], cumsum))
+        starts = np.maximum(0, np.arange(values.size) + 1 - window_size)
+        ends = np.arange(values.size) + 1
+        sums = padded[ends] - padded[starts]
+        counts = ends - starts
+        return sums / counts
 
     def _extract_recent_buffer_window(self, active_data_buffer, actual_sweeps, current_write_index, window_sweeps):
         """Copy the requested trailing window from the circular sweep buffers."""
@@ -275,12 +352,21 @@ class ADCPlottingMixin:
 
         latest_value = float(channel_data[-1]) if len(channel_data) > 0 else None
 
-        if getattr(self, 'device_mode', 'adc') != '555' and self.yaxis_units_combo.currentText() == "Voltage":
+        is_rs_stream = spec.get('stream') == 'rs'
+        if (
+            not is_rs_stream
+            and getattr(self, 'device_mode', 'adc') != '555'
+            and self.yaxis_units_combo.currentText() == "Voltage"
+        ):
             vref = self.get_vref_voltage()
             max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
             channel_data = (channel_data / max_adc_value) * vref
 
-        if getattr(self, 'subtract_baseline_check', None) and self.subtract_baseline_check.isChecked():
+        if (
+            not is_rs_stream
+            and getattr(self, 'subtract_baseline_check', None)
+            and self.subtract_baseline_check.isChecked()
+        ):
             if spec['key'] not in self.plot_baselines:
                 self.capture_current_plot_baselines(
                     log_message=False,
@@ -305,9 +391,26 @@ class ADCPlottingMixin:
             self._adc_curves[curve_key] = curve
         return curve
 
+    def _get_or_create_rosette_curve(self, curve_key, name, pen):
+        """Fetch an existing Rosette curve or create it on first use."""
+        if not hasattr(self, '_rosette_curves'):
+            self._rosette_curves = {}
+        curve = self._rosette_curves.get(curve_key)
+        if curve is None:
+            curve = self.rosette_plot_widget.plot([], pen=pen, name=name)
+            self._rosette_curves[curve_key] = curve
+        return curve
+
     def _set_adc_curve_data(self, curve_key, name, pen, x_data, y_data):
         """Apply visibility, style, and samples to a single ADC curve."""
         curve = self._get_or_create_adc_curve(curve_key, name, pen)
+        curve.setVisible(True)
+        curve.setPen(pen)
+        curve.setData(x=x_data, y=y_data)
+
+    def _set_rosette_curve_data(self, curve_key, name, pen, x_data, y_data):
+        """Apply visibility, style, and samples to a single Rosette curve."""
+        curve = self._get_or_create_rosette_curve(curve_key, name, pen)
         curve.setVisible(True)
         curve.setPen(pen)
         curve.setData(x=x_data, y=y_data)
@@ -402,6 +505,86 @@ class ADCPlottingMixin:
         self._set_adc_curve_data(curve_key, name, pen, channel_times, channel_data)
         return True
 
+    def _update_rosette_timeseries_plot(self, data_array, timestamps_array, avg_sample_time_sec, max_samples_per_series):
+        """Render held RS values from the combined PZT_RS stream."""
+        if not (hasattr(self, 'is_array_pzt_rs_mode') and self.is_array_pzt_rs_mode()):
+            self._hide_all_rosette_curves()
+            return
+        if not hasattr(self, 'rosette_plot_widget'):
+            return
+
+        display_specs = self.get_rosette_display_channel_specs()
+        if not display_specs:
+            self._hide_all_rosette_curves()
+            return
+
+        selected_rosettes = self._get_selected_rosette_plot_channels()
+        if not selected_rosettes:
+            self._hide_all_rosette_curves()
+            if hasattr(self, 'rosette_plot_info_label'):
+                self.rosette_plot_info_label.setText(
+                    f"Rosette - Sweeps: {int(getattr(self, 'sweep_count', 0))} | Samples: 0"
+                )
+            return
+
+        desired_curve_keys = set()
+        total_samples = 0
+        max_samples_per_rosette = max(
+            500,
+            MAX_TOTAL_POINTS_TO_DISPLAY // max(1, len(selected_rosettes)),
+        )
+        for spec in display_specs:
+            if spec['key'] not in selected_rosettes:
+                continue
+
+            color = PLOT_COLORS[spec['color_slot'] % len(PLOT_COLORS)]
+            prepared_series = self._prepare_channel_plot_series(
+                spec,
+                data_array,
+                timestamps_array,
+                avg_sample_time_sec,
+                max(max_samples_per_series, max_samples_per_rosette),
+            )
+            if prepared_series is None:
+                continue
+
+            channel_data, channel_times, _latest_value = prepared_series
+            if (
+                getattr(self, 'rosette_subtract_baseline_check', None)
+                and self.rosette_subtract_baseline_check.isChecked()
+            ):
+                if spec['key'] not in getattr(self, 'rosette_plot_baselines', {}):
+                    self.capture_current_rosette_plot_baselines(log_message=False)
+
+                if spec['key'] in getattr(self, 'rosette_plot_baselines', {}):
+                    channel_data = channel_data - self.rosette_plot_baselines[spec['key']]
+
+            if (
+                getattr(self, 'rosette_moving_average_check', None)
+                and self.rosette_moving_average_check.isChecked()
+            ):
+                spin = getattr(self, 'rosette_moving_average_spin', None)
+                window_size = int(spin.value()) if spin is not None else 10
+                channel_data = self._apply_trailing_moving_average(channel_data, window_size)
+
+            total_samples += len(channel_data)
+            pen = pg.mkPen(color=color, width=2)
+            curve_key = ('rs', spec['key'])
+            desired_curve_keys.add(curve_key)
+            self._set_rosette_curve_data(curve_key, spec['label'], pen, channel_times, channel_data)
+
+        for key, curve in getattr(self, '_rosette_curves', {}).items():
+            if key not in desired_curve_keys:
+                curve.setVisible(False)
+
+        self.rosette_plot_widget.setLabel('left', 'Resistance', units='ohms')
+        self.rosette_plot_widget.setLabel('bottom', 'Time', units='s')
+        self.rosette_plot_widget.enableAutoRange(axis='y')
+        if hasattr(self, 'rosette_plot_info_label'):
+            self.rosette_plot_info_label.setText(
+                f"Rosette - Sweeps: {int(getattr(self, 'sweep_count', 0))} | Samples: {int(total_samples)}"
+            )
+
     def update_plot(self):
         """Update the plot with current data - optimized for fast updates and max 10K samples."""
         if self.is_updating_plot:
@@ -412,6 +595,7 @@ class ADCPlottingMixin:
         try:
             if not self.config['channels']:
                 self._hide_all_adc_curves()
+                self._hide_all_rosette_curves()
                 return
 
             display_specs = self.get_display_channel_specs()
@@ -419,7 +603,13 @@ class ADCPlottingMixin:
             selected_channels = self._get_selected_plot_channels()
             if not selected_channels:
                 self._hide_all_adc_curves()
-                return
+                if not (
+                    hasattr(self, 'is_array_pzt_rs_mode')
+                    and self.is_array_pzt_rs_mode()
+                    and self._get_selected_rosette_plot_channels()
+                ):
+                    self._hide_all_rosette_curves()
+                    return
 
             repeat_count = self.config['repeat']
             if (
@@ -429,6 +619,7 @@ class ADCPlottingMixin:
                 live_snapshot = self._get_live_plot_window_snapshot(self.raw_data_buffer)
                 if live_snapshot is None:
                     self._hide_all_adc_curves()
+                    self._hide_all_rosette_curves()
                     return
 
                 data_array, timestamps_array, snapshot_key = live_snapshot
@@ -455,12 +646,14 @@ class ADCPlottingMixin:
                 plot_snapshot = self._get_plot_data_snapshot(active_data_buffer)
                 if plot_snapshot is None:
                     self._hide_all_adc_curves()
+                    self._hide_all_rosette_curves()
                     return
 
                 data_array, timestamps_array = plot_snapshot
 
             if len(data_array) == 0 or len(timestamps_array) == 0:
                 self._hide_all_adc_curves()
+                self._hide_all_rosette_curves()
                 return
 
             desired_curve_keys = set()
@@ -517,6 +710,12 @@ class ADCPlottingMixin:
             self._update_plot_axis_labels()
             self.apply_y_axis_range()
             self.update_555_timing_readouts(latest_channel_values)
+            self._update_rosette_timeseries_plot(
+                data_array,
+                timestamps_array,
+                avg_sample_time_sec,
+                max_samples_per_series,
+            )
 
         except Exception as e:
             self.log_status(f"ERROR updating plot: {e}")

@@ -17,11 +17,18 @@ from constants.ui import (
     CHANNEL_SCROLL_HEIGHT,
     DEFAULT_WINDOW_SIZE,
     PRESSURE_MAP_TAB_NAME,
+    PZT_RS_PZT_TAB_NAME,
+    ROSETTE_TAB_NAME,
     SENSOR_TAB_NAME,
     SPECTRUM_TAB_NAME,
     TIME_SERIES_TAB_NAME,
     WINDOW_SIZE_MAX,
     WINDOW_SIZE_MIN,
+)
+from constants.plotting import (
+    ROSETTE_MOVING_AVERAGE_DEFAULT_SAMPLES,
+    ROSETTE_MOVING_AVERAGE_MAX_SAMPLES,
+    ROSETTE_MOVING_AVERAGE_MIN_SAMPLES,
 )
 
 
@@ -42,20 +49,25 @@ class DisplayPanelsMixin:
         self.visualization_tabs.addTab(timeseries_tab, TIME_SERIES_TAB_NAME)
         self.timeseries_tab_index = 0
 
+        rosette_tab = self.create_rosette_timeseries_tab()
+        self.visualization_tabs.addTab(rosette_tab, ROSETTE_TAB_NAME)
+        self.rosette_tab_index = 1
+        self.visualization_tabs.setTabVisible(self.rosette_tab_index, False)
+
             # Create pressure map tab (from PressureMapPanelMixin)
         signal_integration_tab = self.create_signal_integration_tab()
         self.visualization_tabs.addTab(signal_integration_tab, PRESSURE_MAP_TAB_NAME)
-        self.signal_integration_tab_index = 1
+        self.signal_integration_tab_index = 2
 
         # Create spectrum tab (from SpectrumPanelMixin)
         spectrum_tab = self.create_spectrum_tab()
         self.visualization_tabs.addTab(spectrum_tab, SPECTRUM_TAB_NAME)
-        self.spectrum_tab_index = 2
+        self.spectrum_tab_index = 3
 
         # Create sensor tab last (from SensorPanelMixin)
         sensor_tab = self.create_sensor_tab()
         self.visualization_tabs.addTab(sensor_tab, SENSOR_TAB_NAME)
-        self.sensor_tab_index = 3
+        self.sensor_tab_index = 4
         
         return self.visualization_tabs
     
@@ -147,6 +159,129 @@ class DisplayPanelsMixin:
 
         tab_widget.setLayout(layout)
         return tab_widget
+
+    def create_rosette_timeseries_tab(self) -> QWidget:
+        """Create the Rosette time-series plotting tab used by PZT_RS mode."""
+        tab_widget = QWidget()
+        layout = QVBoxLayout()
+
+        plot_group = QGroupBox("Rosette Time Series")
+        plot_layout = QVBoxLayout()
+
+        self.rosette_plot_widget = pg.PlotWidget()
+        self.rosette_plot_widget.setBackground('w')
+        self.rosette_plot_widget.setLabel('left', 'Resistance', units='')
+        self.rosette_plot_widget.setLabel('bottom', 'Time', units='s')
+        self.rosette_plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        self.rosette_plot_widget.setMouseEnabled(x=False, y=False)
+        self.rosette_plot_widget.setMenuEnabled(False)
+        self.rosette_plot_widget.addLegend(offset=(10, 10))
+        plot_layout.addWidget(self.rosette_plot_widget)
+
+        self.rosette_plot_info_label = QLabel("Rosette - Sweeps: 0 | Samples: 0")
+        plot_layout.addWidget(self.rosette_plot_info_label)
+
+        plot_group.setLayout(plot_layout)
+        layout.addWidget(plot_group)
+        layout.addWidget(self.create_rosette_visualization_controls())
+        layout.addStretch()
+
+        tab_widget.setLayout(layout)
+        return tab_widget
+
+    def create_rosette_visualization_controls(self) -> QGroupBox:
+        """Create Rosette-specific visibility and display controls."""
+        group = QGroupBox("Rosette Visualization Controls")
+        main_layout = QVBoxLayout()
+
+        channel_group = QGroupBox("Display Rosettes")
+        channel_main_layout = QVBoxLayout()
+
+        self.rosette_channel_checkboxes_container = QWidget()
+        self.rosette_channel_checkboxes_layout = QGridLayout()
+        self.rosette_channel_checkboxes_layout.setSpacing(5)
+        self.rosette_channel_checkboxes_container.setLayout(self.rosette_channel_checkboxes_layout)
+
+        scroll = QScrollArea()
+        scroll.setWidget(self.rosette_channel_checkboxes_container)
+        scroll.setWidgetResizable(True)
+        scroll.setMaximumHeight(CHANNEL_SCROLL_HEIGHT)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        channel_main_layout.addWidget(scroll)
+
+        btn_layout = QHBoxLayout()
+        self.rosette_select_all_btn = QPushButton("All")
+        self.rosette_select_all_btn.clicked.connect(self.select_all_rosette_channels)
+        self.rosette_select_all_btn.setMaximumWidth(60)
+        btn_layout.addWidget(self.rosette_select_all_btn)
+
+        self.rosette_deselect_all_btn = QPushButton("None")
+        self.rosette_deselect_all_btn.clicked.connect(self.deselect_all_rosette_channels)
+        self.rosette_deselect_all_btn.setMaximumWidth(60)
+        btn_layout.addWidget(self.rosette_deselect_all_btn)
+        btn_layout.addStretch()
+        channel_main_layout.addLayout(btn_layout)
+
+        channel_group.setLayout(channel_main_layout)
+        main_layout.addWidget(channel_group)
+
+        display_group = QGroupBox("Display Mode")
+        display_layout = QHBoxLayout()
+
+        self.rosette_subtract_baseline_check = QCheckBox("Subtract Baseline")
+        self.rosette_subtract_baseline_check.setChecked(False)
+        self.rosette_subtract_baseline_check.setToolTip("Subtract the Rosette baseline captured by Zero Signals")
+        self.rosette_subtract_baseline_check.stateChanged.connect(self.trigger_plot_update)
+        display_layout.addWidget(self.rosette_subtract_baseline_check)
+
+        self.rosette_zero_signals_btn = QPushButton("Zero Signals")
+        self.rosette_zero_signals_btn.setToolTip("Capture each Rosette baseline from the latest samples")
+        self.rosette_zero_signals_btn.setMaximumWidth(90)
+        self.rosette_zero_signals_btn.clicked.connect(self.zero_rosette_plot_baselines)
+        display_layout.addWidget(self.rosette_zero_signals_btn)
+
+        self.rosette_moving_average_check = QCheckBox("Moving Avg")
+        self.rosette_moving_average_check.setChecked(False)
+        self.rosette_moving_average_check.setToolTip("Show a trailing moving average for each Rosette")
+        self.rosette_moving_average_check.stateChanged.connect(self.trigger_plot_update)
+        display_layout.addWidget(self.rosette_moving_average_check)
+
+        display_layout.addWidget(QLabel("Samples:"))
+        self.rosette_moving_average_spin = QSpinBox()
+        self.rosette_moving_average_spin.setRange(
+            ROSETTE_MOVING_AVERAGE_MIN_SAMPLES,
+            ROSETTE_MOVING_AVERAGE_MAX_SAMPLES,
+        )
+        self.rosette_moving_average_spin.setValue(ROSETTE_MOVING_AVERAGE_DEFAULT_SAMPLES)
+        self.rosette_moving_average_spin.setToolTip("Trailing sample count used by Rosette moving average")
+        self.rosette_moving_average_spin.valueChanged.connect(self.trigger_plot_update)
+        display_layout.addWidget(self.rosette_moving_average_spin)
+
+        display_layout.addStretch()
+        display_group.setLayout(display_layout)
+        main_layout.addWidget(display_group)
+
+        group.setLayout(main_layout)
+        return group
+
+    def update_pzt_rs_timeseries_tabs_visibility(self):
+        """Show the PZT/RS split time-series tabs only for PZT_RS mode."""
+        if not hasattr(self, 'visualization_tabs') or not hasattr(self, 'rosette_tab_index'):
+            return
+
+        show_rosette = bool(
+            hasattr(self, 'is_array_pzt_rs_mode') and self.is_array_pzt_rs_mode()
+        )
+        self.visualization_tabs.setTabVisible(self.rosette_tab_index, show_rosette)
+        self.visualization_tabs.setTabText(
+            self.timeseries_tab_index,
+            PZT_RS_PZT_TAB_NAME if show_rosette else TIME_SERIES_TAB_NAME,
+        )
+        if hasattr(self, 'update_rosette_channel_list'):
+            self.update_rosette_channel_list()
+
+        if not show_rosette and self.visualization_tabs.currentIndex() == self.rosette_tab_index:
+            self.visualization_tabs.setCurrentIndex(self.timeseries_tab_index)
     
     def update_force_viewbox(self):
         """Update force viewbox geometry to match main plot viewbox."""

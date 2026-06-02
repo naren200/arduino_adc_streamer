@@ -40,6 +40,7 @@ class CaptureLifecycleMixin:
             if zero_buffers and self.sweep_timestamps_buffer is not None:
                 self.sweep_timestamps_buffer.fill(0)
         self.plot_baselines = {}
+        self.rosette_plot_baselines = {}
 
     def _reset_force_capture_state(self):
         """Reset force samples for a new capture lifecycle."""
@@ -117,6 +118,7 @@ class CaptureLifecycleMixin:
             return
 
         self.plot_baselines = {}
+        self.rosette_plot_baselines = {}
 
         self.set_controls_enabled(False)
 

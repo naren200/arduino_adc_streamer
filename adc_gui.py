@@ -38,6 +38,8 @@ from constants.ui import (
     FORCE_PLOT_DEBOUNCE_MS,
     MAIN_PANEL_LAYOUT_SPACING,
     PRESSURE_MAP_TAB_NAME,
+    PZT_RS_PZT_TAB_NAME,
+    ROSETTE_TAB_NAME,
     SPECTRUM_UPDATE_INTERVAL_MS,
     STATUS_SEPARATOR_WIDTH,
     SPECTRUM_TAB_NAME,
@@ -195,11 +197,14 @@ class ADCStreamerGUI(
     def _init_ui_state(self):
         """Initialize UI-related state."""
         self.channel_checkboxes: Dict[int, QCheckBox] = {}
+        self.rosette_channel_checkboxes: Dict[object, QCheckBox] = {}
         self.force_x_checkbox: Optional[QCheckBox] = None
         self.force_z_checkbox: Optional[QCheckBox] = None
         
         self.is_updating_plot = False
         self._adc_curves = {}
+        self._rosette_curves = {}
+        self.rosette_plot_baselines = {}
         self._adc_curve_names = {}
         self._adc_curve_legend_added = {}
         self._force_x_curve = None
@@ -369,7 +374,7 @@ class ADCStreamerGUI(
         else:
             self.stop_spectrum_updates()
 
-        if current_tab == TIME_SERIES_TAB_NAME:
+        if current_tab in (TIME_SERIES_TAB_NAME, PZT_RS_PZT_TAB_NAME, ROSETTE_TAB_NAME):
             if hasattr(self, 'spectrum_busy'):
                 self.spectrum_busy = False
             if (
@@ -403,7 +408,11 @@ class ADCStreamerGUI(
 
     def should_update_live_timeseries_display(self) -> bool:
         """Return True when live ADC/force plot redraws should run."""
-        return self.get_current_visualization_tab_name() == TIME_SERIES_TAB_NAME
+        return self.get_current_visualization_tab_name() in (
+            TIME_SERIES_TAB_NAME,
+            PZT_RS_PZT_TAB_NAME,
+            ROSETTE_TAB_NAME,
+        )
 
     def should_update_signal_integration_display(self) -> bool:
         """Return True when the pressure map tab is the visible tab."""

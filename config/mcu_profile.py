@@ -18,6 +18,10 @@ class MCUProfile:
     is_array_mcu: bool
     is_array_pzt1: bool
     is_array_dual: bool
+    is_array_pzt_pzr17: bool
+    supports_pzt_rs: bool
+    is_pzt_rs_mode: bool
+    array_operation_modes: tuple[str, ...]
     is_teensy: bool
     is_555_mode: bool
     device_mode: str
@@ -40,13 +44,19 @@ class MCUProfile:
 def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT") -> MCUProfile:
     name = (mcu_name or "").strip()
     lower_name = name.lower()
+    is_array_pzt_pzr17 = lower_name == "array_pzt_pzr1.7"
+    supports_pzt_rs = is_array_pzt_pzr17
+    array_operation_modes = ("PZT", "PZR", "PZT_RS") if supports_pzt_rs else ("PZT", "PZR")
     normalized_array_mode = (selected_array_mode or "PZT").strip().upper()
-    if normalized_array_mode not in ("PZT", "PZR"):
+    if normalized_array_mode not in array_operation_modes:
         normalized_array_mode = "PZT"
 
     is_array_dual = lower_name.startswith("array_pzt_pzr")
     is_array_mcu = lower_name.startswith("array")
-    is_array_pzt1 = lower_name == "array_pzt1" or (is_array_dual and normalized_array_mode == "PZT")
+    is_pzt_rs_mode = is_array_dual and normalized_array_mode == "PZT_RS"
+    is_array_pzt1 = lower_name == "array_pzt1" or (
+        is_array_dual and normalized_array_mode in ("PZT", "PZT_RS")
+    )
     is_teensy = "teensy" in lower_name
     is_555_mode = normalized_array_mode == "PZR" if is_array_dual else ("555" in lower_name)
     device_mode = "555" if is_555_mode else "adc"
@@ -57,6 +67,10 @@ def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT
             is_array_mcu=is_array_mcu,
             is_array_pzt1=is_array_pzt1,
             is_array_dual=is_array_dual,
+            is_array_pzt_pzr17=is_array_pzt_pzr17,
+            supports_pzt_rs=supports_pzt_rs,
+            is_pzt_rs_mode=is_pzt_rs_mode,
+            array_operation_modes=array_operation_modes,
             is_teensy=is_teensy,
             is_555_mode=True,
             device_mode=device_mode,
@@ -82,6 +96,10 @@ def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT
             is_array_mcu=is_array_mcu,
             is_array_pzt1=is_array_pzt1,
             is_array_dual=is_array_dual,
+            is_array_pzt_pzr17=is_array_pzt_pzr17,
+            supports_pzt_rs=supports_pzt_rs,
+            is_pzt_rs_mode=is_pzt_rs_mode,
+            array_operation_modes=array_operation_modes,
             is_teensy=True,
             is_555_mode=False,
             device_mode=device_mode,
@@ -106,6 +124,10 @@ def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT
         is_array_mcu=is_array_mcu,
         is_array_pzt1=is_array_pzt1,
         is_array_dual=is_array_dual,
+        is_array_pzt_pzr17=is_array_pzt_pzr17,
+        supports_pzt_rs=supports_pzt_rs,
+        is_pzt_rs_mode=is_pzt_rs_mode,
+        array_operation_modes=array_operation_modes,
         is_teensy=False,
         is_555_mode=False,
         device_mode=device_mode,

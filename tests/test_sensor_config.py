@@ -5,6 +5,7 @@ from pathlib import Path
 from config.sensor_config import (
     SensorConfigStore,
     mapping_to_position_channels,
+    normalize_mux_mapping,
     position_channels_to_mapping,
 )
 from config.channel_utils import unique_channels_in_order
@@ -107,6 +108,14 @@ def test_reverse_polarity_is_backward_compatible_and_persisted(tmp_path: Path):
 
 def test_unique_channels_in_order_preserves_first_occurrence():
     assert unique_channels_in_order([4, 2, 4, 1, 2, 3, 1]) == [4, 2, 1, 3]
+
+
+def test_mux_mapping_preserves_optional_rs_channels():
+    normalized = normalize_mux_mapping({
+        "PZT1": {"mux": 1, "channels": [0, 1, 2, 3, 4], "rs_channels": [8, 9]},
+    })
+
+    assert normalized["PZT1"]["rs_channels"] == [8, 9]
 
 
 class ChannelUtilsTests(unittest.TestCase):

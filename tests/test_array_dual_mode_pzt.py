@@ -26,9 +26,9 @@ class DualModePZTHarness(ConfigurationMixin):
     def get_active_sensor_configuration(self):
         return {
             "mux_mapping": {
-                "PZT1": {"mux": 1, "channels": [0, 1, 2, 3, 4]},
-                "PZT2": {"mux": 1, "channels": [5, 6, 7, 8, 9]},
-                "PZT3": {"mux": 2, "channels": [0, 1, 2, 3, 4]},
+                "PZT1": {"mux": 1, "channels": [0, 1, 2, 3, 4], "rs_channels": [8, 9]},
+                "PZT2": {"mux": 1, "channels": [5, 6, 7, 8, 9], "rs_channels": [10, 11]},
+                "PZT3": {"mux": 2, "channels": [0, 1, 2, 3, 4], "rs_channels": [12, 13]},
             }
         }
 
@@ -55,6 +55,35 @@ class ArrayDualModePZTTests(unittest.TestCase):
         self.assertEqual(sensor3_specs[-1]["sample_indices"], [9])
         all_indices = [index for spec in specs for index in spec["sample_indices"]]
         self.assertTrue(all(0 <= index < 20 for index in all_indices))
+
+    def test_pzt_rs_mode_uses_three_value_slots_and_routes_rs_specs(self):
+        harness = DualModePZTHarness()
+        harness.current_mcu = "Array_PZT_PZR1.7"
+        harness.array_mode_combo = DummyCombo("PZT_RS")
+
+        self.assertTrue(harness.is_array_pzt_rs_mode())
+        self.assertEqual(harness.get_supported_array_operation_modes(), ("PZT", "PZR", "PZT_RS"))
+        self.assertEqual(harness.get_effective_channel_multiplier(), 4)
+        self.assertEqual(harness.get_channels_for_arduino_command(), harness.config["channels"])
+        self.assertEqual(harness.get_rs_mux_channels_for_arduino_command()[:4], [8, 9, 8, 9])
+        self.assertEqual(harness.get_effective_samples_per_sweep(), 60)
+
+        pzt_specs = harness.get_display_channel_specs()
+        rs_specs = harness.get_rosette_display_channel_specs()
+
+        self.assertEqual(pzt_specs[0]["sample_indices"], [0])
+        self.assertEqual(pzt_specs[1]["sample_indices"], [4])
+        self.assertEqual(rs_specs[0]["sample_indices"], [2, 6, 10, 14, 18])
+        self.assertEqual(rs_specs[1]["sample_indices"], [3, 7, 11, 15, 19])
+        self.assertEqual(rs_specs[-1]["sample_indices"], [43, 47, 51, 55, 59])
+        self.assertTrue(all(spec["key"][0] == "rs" for spec in rs_specs))
+
+    def test_older_array_dual_mode_does_not_select_pzt_rs(self):
+        harness = DualModePZTHarness()
+        harness.array_mode_combo = DummyCombo("PZT_RS")
+
+        self.assertEqual(harness.get_selected_array_operation_mode(), "PZT")
+        self.assertFalse(harness.is_array_pzt_rs_mode())
 
 
 if __name__ == "__main__":

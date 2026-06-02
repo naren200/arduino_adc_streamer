@@ -159,6 +159,9 @@ class MCUDetectorMixin:
 
     def update_gui_for_mcu(self):
         """Update GUI controls based on detected MCU type."""
+        if hasattr(self, 'update_array_mode_options'):
+            self.update_array_mode_options()
+
         selected_mode = "PZT"
         if hasattr(self, 'get_selected_array_operation_mode'):
             selected_mode = self.get_selected_array_operation_mode()
@@ -175,6 +178,9 @@ class MCUDetectorMixin:
         if hasattr(self, 'update_array_acquisition_inputs_visibility'):
             self.update_array_acquisition_inputs_visibility()
 
+        if hasattr(self, 'update_pzt_rs_timeseries_tabs_visibility'):
+            self.update_pzt_rs_timeseries_tabs_visibility()
+
         if hasattr(self, 'refresh_spectrum_filter_availability'):
             self.refresh_spectrum_filter_availability(log_message=False)
 
@@ -185,3 +191,6 @@ class MCUDetectorMixin:
 
         if hasattr(self, 'update_array_acquisition_inputs_visibility'):
             self.update_array_acquisition_inputs_visibility()
+
+        if hasattr(self, 'update_pzt_rs_timeseries_tabs_visibility'):
+            self.update_pzt_rs_timeseries_tabs_visibility()
