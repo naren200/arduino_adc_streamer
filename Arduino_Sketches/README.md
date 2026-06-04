@@ -226,6 +226,7 @@ When `mode PZT_RS*` is active on `# Array_PZT_PZR1.7`, each logical slot emits f
 - `RS1_hold` and `RS2_hold` are the latest available Rosette/RS values for the two configured `RS_MUX` channels aligned to that PZT slot, and may repeat across adjacent PZT slots until newer RS measurements are ready.
 - `PZT_RS` blocks are paced by the PZT/MG24 stream; Rosette refresh is opportunistic and must not delay PZT block delivery.
 - Configure PZT_RS routing with `rschannels a,b,c,d...*` after `channels*`; provide two `RS_MUX` channels per PZT channel slot.
+- The Teensy keeps the host-provided logical PZT slot order for display alignment, but sends only unique physical MUX channels to the MG24 and expands the returned PZT pairs back into logical `PZT_RS` slots.
 - Header/trailer framing is unchanged; only payload ordering/count differ from pure PZT mode.
 
 ## Sample Ordering

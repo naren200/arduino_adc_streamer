@@ -131,6 +131,8 @@ static const uint16_t PZT_WARMUP_SWEEPS          = 48;
 // ── Protocol limits ───────────────────────────────────────────────────
 static const uint16_t PZT_MAX_REPEAT             = 100;
 static const uint8_t  PZT_MUX_CH_MAX             = 15;
+static const uint8_t  PZT_MAX_PHYSICAL_CHANNELS  = 16;
+static const uint8_t  PZT_MAX_LOGICAL_SLOTS      = 32;
 static const uint32_t PZT_MAX_PAIRS              = 8000UL;
 
 static const uint32_t PZT_MAX_BLOCK_BYTES =
@@ -160,10 +162,12 @@ static SPIClass      &pztSPI    = SPI;
 static const SPISettings PZT_SPI_CFG(PZT_SPI_BITRATE, MSBFIRST, SPI_MODE1);
 
 struct PZTConfig {
-  uint8_t  channels[16];
-  uint8_t  rsChannelsA[16];
-  uint8_t  rsChannelsB[16];
+  uint8_t  channels[PZT_MAX_LOGICAL_SLOTS];
+  uint8_t  physicalChannels[PZT_MAX_PHYSICAL_CHANNELS];
+  uint8_t  rsChannelsA[PZT_MAX_LOGICAL_SLOTS];
+  uint8_t  rsChannelsB[PZT_MAX_LOGICAL_SLOTS];
   uint8_t  channelCount   = 0;
+  uint8_t  physicalChannelCount = 0;
   uint8_t  rsChannelCount = 0;
   uint8_t  repeatCount    = 1;
   uint8_t  sweepsPerBlock = 1;
@@ -483,6 +487,19 @@ static bool pzt_recvAckWhenReady(uint8_t *buf, uint32_t timeoutMs) {
 static inline bool pzt_queueIsEmpty() { return pztRxCount == 0; }
 // Return true when the queued block ring buffer is full.
 static inline bool pzt_queueIsFull()  { return pztRxCount >= PZT_RX_QUEUE_DEPTH; }
+
+static uint8_t pzt_physicalChannelCount() {
+  return (currentMode == MODE_PZT_RS && pzt.physicalChannelCount > 0)
+             ? pzt.physicalChannelCount
+             : pzt.channelCount;
+}
+
+static int8_t pzt_physicalIndexForChannel(uint8_t ch) {
+  for (uint8_t i = 0; i < pzt.physicalChannelCount; ++i) {
+    if ((pzt.physicalChannels[i] & 0x0F) == (ch & 0x0F)) return (int8_t)i;
+  }
+  return -1;
+}
 
 // Get the next queued block ready to transmit to host.
 static PZTQueuedBlock *pzt_queueFront() {
@@ -865,11 +882,11 @@ static uint32_t pzt_usPerPair() {
 
 // Return MG24 entries per sweep, including optional ground measurements.
 static uint32_t pzt_entriesPerSweep() {
-  uint32_t entries = (uint32_t)pzt.channelCount * pzt.repeatCount;
+  uint32_t entries = (uint32_t)pzt_physicalChannelCount() * pzt.repeatCount;
 
   // MG24 inserts one ground conversion before each new channel when enabled.
   if (pzt.groundEnable) {
-    entries += (uint32_t)pzt.channelCount;
+    entries += (uint32_t)pzt_physicalChannelCount();
   }
 
   return entries;
@@ -898,7 +915,7 @@ static uint32_t pzt_firstBlockTimeoutMs() {
 // Compute raw PZT block size in bytes for the current channel configuration.
 static uint32_t pzt_blockResponseBytes() {
   // ×2: each channel slot yields MUX1 + MUX2 samples
-  uint32_t samples = (uint32_t)pzt.channelCount * pzt.repeatCount
+  uint32_t samples = (uint32_t)pzt_physicalChannelCount() * pzt.repeatCount
                    * pzt.sweepsPerBlock * 2u;
   return (uint32_t)PZT_ACK_FRAME_LEN + samples * 2u + PZT_BLOCK_TRAILER_LEN;
 }
@@ -1179,8 +1196,17 @@ static bool pzt_buildCombinedBlock(const uint8_t *src, uint32_t srcLen,
   if (srcLen < expectedLen) return false;
   if ((pztSampleCount & 0x01u) != 0u) return false; // PZT samples are MUX1/MUX2 pairs.
 
-  uint16_t pairCount = pztSampleCount / 2u;
-  uint32_t combinedCount32 = (uint32_t)pztSampleCount + ((uint32_t)pairCount * 2u);
+  uint16_t physicalPairCount = pztSampleCount / 2u;
+  uint8_t physicalCount = pzt_physicalChannelCount();
+  if (physicalCount == 0 || pzt.channelCount == 0) return false;
+
+  uint32_t physicalPairsPerSweep = (uint32_t)physicalCount * (uint32_t)pzt.repeatCount;
+  if (physicalPairsPerSweep == 0 || (physicalPairCount % physicalPairsPerSweep) != 0) return false;
+  uint32_t sweepsInBlock = physicalPairCount / physicalPairsPerSweep;
+
+  uint32_t logicalPairCount =
+      sweepsInBlock * (uint32_t)pzt.channelCount * (uint32_t)pzt.repeatCount;
+  uint32_t combinedCount32 = logicalPairCount * 4u;
   if (combinedCount32 > 65535u) return false;
   uint16_t combinedCount = (uint16_t)combinedCount32;
 
@@ -1193,23 +1219,37 @@ static bool pzt_buildCombinedBlock(const uint8_t *src, uint32_t srcLen,
   dst[2] = (uint8_t)(combinedCount & 0xFF);
   dst[3] = (uint8_t)(combinedCount >> 8);
 
-  uint32_t srcPayloadPos = PZT_ACK_FRAME_LEN;
   uint32_t dstPayloadPos = PZT_ACK_FRAME_LEN;
-  for (uint16_t pair = 0; pair < pairCount; ++pair) {
-    uint8_t rsA = 0;
-    uint8_t rsB = 0;
-    pzt_rsChannelsForPair(pair, rsA, rsB);
-    uint16_t rsValueA = pztRsLastRaQByChannel[rsA];
-    uint16_t rsValueB = pztRsLastRaQByChannel[rsB];
+  uint32_t logicalPair = 0;
+  for (uint32_t sweep = 0; sweep < sweepsInBlock; ++sweep) {
+    for (uint8_t logicalSlot = 0; logicalSlot < pzt.channelCount; ++logicalSlot) {
+      int8_t physicalIdx = pzt_physicalIndexForChannel(pzt.channels[logicalSlot]);
+      if (physicalIdx < 0) return false;
 
-    dst[dstPayloadPos++] = src[srcPayloadPos++]; // MUX1 LSB
-    dst[dstPayloadPos++] = src[srcPayloadPos++]; // MUX1 MSB
-    dst[dstPayloadPos++] = src[srcPayloadPos++]; // MUX2 LSB
-    dst[dstPayloadPos++] = src[srcPayloadPos++]; // MUX2 MSB
-    dst[dstPayloadPos++] = (uint8_t)(rsValueA & 0xFF);
-    dst[dstPayloadPos++] = (uint8_t)(rsValueA >> 8);
-    dst[dstPayloadPos++] = (uint8_t)(rsValueB & 0xFF);
-    dst[dstPayloadPos++] = (uint8_t)(rsValueB >> 8);
+      for (uint8_t repeatIdx = 0; repeatIdx < pzt.repeatCount; ++repeatIdx) {
+        uint32_t physicalPair =
+            sweep * physicalPairsPerSweep +
+            (uint32_t)physicalIdx * (uint32_t)pzt.repeatCount +
+            repeatIdx;
+        uint32_t srcPayloadPos = (uint32_t)PZT_ACK_FRAME_LEN + physicalPair * 4u;
+
+        uint8_t rsA = 0;
+        uint8_t rsB = 0;
+        pzt_rsChannelsForPair(logicalPair, rsA, rsB);
+        uint16_t rsValueA = pztRsLastRaQByChannel[rsA];
+        uint16_t rsValueB = pztRsLastRaQByChannel[rsB];
+
+        dst[dstPayloadPos++] = src[srcPayloadPos++]; // MUX1 LSB
+        dst[dstPayloadPos++] = src[srcPayloadPos++]; // MUX1 MSB
+        dst[dstPayloadPos++] = src[srcPayloadPos++]; // MUX2 LSB
+        dst[dstPayloadPos++] = src[srcPayloadPos++]; // MUX2 MSB
+        dst[dstPayloadPos++] = (uint8_t)(rsValueA & 0xFF);
+        dst[dstPayloadPos++] = (uint8_t)(rsValueA >> 8);
+        dst[dstPayloadPos++] = (uint8_t)(rsValueB & 0xFF);
+        dst[dstPayloadPos++] = (uint8_t)(rsValueB >> 8);
+        logicalPair++;
+      }
+    }
   }
 
   uint32_t srcTrailerPos = (uint32_t)PZT_ACK_FRAME_LEN + payloadBytes;
@@ -1291,26 +1331,35 @@ static bool parseValueSuffix(const String &inRaw, double &outVal, bool isCapUnit
 // Parse channel list and send channel configuration to MG24.
 static bool pzt_handleChannels(const String &args) {
   pzt.channelCount = 0;
+  pzt.physicalChannelCount = 0;
   pzt.rsChannelCount = 0;
+  uint8_t maxLogicalSlots = (currentMode == MODE_PZT_RS) ? PZT_MAX_LOGICAL_SLOTS : PZT_MAX_PHYSICAL_CHANNELS;
   int i = 0, len = args.length();
-  while (i < len && pzt.channelCount < 16) {
+  while (i < len && pzt.channelCount < maxLogicalSlots) {
     while (i < len && (args[i] == ' ' || args[i] == ',')) i++;
     if (i >= len) break;
     int start = i;
     while (i < len && args[i] != ' ' && args[i] != ',') i++;
     int v = args.substring(start, i).toInt();
-    if (v >= 0 && v <= (int)PZT_MUX_CH_MAX)
-      pzt.channels[pzt.channelCount++] = (uint8_t)v;
+    if (v >= 0 && v <= (int)PZT_MUX_CH_MAX) {
+      uint8_t ch = (uint8_t)v;
+      pzt.channels[pzt.channelCount++] = ch;
+      if (pzt_physicalIndexForChannel(ch) < 0) {
+        if (pzt.physicalChannelCount >= PZT_MAX_PHYSICAL_CHANNELS) return false;
+        pzt.physicalChannels[pzt.physicalChannelCount++] = ch;
+      }
+    }
   }
   if (pzt.channelCount == 0) return false;
+  if (pzt.physicalChannelCount == 0) return false;
 
   uint8_t frame[PZT_CMD_FRAME_LEN];
   memset(frame, 0, PZT_CMD_FRAME_LEN);
   frame[0] = PZT_CMD_SET_CHANNELS;
-  frame[1] = (uint8_t)(pzt.channelCount + 1);   // nargs = count byte + N channel bytes
-  frame[2] = pzt.channelCount;
-  for (uint8_t k = 0; k < pzt.channelCount && k < 16; k++)
-    frame[3 + k] = pzt.channels[k];
+  frame[1] = (uint8_t)(pzt.physicalChannelCount + 1);   // nargs = count byte + N channel bytes
+  frame[2] = pzt.physicalChannelCount;
+  for (uint8_t k = 0; k < pzt.physicalChannelCount && k < PZT_MAX_PHYSICAL_CHANNELS; k++)
+    frame[3 + k] = pzt.physicalChannels[k];
 
   pzt_drdyClearAll();
   pzt_spiSend(frame, PZT_CMD_FRAME_LEN);
@@ -1324,10 +1373,10 @@ static bool pzt_handleChannels(const String &args) {
 static bool pzt_handleRsChannels(const String &args) {
   if (pzt.channelCount == 0) return false;
 
-  uint8_t values[32];
+  uint8_t values[PZT_MAX_LOGICAL_SLOTS * 2u];
   uint8_t valueCount = 0;
   int i = 0, len = args.length();
-  while (i < len && valueCount < 32) {
+  while (i < len && valueCount < (PZT_MAX_LOGICAL_SLOTS * 2u)) {
     while (i < len && (args[i] == ' ' || args[i] == ',')) i++;
     if (i >= len) break;
     int start = i;
@@ -1581,6 +1630,13 @@ static void pzt_printStatus() {
     if (i + 1 < pzt.channelCount) Serial.print(',');
   }
   Serial.println();
+  Serial.print(F("# physical MG24 channels (count=")); Serial.print(pzt_physicalChannelCount()); Serial.println(F("):"));
+  Serial.print(F("#   "));
+  for (uint8_t i = 0; i < pzt_physicalChannelCount(); i++) {
+    Serial.print(pzt.physicalChannels[i]);
+    if (i + 1 < pzt_physicalChannelCount()) Serial.print(',');
+  }
+  Serial.println();
   Serial.print(F("# rschannels (pairs=")); Serial.print(pzt.rsChannelCount); Serial.println(F("):"));
   Serial.print(F("#   "));
   for (uint8_t i = 0; i < pzt.rsChannelCount; i++) {
@@ -1598,7 +1654,8 @@ static void pzt_printStatus() {
   Serial.print(F("# groundPin: "));      Serial.println(pzt.groundPin);
   Serial.print(F("# groundEnable: "));   Serial.println(pzt.groundEnable ? F("true") : F("false"));
   uint32_t sc = (uint32_t)pzt.channelCount * pzt.repeatCount * pzt.sweepsPerBlock * 2u;
-  Serial.print(F("# samplesPerBlock (MUX1+MUX2 interleaved): ")); Serial.println(sc);
+  if (currentMode == MODE_PZT_RS) sc *= 2u;
+  Serial.print(F("# samplesPerBlock: ")); Serial.println(sc);
   Serial.print(F("# estimatedBlockDelayMs: ")); Serial.println(pzt_blockDelayMs());
   Serial.println(F("# NOTE: each channel slot yields 2 samples [MUX1_val, MUX2_val]"));
   Serial.println(F("# -------------------------"));
