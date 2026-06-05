@@ -56,27 +56,119 @@ class ArrayDualModePZTTests(unittest.TestCase):
         all_indices = [index for spec in specs for index in spec["sample_indices"]]
         self.assertTrue(all(0 <= index < 20 for index in all_indices))
 
-    def test_pzt_rs_mode_uses_three_value_slots_and_routes_rs_specs(self):
+    def test_pzt_rs_mode_uses_sensor_groups_with_five_pzt_and_two_rs_values(self):
         harness = DualModePZTHarness()
         harness.current_mcu = "Array_PZT_PZR1.7"
         harness.array_mode_combo = DummyCombo("PZT_RS")
 
         self.assertTrue(harness.is_array_pzt_rs_mode())
         self.assertEqual(harness.get_supported_array_operation_modes(), ("PZT", "PZR", "PZT_RS"))
-        self.assertEqual(harness.get_effective_channel_multiplier(), 4)
+        self.assertEqual(harness.get_effective_channel_multiplier(), 1)
         self.assertEqual(harness.get_channels_for_arduino_command(), harness.config["channels"])
-        self.assertEqual(harness.get_rs_mux_channels_for_arduino_command()[:4], [8, 9, 8, 9])
-        self.assertEqual(harness.get_effective_samples_per_sweep(), 60)
+        self.assertEqual(harness.get_pzt_muxes_for_arduino_command(), [1, 1, 2])
+        self.assertEqual(harness.get_rs_mux_channels_for_arduino_command(), [8, 9, 10, 11, 12, 13])
+        self.assertEqual(harness.get_effective_samples_per_sweep(), 21)
 
         pzt_specs = harness.get_display_channel_specs()
         rs_specs = harness.get_rosette_display_channel_specs()
 
         self.assertEqual(pzt_specs[0]["sample_indices"], [0])
-        self.assertEqual(pzt_specs[1]["sample_indices"], [4])
-        self.assertEqual(rs_specs[0]["sample_indices"], [2, 6, 10, 14, 18])
-        self.assertEqual(rs_specs[1]["sample_indices"], [3, 7, 11, 15, 19])
-        self.assertEqual(rs_specs[-1]["sample_indices"], [43, 47, 51, 55, 59])
+        self.assertEqual(pzt_specs[1]["sample_indices"], [1])
+        self.assertEqual(pzt_specs[5]["sample_indices"], [7])
+        self.assertEqual(rs_specs[0]["sample_indices"], [5])
+        self.assertEqual(rs_specs[1]["sample_indices"], [6])
+        self.assertEqual(rs_specs[-1]["sample_indices"], [20])
         self.assertTrue(all(spec["key"][0] == "rs" for spec in rs_specs))
+
+    def test_pcb17_five_sensor_layout_uses_seven_values_per_sensor(self):
+        harness = DualModePZTHarness()
+        harness.current_mcu = "Array_PZT_PZR1.7"
+        harness.array_mode_combo = DummyCombo("PZT_RS")
+        harness.config["selected_array_sensors"] = ["PZT1", "PZT3", "PZT6", "PZT5", "PZT7"]
+        harness.config["channels"] = [
+            0, 1, 2, 3, 4,
+            5, 6, 7, 8, 9,
+            10, 11, 12, 13, 14,
+            0, 1, 2, 3, 4,
+            5, 6, 7, 8, 9,
+        ]
+
+        def pcb17_config():
+            return {
+                "mux_mapping": {
+                    "PZT1": {"mux": 1, "channels": [0, 1, 2, 3, 4], "rs_channels": [9, 8]},
+                    "PZT3": {"mux": 1, "channels": [5, 6, 7, 8, 9], "rs_channels": [7, 6]},
+                    "PZT6": {"mux": 1, "channels": [10, 11, 12, 13, 14], "rs_channels": [2, 3]},
+                    "PZT5": {"mux": 2, "channels": [0, 1, 2, 3, 4], "rs_channels": [5, 4]},
+                    "PZT7": {"mux": 2, "channels": [5, 6, 7, 8, 9], "rs_channels": [1, 0]},
+                }
+            }
+
+        harness.get_active_sensor_configuration = pcb17_config
+
+        self.assertEqual(harness.get_channels_for_arduino_command(), harness.config["channels"])
+        self.assertEqual(harness.get_effective_samples_per_sweep(), 35)
+
+        rs_channels = harness.get_rs_mux_channels_for_arduino_command()
+        self.assertEqual(harness.get_pzt_muxes_for_arduino_command(), [1, 1, 1, 2, 2])
+        self.assertEqual(len(rs_channels), 10)
+        self.assertEqual(rs_channels, [9, 8, 7, 6, 2, 3, 5, 4, 1, 0])
+
+    def test_pcb17_two_sensor_subset_rs_indices_are_independent(self):
+        """PZT1+PZT3 subset: RS sample indices must be independently computed per sensor.
+
+        Regression test for multi-sensor RS display showing "almost constant signals":
+        if Python reads RS data from the same column for both sensors, both displays
+        would track the same physical sensor and the other would appear flat.
+        """
+        harness = DualModePZTHarness()
+        harness.current_mcu = "Array_PZT_PZR1.7"
+        harness.array_mode_combo = DummyCombo("PZT_RS")
+        harness.config["selected_array_sensors"] = ["PZT1", "PZT3"]
+        harness.config["channels"] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+        def pcb17_config():
+            return {
+                "mux_mapping": {
+                    "PZT1": {"mux": 1, "channels": [0, 1, 2, 3, 4], "rs_channels": [9, 8]},
+                    "PZT3": {"mux": 1, "channels": [5, 6, 7, 8, 9], "rs_channels": [7, 6]},
+                }
+            }
+
+        harness.get_active_sensor_configuration = pcb17_config
+
+        self.assertEqual(harness.get_effective_samples_per_sweep(), 14)
+        self.assertEqual(harness.get_channels_for_arduino_command(), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+        self.assertEqual(harness.get_pzt_muxes_for_arduino_command(), [1, 1])
+        self.assertEqual(harness.get_rs_mux_channels_for_arduino_command(), [9, 8, 7, 6])
+
+        rs_specs = harness.get_rosette_display_channel_specs()
+
+        self.assertEqual(len(rs_specs), 4)
+
+        pzt1_rs1 = next(s for s in rs_specs if s["key"] == ("rs", "PZT1", 1, 9))
+        pzt1_rs2 = next(s for s in rs_specs if s["key"] == ("rs", "PZT1", 2, 8))
+        pzt3_rs1 = next(s for s in rs_specs if s["key"] == ("rs", "PZT3", 1, 7))
+        pzt3_rs2 = next(s for s in rs_specs if s["key"] == ("rs", "PZT3", 2, 6))
+
+        # PZT1 RS values are at buffer columns 5 and 6 (sensor_index=0, base=0, +5/+6)
+        self.assertEqual(pzt1_rs1["sample_indices"], [5])
+        self.assertEqual(pzt1_rs2["sample_indices"], [6])
+
+        # PZT3 RS values are at buffer columns 12 and 13 (sensor_index=1, base=7, +5/+6)
+        self.assertEqual(pzt3_rs1["sample_indices"], [12])
+        self.assertEqual(pzt3_rs2["sample_indices"], [13])
+
+        # All indices must be within the 14-column buffer (2 sensors × 7 values)
+        all_indices = [idx for s in rs_specs for idx in s["sample_indices"]]
+        self.assertTrue(all(0 <= i < 14 for i in all_indices), f"Out-of-range indices: {all_indices}")
+
+        # PZT3 columns must be distinct from PZT1 columns
+        pzt1_cols = set(pzt1_rs1["sample_indices"] + pzt1_rs2["sample_indices"])
+        pzt3_cols = set(pzt3_rs1["sample_indices"] + pzt3_rs2["sample_indices"])
+        self.assertEqual(pzt1_cols, {5, 6})
+        self.assertEqual(pzt3_cols, {12, 13})
+        self.assertFalse(pzt1_cols & pzt3_cols, "PZT1 and PZT3 RS columns must not overlap")
 
     def test_older_array_dual_mode_does_not_select_pzt_rs(self):
         harness = DualModePZTHarness()

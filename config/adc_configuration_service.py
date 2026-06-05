@@ -39,6 +39,7 @@ class ADCConfigurationRequest:
     cf_farads: float
     rxmax_ohms: float
     array_operation_mode: str
+    pzt_muxes_to_send: list[int]
     rs_channels_to_send: list[int]
     is_array_mcu: bool
     is_array_pzt_pzr_mode: bool
@@ -187,6 +188,19 @@ class ADCConfigurationService:
         time.sleep(0.05)
 
         if request.is_array_pzt_pzr_mode and str(request.array_operation_mode).strip().upper() == "PZT_RS":
+            pzt_muxes_text = ",".join(str(mux) for mux in request.pzt_muxes_to_send)
+            if not pzt_muxes_text:
+                messages.append("PZT_RS config command failed: missing PZT MUX routing")
+                all_success = False
+            else:
+                success, received = self._send_command_and_wait_ack(f"pztmuxes {pzt_muxes_text}", pzt_muxes_text)
+                if success:
+                    messages.append(f"Set PZT_RS PZT MUX routing: {received or pzt_muxes_text}")
+                else:
+                    messages.append(f"PZT_RS config command failed: pztmuxes {pzt_muxes_text}")
+                    all_success = False
+            time.sleep(0.05)
+
             rs_channels_text = ",".join(str(channel) for channel in request.rs_channels_to_send)
             if not rs_channels_text:
                 messages.append("PZT_RS config command failed: missing RS_MUX channel routing")
@@ -353,7 +367,15 @@ class ADCConfigurationService:
         return messages
 
     def _normalize_adc_buffer_size(self, request: ADCConfigurationRequest) -> int:
-        channel_count = len(request.channels_to_send) * max(1, int(request.effective_channel_multiplier))
+        if (
+            request.is_array_pzt_pzr_mode
+            and str(request.array_operation_mode).strip().upper() == "PZT_RS"
+            and request.is_array_sensor_selection_mode
+        ):
+            pzt_sensor_count = max(1, len(request.channels) // 5)
+            channel_count = pzt_sensor_count * 7
+        else:
+            channel_count = len(request.channels_to_send) * max(1, int(request.effective_channel_multiplier))
         buffer_size = int(request.buffer_size)
         if buffer_size <= 0:
             return 128

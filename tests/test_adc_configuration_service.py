@@ -29,6 +29,7 @@ def build_request(**overrides):
         "cf_farads": 1e-9,
         "rxmax_ohms": 5000.0,
         "array_operation_mode": "PZT",
+        "pzt_muxes_to_send": [],
         "rs_channels_to_send": [],
         "is_array_mcu": False,
         "is_array_pzt_pzr_mode": False,
@@ -190,8 +191,9 @@ class ADCConfigurationServiceTests(unittest.TestCase):
                 "mode PZT_RS": (True, "PZT_RS"),
                 "osr 4": (True, "4"),
                 "gain 2": (True, "2"),
-                "channels 0,1": (True, "0,1"),
-                "rschannels 10,11,12,13": (True, "10,11,12,13"),
+                "channels 0,1,2,3,4": (True, "0,1,2,3,4"),
+                "pztmuxes 1": (True, "1"),
+                "rschannels 10,11": (True, "10,11"),
                 "repeat 3": (True, "3"),
                 "ground false": (True, "false"),
                 "buffer 32": (True, "32"),
@@ -201,13 +203,14 @@ class ADCConfigurationServiceTests(unittest.TestCase):
         service = ADCConfigurationService(send_command)
         request = build_request(
             current_mcu="Array_PZT_PZR1.7",
-            channels=[0, 1],
-            channels_to_send=[0, 1],
+            channels=[0, 1, 2, 3, 4],
+            channels_to_send=[0, 1, 2, 3, 4],
             array_operation_mode="PZT_RS",
-            rs_channels_to_send=[10, 11, 12, 13],
+            pzt_muxes_to_send=[1],
+            rs_channels_to_send=[10, 11],
             is_array_mcu=True,
             is_array_pzt_pzr_mode=True,
-            effective_channel_multiplier=4,
+            effective_channel_multiplier=1,
         )
 
         result = service.send_config_with_verification(request)
@@ -215,7 +218,8 @@ class ADCConfigurationServiceTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.resolved_device_mode, "adc")
         self.assertEqual(commands[0], ("mode PZT_RS", "PZT_RS"))
-        self.assertIn(("rschannels 10,11,12,13", "10,11,12,13"), commands)
+        self.assertIn(("pztmuxes 1", "1"), commands)
+        self.assertIn(("rschannels 10,11", "10,11"), commands)
         self.assertIn("Set Array operating mode: PZT_RS", result.messages)
 
     def test_array_pzt_rs_buffer_is_capped_for_startup_latency(self):
@@ -227,8 +231,9 @@ class ADCConfigurationServiceTests(unittest.TestCase):
                 "mode PZT_RS": (True, "PZT_RS"),
                 "osr 4": (True, "4"),
                 "gain 2": (True, "2"),
-                "channels 0,1": (True, "0,1"),
-                "rschannels 10,11,12,13": (True, "10,11,12,13"),
+                "channels 0,1,2,3,4": (True, "0,1,2,3,4"),
+                "pztmuxes 1": (True, "1"),
+                "rschannels 10,11": (True, "10,11"),
                 "repeat 1": (True, "1"),
                 "ground false": (True, "false"),
                 "buffer 64": (True, "64"),
@@ -238,15 +243,16 @@ class ADCConfigurationServiceTests(unittest.TestCase):
         service = ADCConfigurationService(send_command)
         request = build_request(
             current_mcu="Array_PZT_PZR1.7",
-            channels=[0, 1],
-            channels_to_send=[0, 1],
+            channels=[0, 1, 2, 3, 4],
+            channels_to_send=[0, 1, 2, 3, 4],
             repeat=1,
             buffer_size=1000,
             array_operation_mode="PZT_RS",
-            rs_channels_to_send=[10, 11, 12, 13],
+            pzt_muxes_to_send=[1],
+            rs_channels_to_send=[10, 11],
             is_array_mcu=True,
             is_array_pzt_pzr_mode=True,
-            effective_channel_multiplier=4,
+            effective_channel_multiplier=1,
         )
 
         result = service.send_config_with_verification(request)
