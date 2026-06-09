@@ -317,6 +317,35 @@ class ConfigurationMixin:
 
         return pzt_muxes
 
+    def get_pzt_rs_sensor_routing_summary(self) -> str:
+        """Return a compact host-side summary of resolved PZT_RS sensor routing."""
+        if not self.is_array_pzt_rs_mode() or not self.is_array_sensor_selection_mode():
+            return ""
+
+        active_config = self.get_active_sensor_configuration() if hasattr(self, 'get_active_sensor_configuration') else {}
+        mux_mapping = active_config.get('mux_mapping', {}) if isinstance(active_config, dict) else {}
+        if not isinstance(mux_mapping, dict):
+            return ""
+
+        summary_parts: list[str] = []
+        for sensor_id in list(self.config.get('selected_array_sensors', [])):
+            mapping = mux_mapping.get(sensor_id, {})
+            if not isinstance(mapping, dict) or not str(sensor_id).startswith("PZT"):
+                continue
+
+            try:
+                mux_num = int(mapping.get('mux', 1))
+            except (TypeError, ValueError):
+                mux_num = 1
+
+            adc_channels = [int(value) for value in mapping.get('channels', [])]
+            rs_channels = [int(value) for value in mapping.get('rs_channels', [])]
+            adc_text = ",".join(str(value) for value in adc_channels)
+            rs_text = ",".join(str(value) for value in rs_channels[:2])
+            summary_parts.append(f"{sensor_id}:M{mux_num} ADC[{adc_text}] RS[{rs_text}]")
+
+        return " | ".join(summary_parts)
+
     def get_effective_channel_multiplier(self) -> int:
         """Return how many physical samples each requested channel produces."""
         if self.is_array_pzt_rs_mode():
@@ -1019,6 +1048,18 @@ class ConfigurationMixin:
         """Configure Arduino with verification and retry."""
         if not self.serial_port or not self.serial_port.is_open:
             return
+
+        should_sync_sensor_editor = (
+            self.is_array_mcu_mode()
+            and hasattr(self, 'channels_input')
+            and not self.channels_input.text().strip()
+        )
+        if should_sync_sensor_editor and hasattr(self, 'sync_active_sensor_config_from_editor'):
+            try:
+                self.sync_active_sensor_config_from_editor(log_message=True, require_valid=True)
+            except ValueError as exc:
+                self.log_status(f"ERROR: Sensor configuration is invalid: {exc}")
+                return
         
         # Validate input
         try:
@@ -1033,6 +1074,10 @@ class ConfigurationMixin:
         self.update_channel_list()
         if source == 'array' and not self.channels_input.text().strip():
             self.log_status(f"Using Array sensor selection -> channels: {effective_channels_text}")
+        if source == 'array' and self.is_array_pzt_rs_mode():
+            routing_summary = self.get_pzt_rs_sensor_routing_summary()
+            if routing_summary:
+                self.log_status(f"PZT_RS routing -> {routing_summary}")
         
         self.log_status("Configuring Arduino...")
         self._apply_configure_button_state(build_configuring_state())

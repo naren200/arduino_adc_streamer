@@ -577,8 +577,6 @@ class SensorPanelMixin:
                     raise ValueError("Duplicate channels are not allowed")
                 if any(channel < 0 or channel > 15 for channel in rs_channels):
                     raise ValueError("RS_MUX channels must be in range 0-15")
-                if len(set(rs_channels)) != len(rs_channels):
-                    raise ValueError("Duplicate RS_MUX channels are not allowed")
                 if sensor_id.startswith("PZT") and rs_channels and len(rs_channels) != 2:
                     raise ValueError("PZT RS_MUX channels must contain exactly two channels")
                 if not sensor_id.startswith("PZT") and rs_channels:
@@ -882,8 +880,8 @@ class SensorPanelMixin:
         self._replace_active_sensor_config(updated_config)
         self._update_sensor_mapping_preview()
 
-    def _save_full_sensor_config_from_editor(self):
-        """Save channel mapping and optional array attachment together."""
+    def _build_normalized_sensor_config_from_editor(self):
+        """Build a normalized active sensor configuration from the current editor state."""
         cells, mux_mapping, channels_per_sensor = self._collect_array_layout_editor_data()
         updated_config = self._build_sensor_config_update(
             channel_sensor_map=position_channels_to_mapping(self._current_position_channels()),
@@ -900,7 +898,41 @@ class SensorPanelMixin:
         normalized = normalize_combined_sensor_config(updated_config)
         if not normalized:
             raise ValueError("Sensor configuration is incomplete or invalid.")
+        return normalized
 
+    def sync_active_sensor_config_from_editor(self, *, log_message: bool = False, require_valid: bool = False) -> bool:
+        """Persist valid pending editor changes so acquisition uses the visible sensor state."""
+        if self._sensor_config_ui_loading:
+            return False
+
+        try:
+            normalized = self._build_normalized_sensor_config_from_editor()
+        except ValueError as exc:
+            self._set_array_mux_warning(f"Warning: {str(exc)}")
+            if require_valid:
+                raise
+            return False
+
+        current_config = normalize_combined_sensor_config(self.get_active_sensor_configuration())
+        if current_config == normalized:
+            self._set_array_mux_warning("")
+            return False
+
+        self._replace_active_sensor_config({**normalized, "is_bundled": False})
+        self._update_sensor_mapping_preview()
+        self._set_array_mux_warning("")
+        self.sensor_status_label.setText("")
+        self.save_sensor_configurations()
+        self.refresh_sensor_mapping_usage()
+        if hasattr(self, "update_rosette_channel_list"):
+            self.update_rosette_channel_list()
+        if log_message:
+            self.log_status(f"Applied sensor editor changes: {self.active_sensor_config_name}")
+        return True
+
+    def _save_full_sensor_config_from_editor(self):
+        """Save channel mapping and optional array attachment together."""
+        normalized = self._build_normalized_sensor_config_from_editor()
         self._replace_active_sensor_config({**normalized, "is_bundled": False})
         self._update_sensor_mapping_preview()
         self._set_array_mux_warning("")

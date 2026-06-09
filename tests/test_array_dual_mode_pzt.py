@@ -80,6 +80,34 @@ class ArrayDualModePZTTests(unittest.TestCase):
         self.assertEqual(rs_specs[-1]["sample_indices"], [20])
         self.assertTrue(all(spec["key"][0] == "rs" for spec in rs_specs))
 
+    def test_pzt_rs_routing_summary_reports_mux_adc_and_rs_channels(self):
+        harness = DualModePZTHarness()
+        harness.current_mcu = "Array_PZT_PZR1.7"
+        harness.array_mode_combo = DummyCombo("PZT_RS")
+        harness.config["selected_array_sensors"] = ["PZT1", "PZT3"]
+
+        self.assertEqual(
+            harness.get_pzt_rs_sensor_routing_summary(),
+            "PZT1:M1 ADC[0,1,2,3,4] RS[8,9] | PZT3:M2 ADC[0,1,2,3,4] RS[12,13]",
+        )
+
+    def test_pzt_rs_allows_duplicate_rs_channel_pair_for_one_sensor(self):
+        harness = DualModePZTHarness()
+        harness.current_mcu = "Array_PZT_PZR1.7"
+        harness.array_mode_combo = DummyCombo("PZT_RS")
+        harness.config["selected_array_sensors"] = ["PZT1"]
+        harness.get_active_sensor_configuration = lambda: {
+            "mux_mapping": {
+                "PZT1": {"mux": 1, "channels": [0, 1, 2, 3, 4], "rs_channels": [14, 14]},
+            }
+        }
+
+        self.assertEqual(harness.get_rs_mux_channels_for_arduino_command(), [14, 14])
+        self.assertEqual(
+            harness.get_pzt_rs_sensor_routing_summary(),
+            "PZT1:M1 ADC[0,1,2,3,4] RS[14,14]",
+        )
+
     def test_pcb17_five_sensor_layout_uses_seven_values_per_sensor(self):
         harness = DualModePZTHarness()
         harness.current_mcu = "Array_PZT_PZR1.7"

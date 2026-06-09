@@ -288,8 +288,6 @@ def normalize_mux_mapping(
                     return None
                 if any(c < SENSOR_CONFIG_CHANNEL_MIN or c > SENSOR_CONFIG_CHANNEL_MAX for c in rs_channels):
                     return None
-                if len(set(rs_channels)) != len(rs_channels):
-                    return None
             elif rs_channels_raw not in (None, ""):
                 return None
             
