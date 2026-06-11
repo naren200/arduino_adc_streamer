@@ -27,6 +27,7 @@ class MCUProfile:
     device_mode: str
     show_ground_controls: bool
     show_555_controls: bool
+    osr_visible: bool
     show_teensy_controls: bool
     show_reference_control: bool
     show_gain_control: bool
@@ -76,6 +77,7 @@ def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT
             device_mode=device_mode,
             show_ground_controls=False,
             show_555_controls=True,
+            osr_visible=False,
             show_teensy_controls=False,
             show_reference_control=False,
             show_gain_control=False,
@@ -104,7 +106,8 @@ def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT
             is_555_mode=False,
             device_mode=device_mode,
             show_ground_controls=True,
-            show_555_controls=False,
+            show_555_controls=is_pzt_rs_mode,
+            osr_visible=True,
             show_teensy_controls=True,
             show_reference_control=False,
             show_gain_control=False,
@@ -132,7 +135,8 @@ def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT
         is_555_mode=False,
         device_mode=device_mode,
         show_ground_controls=True,
-        show_555_controls=False,
+        show_555_controls=is_pzt_rs_mode,
+        osr_visible=True,
         show_teensy_controls=False,
         show_reference_control=not is_array_mcu,
         show_gain_control=True,

@@ -8,6 +8,8 @@ import csv
 import json
 from pathlib import Path
 
+import numpy as np
+
 from data_processing.force_state import get_force_runtime_state
 
 
@@ -116,6 +118,7 @@ class ArchiveLoaderMixin:
             archive_timestamps = []  # timestamps embedded per sweep (new-format archives)
             invalid_archive_lines = 0
             unknown_archive_entries = 0
+            archive_rs_units = None
             
             with open(self._archive_path, 'r', encoding='utf-8') as f:
                 # First line is metadata - skip it
@@ -123,7 +126,12 @@ class ArchiveLoaderMixin:
                 if first_line.strip():
                     try:
                         metadata = json.loads(first_line)
-                        # Could extract useful info from metadata if needed
+                        if isinstance(metadata, dict):
+                            archive_rs_units = (
+                                metadata.get('metadata', {}).get('pzt_rs_rs_units')
+                                if isinstance(metadata.get('metadata'), dict)
+                                else metadata.get('pzt_rs_rs_units')
+                            )
                     except json.JSONDecodeError:
                         pass
                 
@@ -221,8 +229,20 @@ class ArchiveLoaderMixin:
                     # Just use indices
                     timestamps = list(range(len(sweeps)))
             
+            sweeps_array = np.asarray(sweeps, dtype=np.float32) if sweeps else np.asarray([], dtype=np.float32)
+            if (
+                sweeps_array.size
+                and archive_rs_units == 'centiohm'
+                and hasattr(self, 'scale_pzt_rs_rosette_samples_inplace')
+            ):
+                self.scale_pzt_rs_rosette_samples_inplace(
+                    sweeps_array,
+                    channels=self.config.get('channels', []),
+                    repeat_count=self.config.get('repeat', 1),
+                )
+
             self.log_status(f"Loaded {len(sweeps)} sweeps from archive")
-            return sweeps, timestamps
+            return sweeps_array.tolist(), timestamps
             
         except Exception as e:
             self.log_status(f"ERROR: Failed to load archive: {e}")

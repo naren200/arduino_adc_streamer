@@ -51,9 +51,33 @@ class ADCConfigurationServiceTests(unittest.TestCase):
         self.assertFalse(disconnected.success)
         self.assertIn("Connect a device", disconnected.messages[0])
         self.assertFalse(wrong_mode.success)
-        self.assertIn("not in 555 mode", wrong_mode.messages[0])
+        self.assertIn("not in 555 or PZT_RS mode", wrong_mode.messages[0])
         self.assertTrue(success.success)
         self.assertEqual(success.messages, ["Applied rb=10"])
+
+    def test_apply_555_parameter_allows_pzt_rs_mode(self):
+        service = ADCConfigurationService(lambda command, expected: (True, "220n"))
+
+        result = service.apply_555_parameter(
+            "cf",
+            "2.2e-07",
+            is_connected=True,
+            device_mode="adc",
+            allow_in_pzt_rs_mode=True,
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.messages, ["Applied cf=220n"])
+
+    def test_estimate_555_pair_timeout_ms_matches_pcb17_rs_defaults(self):
+        timeout_ms = ADCConfigurationService.estimate_555_pair_timeout_ms(
+            rb_ohms=470.0,
+            rk_ohms=470.0,
+            cf_farads=220e-9,
+            rxmax_ohms=65500.0,
+        )
+
+        self.assertEqual(timeout_ms, 51)
 
     def test_send_adc_config_runs_expected_command_sequence(self):
         commands = []
@@ -194,6 +218,10 @@ class ADCConfigurationServiceTests(unittest.TestCase):
                 "channels 0,1,2,3,4": (True, "0,1,2,3,4"),
                 "pztmuxes 1": (True, "1"),
                 "rschannels 10,11": (True, "10,11"),
+                "rb 1000": (True, "1000"),
+                "rk 2000": (True, "2000"),
+                "cf 1e-09": (True, "1e-09"),
+                "rxmax 5000": (True, "5000"),
                 "repeat 3": (True, "3"),
                 "ground false": (True, "false"),
                 "buffer 32": (True, "32"),
@@ -220,6 +248,10 @@ class ADCConfigurationServiceTests(unittest.TestCase):
         self.assertEqual(commands[0], ("mode PZT_RS", "PZT_RS"))
         self.assertIn(("pztmuxes 1", "1"), commands)
         self.assertIn(("rschannels 10,11", "10,11"), commands)
+        self.assertIn(("rb 1000", None), commands)
+        self.assertIn(("rk 2000", None), commands)
+        self.assertIn(("cf 1e-09", None), commands)
+        self.assertIn(("rxmax 5000", None), commands)
         self.assertIn("Set Array operating mode: PZT_RS", result.messages)
 
     def test_array_pzt_rs_buffer_is_capped_for_startup_latency(self):
@@ -234,6 +266,10 @@ class ADCConfigurationServiceTests(unittest.TestCase):
                 "channels 0,1,2,3,4": (True, "0,1,2,3,4"),
                 "pztmuxes 1": (True, "1"),
                 "rschannels 10,11": (True, "10,11"),
+                "rb 1000": (True, "1000"),
+                "rk 2000": (True, "2000"),
+                "cf 1e-09": (True, "1e-09"),
+                "rxmax 5000": (True, "5000"),
                 "repeat 1": (True, "1"),
                 "ground false": (True, "false"),
                 "buffer 64": (True, "64"),

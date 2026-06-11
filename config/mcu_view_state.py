@@ -39,7 +39,7 @@ def build_mcu_view_state(profile) -> MCUViewState:
         yaxis_units_value=profile.yaxis_units_value,
         buffer_size_max=profile.buffer_size_max,
         show_charge_discharge_labels=profile.show_charge_discharge_labels,
-        osr_visible=not profile.show_555_controls,
+        osr_visible=profile.osr_visible,
         osr_label_text=profile.osr_label_text,
         osr_options=tuple(profile.osr_options),
         osr_default=profile.osr_default,

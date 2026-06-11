@@ -7,6 +7,7 @@ Owns ADC/555 protocol sequencing and verification without mutating GUI widgets.
 from __future__ import annotations
 
 import time
+import math
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -69,12 +70,20 @@ class ADCConfigurationService:
     def __init__(self, send_command_and_wait_ack: Callable[[str, str | None], tuple[bool, str | None]]):
         self._send_command_and_wait_ack = send_command_and_wait_ack
 
-    def apply_555_parameter(self, command_name: str, value: str, *, is_connected: bool, device_mode: str) -> ADCCommandResult:
+    def apply_555_parameter(
+        self,
+        command_name: str,
+        value: str,
+        *,
+        is_connected: bool,
+        device_mode: str,
+        allow_in_pzt_rs_mode: bool = False,
+    ) -> ADCCommandResult:
         if not is_connected:
             return ADCCommandResult(False, messages=["ERROR: Connect a device before applying 555 parameters"])
 
-        if device_mode != "555":
-            return ADCCommandResult(False, messages=["Ignoring 555 parameter apply while not in 555 mode"])
+        if device_mode != "555" and not allow_in_pzt_rs_mode:
+            return ADCCommandResult(False, messages=["Ignoring 555 parameter apply while not in 555 or PZT_RS mode"])
 
         success, received = self._send_command_and_wait_ack(f"{command_name} {value}", None)
         if not success:
@@ -82,6 +91,15 @@ class ADCConfigurationService:
 
         shown = received if received not in (None, "") else value
         return ADCCommandResult(True, received, [f"Applied {command_name}={shown}"])
+
+    @staticmethod
+    def estimate_555_pair_timeout_ms(*, rb_ohms: float, rk_ohms: float, cf_farads: float, rxmax_ohms: float) -> int:
+        ra = max(0.0, float(rxmax_ohms) + float(rk_ohms))
+        rb = max(1.0, float(rb_ohms))
+        c = max(1e-15, float(cf_farads))
+        timeout_ms = math.log(2.0) * c * (ra + 2.0 * rb) * 1000.0 * 3.0 + 20.0
+        timeout_ms = max(50.0, min(5000.0, timeout_ms))
+        return int(math.ceil(timeout_ms))
 
     def send_config_with_verification(self, request: ADCConfigurationRequest) -> ADCConfigurationResult:
         messages: list[str] = []
@@ -213,6 +231,21 @@ class ADCConfigurationService:
                     messages.append(f"PZT_RS config command failed: rschannels {rs_channels_text}")
                     all_success = False
             time.sleep(0.05)
+
+            command_values = [
+                ("rb", str(int(round(request.rb_ohms)))),
+                ("rk", str(int(round(request.rk_ohms)))),
+                ("cf", f"{request.cf_farads:.12g}"),
+                ("rxmax", str(int(round(request.rxmax_ohms)))),
+            ]
+            for command, value in command_values:
+                success, received = self._send_command_and_wait_ack(f"{command} {value}", None)
+                if success:
+                    messages.append(f"Set PZT_RS {command}: {received or value}")
+                else:
+                    messages.append(f"PZT_RS config command failed: {command} {value}")
+                    all_success = False
+                time.sleep(0.05)
 
         repeat_text = str(request.repeat)
         success, received = self._send_command_and_wait_ack(f"repeat {repeat_text}", repeat_text)

@@ -1,5 +1,7 @@
 import unittest
 
+import numpy as np
+
 from config.config_handlers import ConfigurationMixin
 
 
@@ -197,6 +199,58 @@ class ArrayDualModePZTTests(unittest.TestCase):
         self.assertEqual(pzt1_cols, {5, 6})
         self.assertEqual(pzt3_cols, {12, 13})
         self.assertFalse(pzt1_cols & pzt3_cols, "PZT1 and PZT3 RS columns must not overlap")
+
+    def test_pzt_rs_rosette_scaling_only_touches_rs_columns(self):
+        harness = DualModePZTHarness()
+        harness.current_mcu = "Array_PZT_PZR1.7"
+        harness.array_mode_combo = DummyCombo("PZT_RS")
+        harness.config["selected_array_sensors"] = ["PZT1", "PZT3"]
+        harness.config["channels"] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+        def pcb17_config():
+            return {
+                "mux_mapping": {
+                    "PZT1": {"mux": 1, "channels": [0, 1, 2, 3, 4], "rs_channels": [9, 8]},
+                    "PZT3": {"mux": 1, "channels": [5, 6, 7, 8, 9], "rs_channels": [7, 6]},
+                }
+            }
+
+        harness.get_active_sensor_configuration = pcb17_config
+
+        sample_matrix = np.asarray(
+            [
+                [10, 11, 12, 13, 14, 12345, 23456, 20, 21, 22, 23, 24, 34567, 45678],
+                [30, 31, 32, 33, 34, 22345, 33456, 40, 41, 42, 43, 44, 44567, 55678],
+            ],
+            dtype=np.float32,
+        )
+
+        harness.scale_pzt_rs_rosette_samples_inplace(sample_matrix)
+
+        np.testing.assert_allclose(sample_matrix[:, :5], [[10, 11, 12, 13, 14], [30, 31, 32, 33, 34]])
+        np.testing.assert_allclose(sample_matrix[:, 7:12], [[20, 21, 22, 23, 24], [40, 41, 42, 43, 44]])
+        np.testing.assert_allclose(sample_matrix[:, 5], [123.45, 223.45])
+        np.testing.assert_allclose(sample_matrix[:, 6], [234.56, 334.56])
+        np.testing.assert_allclose(sample_matrix[:, 12], [345.67, 445.67])
+        np.testing.assert_allclose(sample_matrix[:, 13], [456.78, 556.78])
+
+    def test_pzt_rs_rosette_scaling_handles_one_sweep_vector(self):
+        harness = DualModePZTHarness()
+        harness.current_mcu = "Array_PZT_PZR1.7"
+        harness.array_mode_combo = DummyCombo("PZT_RS")
+        harness.config["selected_array_sensors"] = ["PZT1"]
+        harness.config["channels"] = [0, 1, 2, 3, 4]
+        harness.get_active_sensor_configuration = lambda: {
+            "mux_mapping": {
+                "PZT1": {"mux": 1, "channels": [0, 1, 2, 3, 4], "rs_channels": [14, 14]},
+            }
+        }
+
+        sweep = np.asarray([1, 2, 3, 4, 5, 12345, 23456], dtype=np.float32)
+
+        harness.scale_pzt_rs_rosette_samples_inplace(sweep)
+
+        np.testing.assert_allclose(sweep, [1, 2, 3, 4, 5, 123.45, 234.56])
 
     def test_older_array_dual_mode_does_not_select_pzt_rs(self):
         harness = DualModePZTHarness()

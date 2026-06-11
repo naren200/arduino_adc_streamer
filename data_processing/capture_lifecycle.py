@@ -158,6 +158,11 @@ class CaptureLifecycleMixin:
                     'osr': self.config.get('osr'),
                     'gain': self.config.get('gain'),
                     'reference': self.config.get('reference'),
+                    'pzt_rs_rs_units': (
+                        'centiohm'
+                        if hasattr(self, 'is_array_pzt_rs_mode') and self.is_array_pzt_rs_mode()
+                        else None
+                    ),
                     'notes': self.notes_input.toPlainText() if hasattr(self, 'notes_input') else None,
                     'start_time': datetime.now().isoformat()
                 }

@@ -4,6 +4,8 @@ Configuration Management Mixin
 Handles all configuration event handlers and Arduino configuration workflow.
 """
 
+import math
+import numpy as np
 from PyQt6.QtCore import Qt
 
 from config.adc_configuration_service import ADCConfigurationRequest
@@ -22,6 +24,10 @@ from constants.serial import MAX_SAMPLES_BUFFER
 from constants.defaults_555 import (
     ANALYZER555_DEFAULT_CF_UNIT,
     ANALYZER555_DEFAULT_CF_VALUE,
+    ANALYZER555_DEFAULT_CF_FARADS,
+    ANALYZER555_DEFAULT_RB_OHMS,
+    ANALYZER555_DEFAULT_RK_OHMS,
+    ANALYZER555_DEFAULT_RXMAX_OHMS,
 )
 from constants.ui import MAX_PLOT_COLUMNS
 from config.buffer_utils import validate_and_limit_sweeps_per_block
@@ -43,6 +49,25 @@ class ConfigurationMixin:
         if vref_str == "ext":
             return 1.25
         return 3.3
+
+    def get_estimated_555_pair_timeout_ms(self) -> int:
+        return self.adc_configuration_service.estimate_555_pair_timeout_ms(
+            rb_ohms=float(self.config.get('rb_ohms', ANALYZER555_DEFAULT_RB_OHMS)),
+            rk_ohms=float(self.config.get('rk_ohms', ANALYZER555_DEFAULT_RK_OHMS)),
+            cf_farads=float(self.config.get('cf_farads', ANALYZER555_DEFAULT_CF_FARADS)),
+            rxmax_ohms=float(self.config.get('rxmax_ohms', ANALYZER555_DEFAULT_RXMAX_OHMS)),
+        )
+
+    def get_estimated_pzt_rs_channel_timeout_ms(self) -> int:
+        return self.get_estimated_555_pair_timeout_ms() * 3
+
+    def uses_generic_555_tuning_defaults(self) -> bool:
+        return (
+            math.isclose(float(self.config.get('rb_ohms', ANALYZER555_DEFAULT_RB_OHMS)), ANALYZER555_DEFAULT_RB_OHMS, rel_tol=0.0, abs_tol=1e-9)
+            and math.isclose(float(self.config.get('rk_ohms', ANALYZER555_DEFAULT_RK_OHMS)), ANALYZER555_DEFAULT_RK_OHMS, rel_tol=0.0, abs_tol=1e-9)
+            and math.isclose(float(self.config.get('cf_farads', ANALYZER555_DEFAULT_CF_FARADS)), ANALYZER555_DEFAULT_CF_FARADS, rel_tol=0.0, abs_tol=1e-15)
+            and math.isclose(float(self.config.get('rxmax_ohms', ANALYZER555_DEFAULT_RXMAX_OHMS)), ANALYZER555_DEFAULT_RXMAX_OHMS, rel_tol=0.0, abs_tol=1e-9)
+        )
 
     def _apply_configure_button_state(self, state):
         self.configure_btn.setEnabled(state.enabled)
@@ -706,6 +731,40 @@ class ConfigurationMixin:
             })
 
         return specs
+
+    def get_pzt_rs_rosette_value_scale(self) -> float:
+        """Return the host-side scale factor for PZT_RS RS payload words."""
+        return 0.01
+
+    def get_pzt_rs_rosette_sample_indices(self, channels=None, repeat_count=None) -> list[int]:
+        """Return unique per-sweep sample columns that hold PZT_RS RS values."""
+        indices = {
+            int(sample_index)
+            for spec in self.get_rosette_display_channel_specs(channels=channels, repeat_count=repeat_count)
+            for sample_index in spec.get('sample_indices', [])
+        }
+        return sorted(index for index in indices if index >= 0)
+
+    def scale_pzt_rs_rosette_samples_inplace(self, sample_matrix, channels=None, repeat_count=None):
+        """Convert PZT_RS RS payload words from centi-ohms to ohms in place."""
+        if not self.is_array_pzt_rs_mode() or sample_matrix is None:
+            return sample_matrix
+
+        rs_indices = self.get_pzt_rs_rosette_sample_indices(channels=channels, repeat_count=repeat_count)
+        if not rs_indices:
+            return sample_matrix
+
+        array = np.asarray(sample_matrix)
+        valid_indices = [index for index in rs_indices if index < (array.shape[-1] if array.ndim > 0 else 0)]
+        if not valid_indices:
+            return sample_matrix
+
+        scale = float(self.get_pzt_rs_rosette_value_scale())
+        if array.ndim == 1:
+            array[valid_indices] *= scale
+        elif array.ndim >= 2:
+            array[..., valid_indices] *= scale
+        return sample_matrix
     
     # ========================================================================
     # Configuration Event Handlers (on_*_changed methods)
@@ -968,6 +1027,7 @@ class ConfigurationMixin:
             value,
             is_connected=bool(self.serial_port and self.serial_port.is_open),
             device_mode=str(getattr(self, 'device_mode', 'adc')),
+            allow_in_pzt_rs_mode=self.is_array_pzt_rs_mode(),
         )
         for message in result.messages:
             self.log_status(message)
@@ -1078,6 +1138,15 @@ class ConfigurationMixin:
             routing_summary = self.get_pzt_rs_sensor_routing_summary()
             if routing_summary:
                 self.log_status(f"PZT_RS routing -> {routing_summary}")
+            self.log_status(
+                "PZT_RS timing -> "
+                f"pair_timeout_ms={self.get_estimated_555_pair_timeout_ms()}, "
+                f"channel_timeout_ms={self.get_estimated_pzt_rs_channel_timeout_ms()}, "
+                f"rb={float(self.config.get('rb_ohms', 0.0)):.0f}Ω, "
+                f"rk={float(self.config.get('rk_ohms', 0.0)):.0f}Ω, "
+                f"cf={float(self.config.get('cf_farads', 0.0)):.12g}F, "
+                f"rxmax={float(self.config.get('rxmax_ohms', 0.0)):.0f}Ω"
+            )
         
         self.log_status("Configuring Arduino...")
         self._apply_configure_button_state(build_configuring_state())

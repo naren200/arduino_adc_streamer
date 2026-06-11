@@ -10,6 +10,9 @@ from config.mcu_state import (
     build_unknown_mcu_state,
 )
 from config.mcu_view_state import build_mcu_view_state
+from constants.defaults_555 import (
+    ANALYZER555_DEFAULT_RXMAX_OHMS,
+)
 from constants.serial import MCU_DETECTION_TIMEOUT_SEC
 
 
@@ -31,6 +34,44 @@ class MCUDetectorMixin:
 
     def is_555_analyzer_mode(self) -> bool:
         return getattr(self, 'device_mode', 'adc') == '555'
+
+    def _maybe_apply_pzt_rs_tuning_defaults(self, profile) -> None:
+        if not getattr(profile, "is_pzt_rs_mode", False):
+            return
+        if not hasattr(self, "config"):
+            return
+        if not hasattr(self, "uses_generic_555_tuning_defaults"):
+            return
+        if not self.uses_generic_555_tuning_defaults():
+            return
+
+        self.config['rb_ohms'] = 470.0
+        self.config['rk_ohms'] = 470.0
+        self.config['cf_farads'] = 220e-9
+        self.config['rxmax_ohms'] = ANALYZER555_DEFAULT_RXMAX_OHMS
+
+        if hasattr(self, 'rb_spin'):
+            self.rb_spin.blockSignals(True)
+            self.rb_spin.setValue(470.0)
+            self.rb_spin.blockSignals(False)
+        if hasattr(self, 'rk_spin'):
+            self.rk_spin.blockSignals(True)
+            self.rk_spin.setValue(470.0)
+            self.rk_spin.blockSignals(False)
+        if hasattr(self, 'cf_value_spin'):
+            self.cf_value_spin.blockSignals(True)
+            self.cf_value_spin.setValue(220.0)
+            self.cf_value_spin.blockSignals(False)
+        if hasattr(self, 'cf_unit_combo'):
+            self.cf_unit_combo.blockSignals(True)
+            self.cf_unit_combo.setCurrentText("nF")
+            self.cf_unit_combo.blockSignals(False)
+        if hasattr(self, 'rxmax_spin'):
+            self.rxmax_spin.blockSignals(True)
+            self.rxmax_spin.setValue(ANALYZER555_DEFAULT_RXMAX_OHMS)
+            self.rxmax_spin.blockSignals(False)
+
+        self.log_status("PZT_RS defaults loaded: rb=470Ω, rk=470Ω, cf=220nF, rxmax=65500Ω")
 
     def _apply_mcu_state(self, state):
         previous_mcu = self.current_mcu
@@ -175,6 +216,7 @@ class MCUDetectorMixin:
         profile = resolve_mcu_profile(self.current_mcu, selected_array_mode=selected_mode)
         view_state = build_mcu_view_state(profile)
         self.device_mode = profile.device_mode
+        self._maybe_apply_pzt_rs_tuning_defaults(profile)
 
         if profile.is_array_dual and hasattr(self, 'config'):
             self.config['array_operation_mode'] = selected_mode

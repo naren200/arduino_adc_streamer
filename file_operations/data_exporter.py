@@ -186,6 +186,24 @@ class DataExporterMixin:
 
         return None
 
+    def _read_archive_metadata(self, archive_path: Path) -> dict:
+        """Return the parsed archive metadata header when available."""
+        try:
+            with archive_path.open('r', encoding='utf-8') as handle:
+                first_line = handle.readline().strip()
+        except Exception:
+            return {}
+
+        if not first_line:
+            return {}
+
+        try:
+            metadata = json.loads(first_line)
+        except json.JSONDecodeError:
+            return {}
+
+        return metadata if isinstance(metadata, dict) else {}
+
     def _iter_archive_sweep_records(self, archive_path: Path):
         """Yield archived sweeps without materializing the full capture in memory."""
         with archive_path.open('r', encoding='utf-8') as handle:
@@ -239,6 +257,12 @@ class DataExporterMixin:
         first_sweep_len = 0
         filter_runtime = None
         total_fs_hz = 0.0
+        archive_metadata = self._read_archive_metadata(archive_path)
+        archive_rs_units = (
+            archive_metadata.get('metadata', {}).get('pzt_rs_rs_units')
+            if isinstance(archive_metadata.get('metadata'), dict)
+            else archive_metadata.get('pzt_rs_rs_units')
+        )
 
         if apply_filter:
             total_fs_hz = float(self._get_filter_total_sample_rate_hz())
@@ -251,6 +275,12 @@ class DataExporterMixin:
                 return
 
             data = np.asarray(chunk_sweeps, dtype=np.float32)
+            if archive_rs_units == 'centiohm' and hasattr(self, 'scale_pzt_rs_rosette_samples_inplace'):
+                self.scale_pzt_rs_rosette_samples_inplace(
+                    data,
+                    channels=self.config.get('channels', []),
+                    repeat_count=self.config.get('repeat', 1),
+                )
             if first_sweep_len <= 0 and data.ndim == 2 and len(data) > 0:
                 first_sweep_len = int(data.shape[1])
 

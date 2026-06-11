@@ -128,6 +128,12 @@ class BinaryProcessorMixin:
                 # Keep uint16 view for archive (preserves integer format); cast to float32 for processing.
                 block_u16 = samples[:total_samples].reshape(sweeps_in_block, samples_per_sweep)
                 block_samples_array = block_u16.astype(np.float32)
+                if hasattr(self, 'scale_pzt_rs_rosette_samples_inplace'):
+                    self.scale_pzt_rs_rosette_samples_inplace(
+                        block_samples_array,
+                        channels=self.config.get('channels', []),
+                        repeat_count=self.config.get('repeat', 1),
+                    )
                 # Track block sizing for timing export (keep only recent)
                 timing.block_sample_counts.append(total_samples)
                 timing.block_sweeps_counts.append(sweeps_in_block)
