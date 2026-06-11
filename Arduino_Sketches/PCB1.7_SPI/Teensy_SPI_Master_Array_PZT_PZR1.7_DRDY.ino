@@ -234,6 +234,9 @@ static volatile uint32_t pztRsIsrFires      = 0;  // counts every pzr_isr555 cal
 static volatile uint8_t pztRsActiveChannel  = 0xFF;
 static uint8_t        pztRsBlockBuf[PZT_RS_MAX_BLOCK_BYTES] DMAMEM;
 static uint16_t       pztRsLastRaQByChannel[16] = {0};
+static float          pztRsHoldMedianBufByChannel[16][5] = {{0.0f}};
+static uint8_t        pztRsHoldMedianIdxByChannel[16] = {0};
+static uint8_t        pztRsHoldMedianCountByChannel[16] = {0};
 static uint32_t       pztRsUpdateCountByChannel[16] = {0};
 static uint32_t       pztRsLastUpdateMsByChannel[16] = {0};
 static volatile uint32_t pztRsRiseEdgesByChannel[16] = {0};
@@ -253,18 +256,23 @@ static int8_t         pztRsPrevMeasuredChannel = -1;
 static uint8_t        pztRsRefreshIndex = 0;
 static uint32_t       pztRsLastRefreshMs = 0;
 static const uint32_t PZT_RS_REFRESH_MIN_MS = 0; // Pair-ready paced; do not add artificial scan delay.
+static const uint8_t  PZT_RS_MEASURE_PAIRS_PER_UPDATE = 3;
+static const uint8_t  PZT_RS_HELD_MEDIAN_N = 5;
 
 enum PZTRsRefreshStage { PZT_RS_REFRESH_IDLE, PZT_RS_REFRESH_DISCARD, PZT_RS_REFRESH_MEASURE };
 static PZTRsRefreshStage pztRsRefreshStage = PZT_RS_REFRESH_IDLE;
 static uint8_t           pztRsPendingChannel = 0;
 static uint8_t           pztRsDiscardRemaining = 0;
+static float             pztRsMeasureRaBuf[3] = {0.0f, 0.0f, 0.0f};
+static uint8_t           pztRsMeasurePairsCollected = 0;
 
 // Forward declarations for MODE_PZT_RS helpers used by SPI service paths.
 static void pzt_rsResetState();
 static void pzt_rsStartNextRefreshChannel();
 static void pzt_rsServiceRefresh(bool allowChannelSwitch = true);
 static bool pzt_buildCombinedBlock(const uint8_t *src, uint32_t srcLen,
-                                   uint8_t *dst, uint32_t &dstLen);
+                                   uint8_t *dst, uint32_t &dstLen,
+                                   const uint16_t *heldRaQSnapshot);
 static void pzr_printChannelTimingDiagnostics(
     uint8_t ch,
     const __FlashStringHelper *prefix = F("# RS timing "));
@@ -314,6 +322,11 @@ static constexpr uint32_t TIMER555_MUX_SETTLE_NS          = 100;
 // After switching the RS MUX channel, discard this cycles before measurement
 static constexpr int      PZR_DISCARD_CYCLES_AFTER_SWITCH = 1;
 static constexpr int      PZR_RA_MA_N                     = 1;  // Ra smoothing per MUX channel; set to 1 to disable MA
+static constexpr int      PZR_RA_MEDIAN_N                 = 3;  // Median-of-3 rejects isolated one-pair spikes
+static constexpr float    PZR_RS_SPIKE_REJECT_DELTA_OHM   = 0.35f;
+static constexpr float    PZR_RS_SPIKE_CONFIRM_DELTA_OHM  = 0.20f;
+static constexpr float    PZR_DISCHARGE_SWITCH_OHM        = 65.0f; // 555 discharge transistor / switch resistance estimate
+static constexpr float    PZR_RS_MAX_LOWCYC_MODEL_RATIO   = 1.50f; // discard if measured lCyc exceeds 1.5x the modeled discharge time
 static constexpr int      PZR_LCYC_MA_N                   = 1;  // set to 1 to use the raw measured low-cycle directly
 static constexpr int      PZR_MAX_CHANNEL_SEQUENCE        = 64;
 static constexpr uint16_t PZR_MAX_BLOCK_SAMPLES           = 2048;
@@ -353,12 +366,20 @@ static uint32_t pzr_runStopMillis = 0;
 
 static uint16_t pzr_sampleBuf[PZR_MAX_BLOCK_SAMPLES];
 
+enum PZRCaptureEdge : uint8_t {
+  PZR_EDGE_NONE = 0,
+  PZR_EDGE_RISE = 1,
+  PZR_EDGE_FALL = 2
+};
+
 // 555 capture state — written in ISR, read in main loop
 struct PZR_CaptureState {
   volatile uint32_t lastRiseCycles = 0;
   volatile uint32_t lastFallCycles = 0;
   volatile uint32_t highCycles     = 0;
   volatile uint32_t lowCycles      = 0;
+  volatile uint32_t sequenceErrors = 0;
+  volatile uint8_t  lastEdge       = PZR_EDGE_NONE;
   volatile bool     pairReady      = false;
 };
 static PZR_CaptureState pzr_cap;
@@ -367,9 +388,15 @@ static PZR_CaptureState pzr_cap;
 // The reported PZR sample is now Ra=(Rx+Rk), not Rx.
 struct PZR_ChannelState {
   float raBuf[PZR_RA_MA_N];
+  float raMedianBuf[PZR_RA_MEDIAN_N];
   float raSum       = 0.0f;
   int   raIdx       = 0;
   int   raCount     = 0;
+  int   raMedianIdx = 0;
+  int   raMedianCount = 0;
+  float pendingSpikeRa = NAN;
+  uint32_t spikeRejectCount = 0;
+  uint32_t periodRejectCount = 0;
   uint32_t lastHCyc = 0;
   uint32_t lastLCyc = 0;
   float lastLCycAvgUsed = NAN;
@@ -379,7 +406,12 @@ struct PZR_ChannelState {
   void reset() {
     raSum = 0.0f;
     raIdx = raCount = 0;
+    raMedianIdx = raMedianCount = 0;
+    pendingSpikeRa = NAN;
+    spikeRejectCount = 0;
+    periodRejectCount = 0;
     for (int i = 0; i < PZR_RA_MA_N; i++) raBuf[i] = 0.0f;
+    for (int i = 0; i < PZR_RA_MEDIAN_N; i++) raMedianBuf[i] = 0.0f;
     lastHCyc = 0;
     lastLCyc = 0;
     lastLCycAvgUsed = NAN;
@@ -660,7 +692,9 @@ static void pzt_logStreamSummary() {
   Serial.print(F(", fallback_acks="));
   Serial.print(pztAcksFromFallback);
   Serial.print(F(", transient_rx_errors="));
-  Serial.println(pztTransientRxErrorsTotal);
+  Serial.print(pztTransientRxErrorsTotal);
+  Serial.print(F(", capture_sequence_errors="));
+  Serial.println(pzr_cap.sequenceErrors);
 
   if (currentMode == MODE_PZT_RS) {
     for (uint8_t i = 0; i < pzt.rsRefreshChannelCount; ++i) {
@@ -682,6 +716,14 @@ static bool pzt_recordRxError(const __FlashStringHelper *reason) {
 // Clear consecutive RX error streak after a successful frame.
 static inline void pzt_clearRxErrors() {
   pztConsecutiveRxErrors = 0;
+}
+
+static void pzt_rsSnapshotHeldValues(uint16_t *dst, uint8_t count = 16) {
+  if (!dst) return;
+  if (count > 16) count = 16;
+  noInterrupts();
+  for (uint8_t i = 0; i < count; ++i) dst[i] = pztRsLastRaQByChannel[i];
+  interrupts();
 }
 
 // Parse one received streaming frame (ACK or block) and update shared state.
@@ -719,8 +761,11 @@ static bool pzt_handleStreamingFrame(PZTQueuedBlock *slot, bool fromDrdy) {
 
   uint32_t queuedLen = pztStreamBlockBytes;
   if (currentMode == MODE_PZT_RS) {
+    uint16_t rsHeldSnapshot[16];
     pzt_rsServiceRefresh(false);
-    if (!pzt_buildCombinedBlock(slot->data, pztStreamBlockBytes, pztRsBlockBuf, queuedLen)) {
+    pzt_rsSnapshotHeldValues(rsHeldSnapshot);
+    if (!pzt_buildCombinedBlock(
+            slot->data, pztStreamBlockBytes, pztRsBlockBuf, queuedLen, rsHeldSnapshot)) {
       pztStreamFault = true;
       pzt.running = false;
       return false;
@@ -1017,19 +1062,43 @@ void pzr_isr555() {
   const bool     levelHigh = digitalReadFast(TIMER555_ICP_PIN);
   const uint8_t  activeRsCh = pztRsActiveChannel;
   const bool     trackRsCh = (currentMode == MODE_PZT_RS && activeRsCh < 16);
+  const uint8_t  prevEdge = pzr_cap.lastEdge;
+  const bool     sawRepeatedEdge =
+      (prevEdge != PZR_EDGE_NONE) &&
+      ((levelHigh && prevEdge == PZR_EDGE_RISE) || (!levelHigh && prevEdge == PZR_EDGE_FALL));
 
   pztRsIsrFires++;
 
   if (levelHigh) { // Raising edge, start of charge cycle, end of discharge cycle
     if (trackRsCh) pztRsRiseEdgesByChannel[activeRsCh]++;
-    if (pzr_cap.lastFallCycles != 0)
+    // Once a new cycle starts, discard any previously completed pair that has
+    // not been consumed yet so we never mix an old high-time with a new low-time.
+    if (pzr_cap.pairReady) {
+      pzr_cap.highCycles = 0;
+      pzr_cap.lowCycles = 0;
+      pzr_cap.pairReady = false;
+    }
+
+    if (prevEdge == PZR_EDGE_FALL && pzr_cap.lastFallCycles != 0) {
       pzr_cap.lowCycles = cycNow - pzr_cap.lastFallCycles;
+    } else {
+      pzr_cap.lowCycles = 0;
+      pzr_cap.pairReady = false;
+      if (sawRepeatedEdge) pzr_cap.sequenceErrors++;
+    }
     pzr_cap.lastRiseCycles = cycNow;
+    pzr_cap.lastEdge = PZR_EDGE_RISE;
   } else { // Falling edge, start of discharge cycle, end of charge cycle
     if (trackRsCh) pztRsFallEdgesByChannel[activeRsCh]++;
-    if (pzr_cap.lastRiseCycles != 0)
+    if (prevEdge == PZR_EDGE_RISE && pzr_cap.lastRiseCycles != 0) {
       pzr_cap.highCycles = cycNow - pzr_cap.lastRiseCycles;
+    } else {
+      pzr_cap.highCycles = 0;
+      pzr_cap.pairReady = false;
+      if (sawRepeatedEdge) pzr_cap.sequenceErrors++;
+    }
     pzr_cap.lastFallCycles = cycNow;
+    pzr_cap.lastEdge = PZR_EDGE_FALL;
     if (pzr_cap.highCycles && pzr_cap.lowCycles) {
       if (trackRsCh) {
         pztRsPairsReadyByChannel[activeRsCh]++;
@@ -1048,7 +1117,14 @@ static inline void pzr_resetCaptureState() {
   pzr_cap.lastFallCycles = 0;
   pzr_cap.highCycles     = 0;
   pzr_cap.lowCycles      = 0;
+  pzr_cap.lastEdge       = PZR_EDGE_NONE;
   pzr_cap.pairReady      = false;
+  interrupts();
+}
+
+static inline void pzr_resetCaptureDiagnostics() {
+  noInterrupts();
+  pzr_cap.sequenceErrors = 0;
   interrupts();
 }
 
@@ -1078,6 +1154,8 @@ static bool pzr_waitForPair(uint32_t &hCyc, uint32_t &lCyc,
   noInterrupts();
   hCyc = pzr_cap.highCycles;
   lCyc = pzr_cap.lowCycles;
+  pzr_cap.highCycles = 0;
+  pzr_cap.lowCycles = 0;
   pzr_cap.pairReady = false;
   interrupts();
   return (hCyc != 0 && lCyc != 0);
@@ -1089,6 +1167,8 @@ static bool pzr_takeReadyPair(uint32_t &hCyc, uint32_t &lCyc) {
   noInterrupts();
   hCyc = pzr_cap.highCycles;
   lCyc = pzr_cap.lowCycles;
+  pzr_cap.highCycles = 0;
+  pzr_cap.lowCycles = 0;
   pzr_cap.pairReady = false;
   interrupts();
   return (hCyc != 0 && lCyc != 0);
@@ -1105,6 +1185,61 @@ static inline float pzr_updateMA(float *buf, float &sum, int &idx,
   return sum / count;
 }
 
+static inline float pzr_median3(float a, float b, float c) {
+  if (a > b) { float t = a; a = b; b = t; }
+  if (b > c) { float t = b; b = c; c = t; }
+  if (a > b) { float t = a; a = b; b = t; }
+  return b;
+}
+
+static inline float pzr_updateMedian3(float *buf, int &idx, int &count, float val) {
+  buf[idx] = val;
+  idx = (idx + 1) % PZR_RA_MEDIAN_N;
+  if (count < PZR_RA_MEDIAN_N) count++;
+  if (count < PZR_RA_MEDIAN_N) return val;
+  return pzr_median3(buf[0], buf[1], buf[2]);
+}
+
+static float pzt_rsMedianN(const float *buf, uint8_t count) {
+  if (!buf || count == 0) return 0.0f;
+  float sorted[PZT_RS_HELD_MEDIAN_N];
+  for (uint8_t i = 0; i < count && i < PZT_RS_HELD_MEDIAN_N; ++i) sorted[i] = buf[i];
+  for (uint8_t i = 1; i < count && i < PZT_RS_HELD_MEDIAN_N; ++i) {
+    float v = sorted[i];
+    int8_t j = (int8_t)i - 1;
+    while (j >= 0 && sorted[j] > v) {
+      sorted[j + 1] = sorted[j];
+      --j;
+    }
+    sorted[j + 1] = v;
+  }
+  return sorted[count / 2u];
+}
+
+static float pzt_rsUpdateHeldMedian(uint8_t ch, float ra) {
+  if (ch > 15) return ra;
+  uint8_t &idx = pztRsHoldMedianIdxByChannel[ch];
+  uint8_t &count = pztRsHoldMedianCountByChannel[ch];
+  float *buf = pztRsHoldMedianBufByChannel[ch];
+  buf[idx] = ra;
+  idx = (uint8_t)((idx + 1u) % PZT_RS_HELD_MEDIAN_N);
+  if (count < PZT_RS_HELD_MEDIAN_N) count++;
+  if (count < PZT_RS_HELD_MEDIAN_N) return ra;
+  return pzt_rsMedianN(buf, count);
+}
+
+static inline float pzr_absf(float v) {
+  return (v < 0.0f) ? -v : v;
+}
+
+static bool pzr_pairLooksLikeMissedCycle(uint8_t ch, uint32_t lCyc) {
+  if (currentMode != MODE_PZT_RS || ch > 15 || lCyc == 0) return false;
+
+  if (!(isfinite(pzr_lCycModelCycles) && pzr_lCycModelCycles > 0.0f)) return false;
+  const float maxAllowedLowCycles = pzr_lCycModelCycles * PZR_RS_MAX_LOWCYC_MODEL_RATIO;
+  return (float)lCyc > maxAllowedLowCycles;
+}
+
 static inline double pzr_cyclesToUs(uint32_t cycles) {
   return ((double)cycles * 1000000.0) / (double)F_CPU_ACTUAL;
 }
@@ -1113,11 +1248,11 @@ static inline double pzr_cyclesFloatToUs(double cycles) {
   return (cycles * 1000000.0) / (double)F_CPU_ACTUAL;
 }
 
-// Model the 555 discharge interval from board-component values instead of the
-// measured low time. This lets us compare hCyc-driven noise against lCyc-driven
-// noise while still recording the real low-time measurements for diagnostics.
+// Model the 555 discharge interval from board-component values plus the
+// discharge-path switch resistance. This is used for diagnostics and to reject
+// implausibly long low cycles before they enter the measurement pipeline.
 static float pzr_computeModeledLowCycles() {
-  const double rb = (double)pzr_RB_OHM;
+  const double rb = (double)pzr_RB_OHM + (double)PZR_DISCHARGE_SWITCH_OHM;
   const double cf = (double)pzr_CF_F;
   if (!(rb > 0.0) || !(cf > 0.0)) return NAN;
 
@@ -1133,7 +1268,7 @@ static void pzr_refreshModeledLowCycles() {
 
 static const __FlashStringHelper *pzr_raLowCycleSourceLabel() {
   return (PZR_RA_LCYC_SOURCE == PZR_LCYC_SOURCE_MODELED)
-             ? F("modeled_lcyc_from_rb_cf")
+             ? F("modeled_lcyc_from_rb_rdis_cf")
              : F("measured_lcyc");
 }
 
@@ -1152,6 +1287,7 @@ static void pzr_printChannelTimingDiagnostics(uint8_t ch, const __FlashStringHel
   }
 
   const double rb = (double)pzr_RB_OHM;
+  const double rbDis = (double)pzr_RB_OHM + (double)PZR_DISCHARGE_SWITCH_OHM;
   const double cf = (double)pzr_CF_F;
   const double hUs = pzr_cyclesToUs(state.lastHCyc);
   const double lUs = pzr_cyclesToUs(state.lastLCyc);
@@ -1163,7 +1299,7 @@ static void pzr_printChannelTimingDiagnostics(uint8_t ch, const __FlashStringHel
       (isfinite(state.lastLCycModelUsed) && state.lastLCycModelUsed > 0.0f)
           ? pzr_cyclesFloatToUs((double)state.lastLCycModelUsed)
           : NAN;
-  const double modelLUs = (double)LN2 * cf * rb * 1000000.0;
+  const double modelLUs = (double)LN2 * cf * rbDis * 1000000.0;
   const double modelHUs =
       isfinite(state.lastPlotRa) ? ((double)LN2 * cf * ((double)state.lastPlotRa + rb) * 1000000.0) : NAN;
   const double raFromRaw =
@@ -1190,6 +1326,8 @@ static void pzr_printChannelTimingDiagnostics(uint8_t ch, const __FlashStringHel
   Serial.print(F(", ra_ohm="));
   if (isfinite(state.lastPlotRa)) Serial.print(state.lastPlotRa, 3);
   else                            Serial.print(F("nan"));
+  Serial.print(F(", spike_rejects=")); Serial.print(state.spikeRejectCount);
+  Serial.print(F(", lowcycle_rejects=")); Serial.print(state.periodRejectCount);
   Serial.print(F(", ra_from_raw_ohm="));
   if (isfinite(raFromRaw)) Serial.print(raFromRaw, 3);
   else                     Serial.print(F("nan"));
@@ -1278,6 +1416,11 @@ static bool pzr_updateChannelRaFromPair(uint8_t ch, uint32_t hCyc, uint32_t lCyc
                                         float &outRa) {
   if (ch > 15 || hCyc == 0 || lCyc == 0) return false;
 
+  if (pzr_pairLooksLikeMissedCycle(ch, lCyc)) {
+    pzr_chState[ch].periodRejectCount++;
+    return false;
+  }
+
   PZR_LowCycleSmootherState &lowCycleSmoother =
       pzr_lowCycleSmootherBy555[pzr_active555Index()];
   const float lCycAvgMeasured = lowCycleSmoother.update(lCyc);
@@ -1313,7 +1456,36 @@ static bool pzr_updateChannelRaFromPair(uint8_t ch, uint32_t hCyc, uint32_t lCyc
 
   float candidate = isfinite(last_RaMA) ? last_RaMA :
                     isfinite(last_Ra)   ? last_Ra   : NAN;
-  if (isfinite(candidate)) pzr_chState[ch].lastPlotRa = candidate;
+  if (isfinite(candidate)) {
+    candidate = pzr_updateMedian3(
+        pzr_chState[ch].raMedianBuf,
+        pzr_chState[ch].raMedianIdx,
+        pzr_chState[ch].raMedianCount,
+        candidate);
+
+    if (currentMode == MODE_PZT_RS && isfinite(pzr_chState[ch].lastPlotRa)) {
+      const float baseline = pzr_chState[ch].lastPlotRa;
+      const float delta = candidate - baseline;
+      if (pzr_absf(delta) > PZR_RS_SPIKE_REJECT_DELTA_OHM) {
+        if (isfinite(pzr_chState[ch].pendingSpikeRa) &&
+            pzr_absf(candidate - pzr_chState[ch].pendingSpikeRa) <= PZR_RS_SPIKE_CONFIRM_DELTA_OHM) {
+          pzr_chState[ch].lastPlotRa = candidate;
+          pzr_chState[ch].pendingSpikeRa = NAN;
+        } else {
+          pzr_chState[ch].pendingSpikeRa = candidate;
+          pzr_chState[ch].spikeRejectCount++;
+          outRa = baseline;
+          return true;
+        }
+      } else {
+        pzr_chState[ch].pendingSpikeRa = NAN;
+        pzr_chState[ch].lastPlotRa = candidate;
+      }
+    } else {
+      pzr_chState[ch].pendingSpikeRa = NAN;
+      pzr_chState[ch].lastPlotRa = candidate;
+    }
+  }
 
   outRa = isfinite(pzr_chState[ch].lastPlotRa) ? pzr_chState[ch].lastPlotRa : 0.0f;
   return true;
@@ -1322,17 +1494,27 @@ static bool pzr_updateChannelRaFromPair(uint8_t ch, uint32_t hCyc, uint32_t lCyc
 // Measure one Ra=(Rx+Rk) value on the given channel.
 // switched=true triggers a MUX switch + discard cycles first.
 static bool pzr_measureOneRa(uint8_t ch, bool switched, float &outRa) {
+  const uint32_t timeoutMs = pzr_computePairTimeoutMs();
+  const uint32_t measureStartMs = millis();
+
   if (switched) {
     pzr_muxSelect(ch);
     for (int d = 0; d < PZR_DISCARD_CYCLES_AFTER_SWITCH; d++) {
       uint32_t h, l;
-      if (!pzr_waitForPair(h, l)) return false;
+      uint32_t elapsedMs = millis() - measureStartMs;
+      if (elapsedMs >= timeoutMs) return false;
+      if (!pzr_waitForPair(h, l, timeoutMs - elapsedMs)) return false;
     }
   }
 
-  uint32_t hCyc = 0, lCyc = 0;
-  if (!pzr_waitForPair(hCyc, lCyc)) return false;
-  return pzr_updateChannelRaFromPair(ch, hCyc, lCyc, outRa);
+  while (true) {
+    uint32_t elapsedMs = millis() - measureStartMs;
+    if (elapsedMs >= timeoutMs) return false;
+
+    uint32_t hCyc = 0, lCyc = 0;
+    if (!pzr_waitForPair(hCyc, lCyc, timeoutMs - elapsedMs)) return false;
+    if (pzr_updateChannelRaFromPair(ch, hCyc, lCyc, outRa)) return true;
+  }
 }
 
 // Quantize resistance to uint16 deci-ohms for mixed PZT_RS payloads.
@@ -1349,6 +1531,11 @@ static void pzt_rsResetState() {
   for (int ch = 0; ch < 16; ++ch) {
     float ra = isfinite(pzr_chState[ch].lastPlotRa) ? pzr_chState[ch].lastPlotRa : 0.0f;
     pztRsLastRaQByChannel[ch] = pzt_rsQuantizeOhms(ra);
+    for (uint8_t i = 0; i < PZT_RS_HELD_MEDIAN_N; ++i) {
+      pztRsHoldMedianBufByChannel[ch][i] = ra;
+    }
+    pztRsHoldMedianIdxByChannel[ch] = 0;
+    pztRsHoldMedianCountByChannel[ch] = isfinite(ra) ? PZT_RS_HELD_MEDIAN_N : 0;
     pztRsUpdateCountByChannel[ch] = 0;
     pztRsLastUpdateMsByChannel[ch] = 0;
     pztRsRiseEdgesByChannel[ch] = 0;
@@ -1366,14 +1553,17 @@ static void pzt_rsResetState() {
   pztRsDiscardPairs = 0;
   pztRsChannelTimeouts = 0;
   pztRsChannelStartMs = 0;
-  // Per-channel timeout: worst-case 555 period × (discard + 1 measure) × safety margin
-  pztRsChannelTimeoutMs = pzr_computePairTimeoutMs() * (uint32_t)(PZR_DISCARD_CYCLES_AFTER_SWITCH + 2u);
+  // Per-channel timeout: worst-case 555 period × discard/measure pairs + margin.
+  pztRsChannelTimeoutMs =
+      pzr_computePairTimeoutMs() *
+      (uint32_t)(PZR_DISCARD_CYCLES_AFTER_SWITCH + PZT_RS_MEASURE_PAIRS_PER_UPDATE + 1u);
   pztRsPrevMeasuredChannel = -1;
   pztRsRefreshIndex = 0;
   pztRsLastRefreshMs = 0;
   pztRsRefreshStage = PZT_RS_REFRESH_IDLE;
   pztRsPendingChannel = 0;
   pztRsDiscardRemaining = 0;
+  pztRsMeasurePairsCollected = 0;
   pzt_rsStartNextRefreshChannel(); // kick off the first channel immediately
 }
 
@@ -1404,14 +1594,47 @@ static bool pzt_rsConsumeReadyPair() {
 
   if (pztRsRefreshStage == PZT_RS_REFRESH_MEASURE) {
     float ra = 0.0f;
-    if (pzr_updateChannelRaFromPair(pztRsPendingChannel, hCyc, lCyc, ra)) {
-      pztRsLastRaQByChannel[pztRsPendingChannel] = pzt_rsQuantizeOhms(ra);
+    if (!pzr_updateChannelRaFromPair(pztRsPendingChannel, hCyc, lCyc, ra)) {
+      pztRsMeasurePairsCollected = 0;
+      pztRsChannelStartMs = millis();
+      return true; // stay on this channel and wait for the next pair
+    }
+
+    if (PZT_RS_MEASURE_PAIRS_PER_UPDATE <= 1) {
+      const float heldRa = pzt_rsUpdateHeldMedian(pztRsPendingChannel, ra);
+      pztRsLastRaQByChannel[pztRsPendingChannel] = pzt_rsQuantizeOhms(heldRa);
       pztRsUpdateCountByChannel[pztRsPendingChannel]++;
       pztRsLastUpdateMsByChannel[pztRsPendingChannel] = millis();
       pztRsTotalUpdates++;
       pztRsPrevMeasuredChannel = (int8_t)pztRsPendingChannel;
       pztRsLastRefreshMs = millis();
+      pzt_rsStartNextRefreshChannel(); // 555 immediately starts measuring next channel
+      return true;
     }
+
+    if (pztRsMeasurePairsCollected < PZT_RS_MEASURE_PAIRS_PER_UPDATE) {
+      pztRsMeasureRaBuf[pztRsMeasurePairsCollected++] = ra;
+    }
+
+    if (pztRsMeasurePairsCollected < PZT_RS_MEASURE_PAIRS_PER_UPDATE) {
+      pztRsChannelStartMs = millis();
+      return true; // keep collecting consecutive pairs on this same channel
+    }
+
+    float acceptedRa = ra;
+    if (PZT_RS_MEASURE_PAIRS_PER_UPDATE == 3) {
+      acceptedRa = pzr_median3(
+          pztRsMeasureRaBuf[0], pztRsMeasureRaBuf[1], pztRsMeasureRaBuf[2]);
+    }
+
+    const float heldRa = pzt_rsUpdateHeldMedian(pztRsPendingChannel, acceptedRa);
+    pztRsLastRaQByChannel[pztRsPendingChannel] = pzt_rsQuantizeOhms(heldRa);
+    pztRsUpdateCountByChannel[pztRsPendingChannel]++;
+    pztRsLastUpdateMsByChannel[pztRsPendingChannel] = millis();
+    pztRsTotalUpdates++;
+    pztRsPrevMeasuredChannel = (int8_t)pztRsPendingChannel;
+    pztRsLastRefreshMs = millis();
+    pztRsMeasurePairsCollected = 0;
     pzt_rsStartNextRefreshChannel(); // 555 immediately starts measuring next channel
     return true;
   }
@@ -1433,6 +1656,7 @@ static void pzt_rsStartNextRefreshChannel() {
   pztRsRefreshIndex =
       (uint8_t)((pztRsRefreshIndex + 1u) % max((uint8_t)1, pzt.rsRefreshChannelCount));
   pztRsActiveChannel = pztRsPendingChannel;
+  pztRsMeasurePairsCollected = 0;
 
   if (pztRsPrevMeasuredChannel != (int8_t)pztRsPendingChannel) {
     pzr_muxSelect(pztRsPendingChannel);
@@ -1456,17 +1680,14 @@ static void pzt_rsServiceRefresh(bool allowChannelSwitch) {
   (void)pzt_rsConsumeReadyPair();
 }
 
-static inline uint16_t pzt_rsHeldValueOrZero(int8_t rsCh) {
-  if (rsCh < 0 || rsCh > 15) return 0;
-  return pztRsLastRaQByChannel[(uint8_t)rsCh];
-}
-
 // Expand one PZT block into PZT_RS layout by inserting held RS pairs per PZT pair.
 static bool pzt_buildCombinedBlock(const uint8_t *src, uint32_t srcLen,
-                                   uint8_t *dst, uint32_t &dstLen) {
+                                   uint8_t *dst, uint32_t &dstLen,
+                                   const uint16_t *heldRaQSnapshot) {
   if (!src || !dst) return false;
   if (srcLen < (uint32_t)PZT_ACK_FRAME_LEN + PZT_BLOCK_TRAILER_LEN) return false;
   if (src[0] != BLOCK_MAGIC1 || src[1] != BLOCK_MAGIC2) return false;
+  if (!heldRaQSnapshot) return false;
 
   uint16_t pztSampleCount = (uint16_t)src[2] | ((uint16_t)src[3] << 8);
   uint32_t payloadBytes = (uint32_t)pztSampleCount * 2u;
@@ -1520,8 +1741,12 @@ static bool pzt_buildCombinedBlock(const uint8_t *src, uint32_t srcLen,
           dst[dstPayloadPos++] = src[srcPayloadPos++]; // selected PZT MUX side MSB
         }
 
-        uint16_t rsA = pzt_rsHeldValueOrZero(pzt.sensorRsA[sensor]);
-        uint16_t rsB = pzt_rsHeldValueOrZero(pzt.sensorRsB[sensor]);
+        uint16_t rsA = (pzt.sensorRsA[sensor] >= 0 && pzt.sensorRsA[sensor] <= 15)
+                            ? heldRaQSnapshot[(uint8_t)pzt.sensorRsA[sensor]]
+                            : 0;
+        uint16_t rsB = (pzt.sensorRsB[sensor] >= 0 && pzt.sensorRsB[sensor] <= 15)
+                            ? heldRaQSnapshot[(uint8_t)pzt.sensorRsB[sensor]]
+                            : 0;
         dst[dstPayloadPos++] = (uint8_t)(rsA & 0xFF);
         dst[dstPayloadPos++] = (uint8_t)(rsA >> 8);
         dst[dstPayloadPos++] = (uint8_t)(rsB & 0xFF);
@@ -1831,6 +2056,7 @@ static void pzt_handleRun(const String &args) {
     if (v > 0) { ms = (uint32_t)v; timed = true; }
   }
 
+  pzr_resetCaptureDiagnostics();
   pzt_streamResetState();
   if (currentMode == MODE_PZT_RS) {
     pzt_rsResetState();
@@ -2013,6 +2239,9 @@ static void pzt_printStatus() {
   Serial.print(F(", discard_pairs=")); Serial.print(pztRsDiscardPairs);
   Serial.print(F(", channel_timeouts=")); Serial.print(pztRsChannelTimeouts);
   Serial.print(F(", channel_timeout_ms=")); Serial.println(pztRsChannelTimeoutMs);
+  Serial.print(F("# rs_measure_pairs_per_update: ")); Serial.println(PZT_RS_MEASURE_PAIRS_PER_UPDATE);
+  Serial.print(F("# rs_held_median_n: ")); Serial.println(PZT_RS_HELD_MEDIAN_N);
+  Serial.print(F("# capture_sequence_errors: ")); Serial.println(pzr_cap.sequenceErrors);
   Serial.print(F("# RS held values/update counts: "));
   for (uint8_t i = 0; i < pzt.rsRefreshChannelCount; i++) {
     uint8_t ch = pzt.rsRefreshChannels[i] & 0x0F;
@@ -2101,6 +2330,7 @@ static bool pzr_handleRun(const String &args) {
   } else {
     pzr_timedRun = false;
   }
+  pzr_resetCaptureDiagnostics();
   pzr_isRunning = true;
   return true;
 }
@@ -2186,12 +2416,14 @@ static void pzr_printStatus() {
   Serial.print(F("# buffer=")); Serial.println(pzr_bufferSweeps);
   Serial.print(F("# output_value=Ra_ohm (total Rx+Rk, Rk is not subtracted)")); Serial.println();
   Serial.print(F("# rb_ohm=")); Serial.println(pzr_RB_OHM, 6);
+  Serial.print(F("# discharge_switch_ohm=")); Serial.println(PZR_DISCHARGE_SWITCH_OHM, 6);
   Serial.print(F("# rk_ohm=")); Serial.println(pzr_RK_OHM, 6);
   Serial.print(F("# cf_f="));   Serial.println(pzr_CF_F, 12);
   Serial.print(F("# rxmax_ohm=")); Serial.println(pzr_RX_MAX_OHM, 6);
   Serial.print(F("# ra_calc_mode=")); Serial.println(pzr_raLowCycleSourceLabel());
   Serial.println(F("# measured_lcyc_ma_is_reported_in_diagnostics"));
   Serial.print(F("# lcyc_ma_n=")); Serial.println(PZR_LCYC_MA_N);
+  Serial.print(F("# ra_median_n=")); Serial.println(PZR_RA_MEDIAN_N);
   Serial.print(F("# active_lcyc_count=")); Serial.println(pzr_lowCycleSmootherBy555[pzr_active555Index()].lCycCount);
   Serial.print(F("# active_lcyc_avg_cycles=")); Serial.println(pzr_lowCycleSmootherBy555[pzr_active555Index()].lastLCycAvg, 3);
   Serial.print(F("# modeled_lcyc_cycles=")); Serial.println(pzr_lCycModelCycles, 3);
@@ -2202,6 +2434,7 @@ static void pzr_printStatus() {
     pzr_printChannelTimingDiagnostics(pzr_channelSequence[i], F("# timing "));
   }
   Serial.print(F("# pair_timeout_ms=")); Serial.println(pzr_computePairTimeoutMs());
+  Serial.print(F("# capture_sequence_errors=")); Serial.println(pzr_cap.sequenceErrors);
   uint32_t sps   = (uint32_t)pzr_channelCount * (uint32_t)pzr_repeatCount;
   uint32_t total = sps * (uint32_t)pzr_bufferSweeps;
   Serial.print(F("# samples_per_sweep=")); Serial.println(sps);
