@@ -275,7 +275,7 @@ class DataExporterMixin:
                 return
 
             data = np.asarray(chunk_sweeps, dtype=np.float32)
-            if archive_rs_units == 'centiohm' and hasattr(self, 'scale_pzt_rs_rosette_samples_inplace'):
+            if archive_rs_units == 'deciohm' and hasattr(self, 'scale_pzt_rs_rosette_samples_inplace'):
                 self.scale_pzt_rs_rosette_samples_inplace(
                     data,
                     channels=self.config.get('channels', []),

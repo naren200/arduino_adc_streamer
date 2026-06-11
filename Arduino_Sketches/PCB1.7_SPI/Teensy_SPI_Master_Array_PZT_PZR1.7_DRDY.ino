@@ -151,7 +151,7 @@ static const uint32_t PZT_MAX_BLOCK_BYTES =
 
 // MODE_PZT_RS repacks selected sensors as:
 // [PZT_CH1, PZT_CH2, PZT_CH3, PZT_CH4, PZT_CH5, RS1_hold, RS2_hold].
-// RS1_hold / RS2_hold are encoded as uint16 centi-ohms on the wire.
+// RS1_hold / RS2_hold are encoded as uint16 deci-ohms on the wire.
 // Keep this aligned with the Python serial parser's MAX_SAMPLES_BUFFER.
 static const uint32_t PZT_RS_MAX_OUTPUT_SAMPLES = 32000UL;
 static const uint32_t PZT_RS_MAX_BLOCK_BYTES =
@@ -316,7 +316,7 @@ static constexpr uint32_t TIMER555_MUX_SETTLE_NS          = 100;
 // After switching the RS MUX channel, discard this cycles before measurement
 static constexpr int      PZR_DISCARD_CYCLES_AFTER_SWITCH = 1;
 static constexpr int      PZR_RA_MA_N                     = 1;  // Ra smoothing per MUX channel; set to 1 to disable MA
-static constexpr int      PZR_LCYC_MA_N                   = 50; // discharge-time smoothing per physical 555
+static constexpr int      PZR_LCYC_MA_N                   = 1;  // set to 1 to use the raw measured low-cycle directly
 static constexpr int      PZR_MAX_CHANNEL_SEQUENCE        = 64;
 static constexpr uint16_t PZR_MAX_BLOCK_SAMPLES           = 2048;
 
@@ -330,6 +330,9 @@ static constexpr float RS_555_A_DEFAULT_CF_F  = 220e-9f;   // RS  / 555_A = 220 
 static constexpr float PZR_DEFAULT_CF_F =
     (DEFAULT_555_MODE == TIMER555_RS) ? RS_555_A_DEFAULT_CF_F : PZR_555_B_DEFAULT_CF_F;
 static constexpr float PZR_DEFAULT_RX_MAX_OHM = 65500.0f;
+
+enum PZRLowCycleSource { PZR_LCYC_SOURCE_MEASURED, PZR_LCYC_SOURCE_MODELED };
+static constexpr PZRLowCycleSource PZR_RA_LCYC_SOURCE = PZR_LCYC_SOURCE_MEASURED;
 
 // =====================================================================
 // ── PZR MODE — STATE ─────────────────────────────────────────────────
@@ -388,16 +391,16 @@ struct PZR_ChannelState {
 };
 static PZR_ChannelState pzr_chState[16];
 
-// Per-555 moving average for low/discharge cycles.
+// Per-555 low-cycle smoothing state.
 // lCyc should be mostly independent of the selected Rx channel, but PZR and RS
-// are two different physical 555 circuits, so keep one average per source.
+// are two different physical 555 circuits, so keep one smoothing state per source.
 enum { PZR_555_INDEX_PZR = 0, PZR_555_INDEX_RS = 1, PZR_555_COUNT = 2 };
 
 static inline int pzr_active555Index() {
   return (DEFAULT_555_MODE == TIMER555_RS) ? PZR_555_INDEX_RS : PZR_555_INDEX_PZR;
 }
 
-struct PZR_555State {
+struct PZR_LowCycleSmootherState {
   uint32_t lCycBuf[PZR_LCYC_MA_N];
   uint64_t lCycSum      = 0;
   int      lCycIdx      = 0;
@@ -421,7 +424,7 @@ struct PZR_555State {
     return lastLCycAvg;
   }
 };
-static PZR_555State pzr_555State[PZR_555_COUNT];
+static PZR_LowCycleSmootherState pzr_lowCycleSmootherBy555[PZR_555_COUNT];
 
 // =====================================================================
 // ── SHARED INPUT BUFFER ──────────────────────────────────────────────
@@ -439,8 +442,6 @@ static inline void dwtInit() {
   ARM_DWT_CTRL    |= ARM_DWT_CTRL_CYCCNTENA;
   ARM_DWT_CYCCNT   = 0;
 }
-// Return the current CPU cycle counter value.
-static inline uint32_t dwtNow() { return ARM_DWT_CYCCNT; }
 
 // =====================================================================
 // ── PZT SPI / DRDY HELPERS ───────────────────────────────────────────
@@ -1025,7 +1026,7 @@ static bool pzt_isValidAckFrame(const uint8_t *buf) {
 // Capture 555 high/low timing edges into shared ISR state.
 void pzr_isr555() {
   // ARM_DWT_CYCCNT is the Teensy CPU-cycle counter. This is not micros()/millis().
-  const uint32_t cycNow    = dwtNow();
+  const uint32_t cycNow    = ARM_DWT_CYCCNT; // get current DWT CPU-cycle timer
   const bool     levelHigh = digitalReadFast(TIMER555_ICP_PIN);
   const uint8_t  activeRsCh = pztRsActiveChannel;
   const bool     trackRsCh = (currentMode == MODE_PZT_RS && activeRsCh < 16);
@@ -1143,6 +1144,12 @@ static void pzr_refreshModeledLowCycles() {
   pzr_lCycModelCycles = pzr_computeModeledLowCycles();
 }
 
+static const __FlashStringHelper *pzr_raLowCycleSourceLabel() {
+  return (PZR_RA_LCYC_SOURCE == PZR_LCYC_SOURCE_MODELED)
+             ? F("modeled_lcyc_from_rb_cf")
+             : F("measured_lcyc");
+}
+
 static void pzr_printChannelTimingDiagnostics(uint8_t ch, const __FlashStringHelper *prefix) {
   if (ch > 15) return;
 
@@ -1245,7 +1252,7 @@ static void pzt_printRsRefreshDiagnostics(uint8_t ch, const __FlashStringHelper 
 
 // Reset per-555 low-cycle moving-average accumulators.
 static void pzr_resetAll555Averages() {
-  for (int i = 0; i < PZR_555_COUNT; i++) pzr_555State[i].reset();
+  for (int i = 0; i < PZR_555_COUNT; i++) pzr_lowCycleSmootherBy555[i].reset();
 }
 
 // Reset all per-channel and per-555 smoothing state.
@@ -1300,23 +1307,26 @@ static bool pzr_updateChannelRaFromPair(uint8_t ch, uint32_t hCyc, uint32_t lCyc
   return true;
 #endif
 
-  PZR_555State &timerState = pzr_555State[pzr_active555Index()];
-  const float lCycAvgMeasured = timerState.update(lCyc);
+  PZR_LowCycleSmootherState &lowCycleSmoother =
+      pzr_lowCycleSmootherBy555[pzr_active555Index()];
+  const float lCycAvgMeasured = lowCycleSmoother.update(lCyc);
   const float lCycCalc = pzr_lCycModelCycles;
   pzr_chState[ch].lastHCyc = hCyc;
   pzr_chState[ch].lastLCyc = lCyc;
   pzr_chState[ch].lastLCycAvgUsed = lCycAvgMeasured;
   pzr_chState[ch].lastLCycModelUsed = lCycCalc;
 
+  const float lCycForRa =
+      (PZR_RA_LCYC_SOURCE == PZR_LCYC_SOURCE_MODELED) ? lCycCalc : lCycAvgMeasured;
   float last_Ra = NAN, last_RaMA = NAN;
-  if (isfinite(lCycCalc) && lCycCalc > 0.0f) {
+  if (isfinite(lCycForRa) && lCycForRa > 0.0f) {
     // Astable model for this board:
     //   tH = ln(2)*C*(Ra + Rb)
     //   tL = ln(2)*C*Rb
     // Therefore Ra = Rb*(tH - tL)/tL.
-    // We still track the measured low-time above, but for this experiment the
-    // denominator comes from the component model instead of the measured lCyc.
-    last_Ra = pzr_RB_OHM * (((float)hCyc - lCycCalc) / lCycCalc);
+    // The low-time source is selectable so we can flip between measured and
+    // component-modeled behavior without rewriting the math path again.
+    last_Ra = pzr_RB_OHM * (((float)hCyc - lCycForRa) / lCycForRa);
 
     if (isfinite(last_Ra)) {
       if (PZR_RA_MA_N > 1) {
@@ -1354,10 +1364,10 @@ static bool pzr_measureOneRa(uint8_t ch, bool switched, float &outRa) {
   return pzr_updateChannelRaFromPair(ch, hCyc, lCyc, outRa);
 }
 
-// Quantize resistance to uint16 centi-ohms for mixed PZT_RS payloads.
-// This preserves the existing uint16 payload width while exposing 0.01-ohm steps.
+// Quantize resistance to uint16 deci-ohms for mixed PZT_RS payloads.
+// This preserves the existing uint16 payload width while exposing 0.1-ohm steps.
 static inline uint16_t pzt_rsQuantizeOhms(float ra) {
-  long v = lroundf(ra * 100.0f);
+  long v = lroundf(ra * 10.0f);
   if (v < 0) v = 0;
   if (v > 65535L) v = 65535L;
   return (uint16_t)v;
@@ -2232,11 +2242,11 @@ static void pzr_printStatus() {
   Serial.print(F("# rk_ohm=")); Serial.println(pzr_RK_OHM, 6);
   Serial.print(F("# cf_f="));   Serial.println(pzr_CF_F, 12);
   Serial.print(F("# rxmax_ohm=")); Serial.println(pzr_RX_MAX_OHM, 6);
-  Serial.println(F("# ra_calc_mode=modeled_lcyc_from_rb_cf"));
-  Serial.println(F("# measured_lcyc_ma_is_retained_for_diagnostics_only"));
+  Serial.print(F("# ra_calc_mode=")); Serial.println(pzr_raLowCycleSourceLabel());
+  Serial.println(F("# measured_lcyc_ma_is_reported_in_diagnostics"));
   Serial.print(F("# lcyc_ma_n=")); Serial.println(PZR_LCYC_MA_N);
-  Serial.print(F("# active_lcyc_count=")); Serial.println(pzr_555State[pzr_active555Index()].lCycCount);
-  Serial.print(F("# active_lcyc_avg_cycles=")); Serial.println(pzr_555State[pzr_active555Index()].lastLCycAvg, 3);
+  Serial.print(F("# active_lcyc_count=")); Serial.println(pzr_lowCycleSmootherBy555[pzr_active555Index()].lCycCount);
+  Serial.print(F("# active_lcyc_avg_cycles=")); Serial.println(pzr_lowCycleSmootherBy555[pzr_active555Index()].lastLCycAvg, 3);
   Serial.print(F("# modeled_lcyc_cycles=")); Serial.println(pzr_lCycModelCycles, 3);
   Serial.print(F("# modeled_lcyc_us="));
   if (isfinite(pzr_lCycModelCycles)) Serial.println(pzr_cyclesFloatToUs((double)pzr_lCycModelCycles), 3);
@@ -2415,7 +2425,7 @@ static void printHelp() {
   Serial.println(F("#   pztmuxes mux1,mux2...       (PZT_RS only; one MG24 MUX side per selected PZT sensor)"));
   Serial.println(F("#   rschannels rs1,rs2...       (PZT_RS only; one RS pair per selected PZT sensor)"));
   Serial.println(F("#   PZT_RS binary payload layout per sensor: [PZT_CH1,PZT_CH2,PZT_CH3,PZT_CH4,PZT_CH5,RS1_hold,RS2_hold]"));
-  Serial.println(F("#   PZT_RS RS1_hold/RS2_hold are encoded as uint16 centi-ohms in the binary stream"));
+  Serial.println(F("#   PZT_RS RS1_hold/RS2_hold are encoded as uint16 deci-ohms in the binary stream"));
   Serial.println(F("# ── PZR mode only ───────────────────────────────────────────"));
   Serial.print(F("#   active 555 source: ")); Serial.println(TIMER555_NAME);
   Serial.println(F("#   PZR samples are Ra=(Rx+Rk) ohms; Rk is not subtracted"));
@@ -2604,7 +2614,7 @@ void setup() {
   Serial.print(F("# Modeled 555 tL(us) from Rb/Cf: "));
   if (isfinite(pzr_lCycModelCycles)) Serial.println(pzr_cyclesFloatToUs((double)pzr_lCycModelCycles), 3);
   else                               Serial.println(F("nan"));
-  Serial.println(F("# PZR output: Ra=(Rx+Rk) ohms; measured low/discharge cycles are logged but not used in Ra calc"));
+  Serial.println(F("# PZR output: Ra=(Rx+Rk) ohms; low-cycle source is selected in firmware and both measured/modeled values are logged"));
 }
 
 // =====================================================================

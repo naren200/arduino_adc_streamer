@@ -232,7 +232,7 @@ class ArchiveLoaderMixin:
             sweeps_array = np.asarray(sweeps, dtype=np.float32) if sweeps else np.asarray([], dtype=np.float32)
             if (
                 sweeps_array.size
-                and archive_rs_units == 'centiohm'
+                and archive_rs_units == 'deciohm'
                 and hasattr(self, 'scale_pzt_rs_rosette_samples_inplace')
             ):
                 self.scale_pzt_rs_rosette_samples_inplace(

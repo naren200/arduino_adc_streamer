@@ -734,7 +734,7 @@ class ConfigurationMixin:
 
     def get_pzt_rs_rosette_value_scale(self) -> float:
         """Return the host-side scale factor for PZT_RS RS payload words."""
-        return 0.01
+        return 0.1
 
     def get_pzt_rs_rosette_sample_indices(self, channels=None, repeat_count=None) -> list[int]:
         """Return unique per-sweep sample columns that hold PZT_RS RS values."""
@@ -746,7 +746,7 @@ class ConfigurationMixin:
         return sorted(index for index in indices if index >= 0)
 
     def scale_pzt_rs_rosette_samples_inplace(self, sample_matrix, channels=None, repeat_count=None):
-        """Convert PZT_RS RS payload words from centi-ohms to ohms in place."""
+        """Convert PZT_RS RS payload words from deci-ohms to ohms in place."""
         if not self.is_array_pzt_rs_mode() or sample_matrix is None:
             return sample_matrix
 

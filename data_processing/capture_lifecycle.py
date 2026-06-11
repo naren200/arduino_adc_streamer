@@ -159,7 +159,7 @@ class CaptureLifecycleMixin:
                     'gain': self.config.get('gain'),
                     'reference': self.config.get('reference'),
                     'pzt_rs_rs_units': (
-                        'centiohm'
+                        'deciohm'
                         if hasattr(self, 'is_array_pzt_rs_mode') and self.is_array_pzt_rs_mode()
                         else None
                     ),

@@ -225,7 +225,7 @@ When `mode PZT_RS*` is active on `# Array_PZT_PZR1.7`, each selected PZT sensor 
 
 - The five `PZT_CH*` values are the selected MG24 MUX side for that PZT sensor, in the configured channel order.
 - `RS1_hold` and `RS2_hold` are the latest available Rosette/RS values for that same PZT sensor, and may repeat until newer RS measurements are ready.
-- On the wire, `RS1_hold` and `RS2_hold` are encoded as `uint16` centi-ohms. Host-side consumers should divide those two slots by `100.0` to recover ohms.
+- On the wire, `RS1_hold` and `RS2_hold` are encoded as `uint16` deci-ohms. Host-side consumers should divide those two slots by `10.0` to recover ohms.
 - `PZT_RS` blocks are paced by the PZT/MG24 stream; Rosette refresh is opportunistic and must not delay PZT block delivery.
 - Configure PZT_RS PZT-side routing with `pztmuxes mux1,mux2...*` after `channels*`; provide one MG24 MUX side per selected PZT sensor.
 - Configure Rosette routing with `rschannels rs1,rs2...*`; provide one RS_MUX channel pair per selected PZT sensor.
@@ -259,7 +259,7 @@ ch14 s1, ch14 s2, ch14 s3, ch14 s4, ch15 s1, ch15 s2
 - Use `mcu*` to identify the connected firmware variant.
 - For `# Array_PZT_PZR1.7`, use `mode PZT|PZR|PZT_RS*` to select stream type before `run*`.
 - In `PZT_RS` mode, decode payload as seven-value sensor groups (`PZT_CH1`...`PZT_CH5`,`RS1_hold`,`RS2_hold`) instead of PZT-only pairs.
-- Convert only the `RS1_hold` / `RS2_hold` words from centi-ohms to ohms; the five `PZT_CH*` words remain raw MG24 ADC samples.
+- Convert only the `RS1_hold` / `RS2_hold` words from deci-ohms to ohms; the five `PZT_CH*` words remain raw MG24 ADC samples.
 - After `stop*`, expect text responses again on the same port.
 - The desktop app handles mixed text/binary transitions for the standard sketches listed above.
 
