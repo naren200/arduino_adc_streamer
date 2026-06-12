@@ -29,6 +29,7 @@ from constants.defaults_555 import (
     ANALYZER555_DEFAULT_RK_OHMS,
     ANALYZER555_DEFAULT_RXMAX_OHMS,
 )
+from constants.pzt_rs import PZT_RS_RS_OHMS_PER_WIRE_UNIT
 from constants.ui import MAX_PLOT_COLUMNS
 from config.buffer_utils import validate_and_limit_sweeps_per_block
 
@@ -734,7 +735,7 @@ class ConfigurationMixin:
 
     def get_pzt_rs_rosette_value_scale(self) -> float:
         """Return the host-side scale factor for PZT_RS RS payload words."""
-        return 0.1
+        return PZT_RS_RS_OHMS_PER_WIRE_UNIT
 
     def get_pzt_rs_rosette_sample_indices(self, channels=None, repeat_count=None) -> list[int]:
         """Return unique per-sweep sample columns that hold PZT_RS RS values."""
@@ -745,8 +746,14 @@ class ConfigurationMixin:
         }
         return sorted(index for index in indices if index >= 0)
 
-    def scale_pzt_rs_rosette_samples_inplace(self, sample_matrix, channels=None, repeat_count=None):
-        """Convert PZT_RS RS payload words from deci-ohms to ohms in place."""
+    def scale_pzt_rs_rosette_samples_inplace(
+        self,
+        sample_matrix,
+        channels=None,
+        repeat_count=None,
+        scale_override: float | None = None,
+    ):
+        """Convert PZT_RS RS payload words from wire units to ohms in place."""
         if not self.is_array_pzt_rs_mode() or sample_matrix is None:
             return sample_matrix
 
@@ -759,7 +766,7 @@ class ConfigurationMixin:
         if not valid_indices:
             return sample_matrix
 
-        scale = float(self.get_pzt_rs_rosette_value_scale())
+        scale = float(scale_override if scale_override is not None else self.get_pzt_rs_rosette_value_scale())
         if array.ndim == 1:
             array[valid_indices] *= scale
         elif array.ndim >= 2:

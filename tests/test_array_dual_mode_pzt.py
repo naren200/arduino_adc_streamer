@@ -3,6 +3,11 @@ import unittest
 import numpy as np
 
 from config.config_handlers import ConfigurationMixin
+from constants.pzt_rs import (
+    PZT_RS_RS_OHMS_PER_WIRE_UNIT,
+    PZT_RS_RS_UNITS_LABEL,
+    get_pzt_rs_ohms_per_wire_unit,
+)
 
 
 class DummyCombo:
@@ -229,10 +234,10 @@ class ArrayDualModePZTTests(unittest.TestCase):
 
         np.testing.assert_allclose(sample_matrix[:, :5], [[10, 11, 12, 13, 14], [30, 31, 32, 33, 34]])
         np.testing.assert_allclose(sample_matrix[:, 7:12], [[20, 21, 22, 23, 24], [40, 41, 42, 43, 44]])
-        np.testing.assert_allclose(sample_matrix[:, 5], [1234.5, 2234.5])
-        np.testing.assert_allclose(sample_matrix[:, 6], [2345.6, 3345.6])
-        np.testing.assert_allclose(sample_matrix[:, 12], [3456.7, 4456.7])
-        np.testing.assert_allclose(sample_matrix[:, 13], [4567.8, 5567.8])
+        np.testing.assert_allclose(sample_matrix[:, 5], np.asarray([12345, 22345], dtype=np.float32) * PZT_RS_RS_OHMS_PER_WIRE_UNIT)
+        np.testing.assert_allclose(sample_matrix[:, 6], np.asarray([23456, 33456], dtype=np.float32) * PZT_RS_RS_OHMS_PER_WIRE_UNIT)
+        np.testing.assert_allclose(sample_matrix[:, 12], np.asarray([34567, 44567], dtype=np.float32) * PZT_RS_RS_OHMS_PER_WIRE_UNIT)
+        np.testing.assert_allclose(sample_matrix[:, 13], np.asarray([45678, 55678], dtype=np.float32) * PZT_RS_RS_OHMS_PER_WIRE_UNIT)
 
     def test_pzt_rs_rosette_scaling_handles_one_sweep_vector(self):
         harness = DualModePZTHarness()
@@ -250,7 +255,17 @@ class ArrayDualModePZTTests(unittest.TestCase):
 
         harness.scale_pzt_rs_rosette_samples_inplace(sweep)
 
-        np.testing.assert_allclose(sweep, [1, 2, 3, 4, 5, 1234.5, 2345.6])
+        np.testing.assert_allclose(
+            sweep,
+            [1, 2, 3, 4, 5, 12345 * PZT_RS_RS_OHMS_PER_WIRE_UNIT, 23456 * PZT_RS_RS_OHMS_PER_WIRE_UNIT],
+        )
+
+    def test_pzt_rs_archive_unit_helper_supports_current_and_legacy_units(self):
+        self.assertEqual(get_pzt_rs_ohms_per_wire_unit(), PZT_RS_RS_OHMS_PER_WIRE_UNIT)
+        self.assertEqual(get_pzt_rs_ohms_per_wire_unit(PZT_RS_RS_UNITS_LABEL), PZT_RS_RS_OHMS_PER_WIRE_UNIT)
+        self.assertEqual(get_pzt_rs_ohms_per_wire_unit("deciohm"), 0.1)
+        self.assertEqual(get_pzt_rs_ohms_per_wire_unit("centiohm"), 0.01)
+        self.assertIsNone(get_pzt_rs_ohms_per_wire_unit("unknown"))
 
     def test_older_array_dual_mode_does_not_select_pzt_rs(self):
         harness = DualModePZTHarness()

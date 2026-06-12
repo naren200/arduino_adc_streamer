@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from constants.capture_archive import CACHE_SUBDIR_NAME
 from constants.force import FORCE_CALIBRATION_SAMPLES
+from constants.pzt_rs import PZT_RS_RS_UNITS_LABEL
 from data_processing.archive_writer import ArchiveWriterThread
 from data_processing.force_state import get_force_runtime_state
 
@@ -159,7 +160,7 @@ class CaptureLifecycleMixin:
                     'gain': self.config.get('gain'),
                     'reference': self.config.get('reference'),
                     'pzt_rs_rs_units': (
-                        'deciohm'
+                        PZT_RS_RS_UNITS_LABEL
                         if hasattr(self, 'is_array_pzt_rs_mode') and self.is_array_pzt_rs_mode()
                         else None
                     ),

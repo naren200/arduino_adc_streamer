@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
+from constants.pzt_rs import get_pzt_rs_ohms_per_wire_unit
 from data_processing.force_state import get_force_runtime_state
 
 
@@ -230,15 +231,17 @@ class ArchiveLoaderMixin:
                     timestamps = list(range(len(sweeps)))
             
             sweeps_array = np.asarray(sweeps, dtype=np.float32) if sweeps else np.asarray([], dtype=np.float32)
+            archive_rs_scale = get_pzt_rs_ohms_per_wire_unit(archive_rs_units)
             if (
                 sweeps_array.size
-                and archive_rs_units == 'deciohm'
+                and archive_rs_scale is not None
                 and hasattr(self, 'scale_pzt_rs_rosette_samples_inplace')
             ):
                 self.scale_pzt_rs_rosette_samples_inplace(
                     sweeps_array,
                     channels=self.config.get('channels', []),
                     repeat_count=self.config.get('repeat', 1),
+                    scale_override=archive_rs_scale,
                 )
 
             self.log_status(f"Loaded {len(sweeps)} sweeps from archive")

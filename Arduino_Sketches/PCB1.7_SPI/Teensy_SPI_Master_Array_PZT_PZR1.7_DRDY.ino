@@ -149,8 +149,10 @@ static const uint32_t PZT_MAX_BLOCK_BYTES =
 
 // MODE_PZT_RS repacks selected sensors as:
 // [PZT_CH1, PZT_CH2, PZT_CH3, PZT_CH4, PZT_CH5, RS1_hold, RS2_hold].
-// RS1_hold / RS2_hold are encoded as uint16 deci-ohms on the wire.
+// RS1_hold / RS2_hold are encoded as uint16 scaled-ohms on the wire.
+// Change PZT_RS_WIRE_UNITS_PER_OHM to switch between 0.1-ohm and 0.01-ohm steps.
 // Keep this aligned with the Python serial parser's MAX_SAMPLES_BUFFER.
+static const uint16_t PZT_RS_WIRE_UNITS_PER_OHM = 100;
 static const uint32_t PZT_RS_MAX_OUTPUT_SAMPLES = 32000UL;
 static const uint32_t PZT_RS_MAX_BLOCK_BYTES =
     (uint32_t)PZT_ACK_FRAME_LEN + PZT_RS_MAX_OUTPUT_SAMPLES * 2UL + PZT_BLOCK_TRAILER_LEN;
@@ -1461,10 +1463,10 @@ static bool pzr_measureOneRa(uint8_t ch, bool switched, float &outRa) {
   return pzr_updateChannelRaFromPair(ch, hCyc, lCyc, outRa);
 }
 
-// Quantize resistance to uint16 deci-ohms for mixed PZT_RS payloads.
-// This preserves the existing uint16 payload width while exposing 0.1-ohm steps.
+// Quantize resistance to uint16 scaled-ohms for mixed PZT_RS payloads.
+// Set PZT_RS_WIRE_UNITS_PER_OHM to 10 for 0.1-ohm steps or 100 for 0.01-ohm steps.
 static inline uint16_t pzt_rsQuantizeOhms(float ra) {
-  long v = lroundf(ra * 10.0f);
+  long v = lroundf(ra * (float)PZT_RS_WIRE_UNITS_PER_OHM);
   if (v < 0) v = 0;
   if (v > 65535L) v = 65535L;
   return (uint16_t)v;
@@ -2548,7 +2550,9 @@ static void printHelp() {
   Serial.println(F("#   pztmuxes mux1,mux2...       (PZT_RS only; one MG24 MUX side per selected PZT sensor)"));
   Serial.println(F("#   rschannels rs1,rs2...       (PZT_RS only; one RS pair per selected PZT sensor)"));
   Serial.println(F("#   PZT_RS binary payload layout per sensor: [PZT_CH1,PZT_CH2,PZT_CH3,PZT_CH4,PZT_CH5,RS1_hold,RS2_hold]"));
-  Serial.println(F("#   PZT_RS RS1_hold/RS2_hold are encoded as uint16 deci-ohms in the binary stream"));
+  Serial.print(F("#   PZT_RS RS1_hold/RS2_hold are encoded as uint16 scaled-ohms in the binary stream; divide by "));
+  Serial.print(PZT_RS_WIRE_UNITS_PER_OHM);
+  Serial.println(F(" to recover ohms"));
   Serial.println(F("# ── PZR mode only ───────────────────────────────────────────"));
   Serial.print(F("#   active 555 source: ")); Serial.println(TIMER555_NAME);
   Serial.println(F("#   PZR samples are Ra=(Rx+Rk) ohms; Rk is not subtracted"));
