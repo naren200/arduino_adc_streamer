@@ -13,6 +13,7 @@ import numpy as np
 from PyQt6.QtWidgets import QMessageBox
 
 from constants.plotting import IADC_RESOLUTION_BITS
+from constants.pzt_rs import get_pzt_rs_ohms_per_wire_unit
 from data_processing.force_state import get_force_runtime_state
 from file_operations.force_export_alignment import (
     build_export_row_timestamps,
@@ -248,6 +249,7 @@ class DataExporterMixin:
         force_series,
         capture_duration_s,
         apply_filter: bool,
+        rs_round_indices: list | None = None,
     ):
         """Stream archived sweeps to CSV, optionally filtering in bounded chunks."""
         chunk_size = 4096
@@ -275,11 +277,13 @@ class DataExporterMixin:
                 return
 
             data = np.asarray(chunk_sweeps, dtype=np.float32)
-            if archive_rs_units == 'deciohm' and hasattr(self, 'scale_pzt_rs_rosette_samples_inplace'):
+            archive_rs_scale = get_pzt_rs_ohms_per_wire_unit(archive_rs_units)
+            if archive_rs_scale is not None and hasattr(self, 'scale_pzt_rs_rosette_samples_inplace'):
                 self.scale_pzt_rs_rosette_samples_inplace(
                     data,
                     channels=self.config.get('channels', []),
                     repeat_count=self.config.get('repeat', 1),
+                    scale_override=archive_rs_scale,
                 )
             if first_sweep_len <= 0 and data.ndim == 2 and len(data) > 0:
                 first_sweep_len = int(data.shape[1])
@@ -310,6 +314,10 @@ class DataExporterMixin:
 
             for sweep, row_time in zip(data, chunk_row_times):
                 row = np.asarray(sweep).tolist()
+                if rs_round_indices:
+                    for _i in rs_round_indices:
+                        if _i < len(row):
+                            row[_i] = round(row[_i], 2)
                 if is_555_mode:
                     row.insert(0, float(row_time if row_time is not None else 0.0))
                 row.extend(list(get_nearest_force_values(force_series, row_time)))
@@ -453,11 +461,16 @@ class DataExporterMixin:
 
             is_555_mode = (getattr(self, 'device_mode', 'adc') == '555') or ('555' in (self.current_mcu or ''))
             repeat_count = max(1, int(self.config.get('repeat', 1)))
-            if self.is_array_pzt1_mode():
-                header = []
-                for channel in self.config['channels']:
-                    for _ in range(repeat_count):
-                        header.extend([f"M1_Ch{channel}", f"M2_Ch{channel}"])
+            if self.is_array_pzt1_mode() or self.is_array_pzt_rs_mode():
+                all_specs = list(self.get_display_channel_specs())
+                if self.is_array_pzt_rs_mode():
+                    all_specs.extend(self.get_rosette_display_channel_specs())
+                col_label_map = {}
+                for spec in all_specs:
+                    for col_idx in spec.get('sample_indices', []):
+                        col_label_map[col_idx] = spec.get('label', f"Col{col_idx}")
+                total_cols = self.get_effective_samples_per_sweep(repeat_count=repeat_count)
+                header = [col_label_map.get(i, f"Col{i}") for i in range(total_cols)]
             else:
                 header = [f"CH{ch}" for ch in self.config['channels']] * repeat_count
 
@@ -497,6 +510,12 @@ class DataExporterMixin:
                 else 0
             )
 
+            rs_round_indices = (
+                self.get_pzt_rs_rosette_sample_indices()
+                if self.is_array_pzt_rs_mode()
+                else []
+            )
+
             # Save CSV data with force columns from the selected ordered dataset.
             self._update_save_data_notice("Writing CSV data...")
             with open(csv_path, 'w', newline='', encoding='utf-8') as f:
@@ -525,6 +544,7 @@ class DataExporterMixin:
                         force_series=force_series,
                         capture_duration_s=capture_duration,
                         apply_filter=bool(applied_filter_to_csv),
+                        rs_round_indices=rs_round_indices,
                     )
                 else:
                     # Determine how many sweeps will be saved (respecting range selection)
@@ -541,6 +561,10 @@ class DataExporterMixin:
                         if row_timestamps is not None and saved_index < len(row_timestamps):
                             row_time = float(row_timestamps[saved_index])
                         row = np.asarray(sweep).tolist()
+                        if rs_round_indices:
+                            for _i in rs_round_indices:
+                                if _i < len(row):
+                                    row[_i] = round(row[_i], 2)
                         if is_555_mode:
                             timestamp_to_write = row_time if row_time is not None else 0.0
                             row.insert(0, float(timestamp_to_write))

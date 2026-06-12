@@ -127,6 +127,9 @@ class ExportHarness(DataExporterMixin, FilterProcessorMixin):
     def is_array_pzt1_mode(self):
         return False
 
+    def is_array_pzt_rs_mode(self):
+        return False
+
     def get_effective_samples_per_sweep(self):
         return 1
 
