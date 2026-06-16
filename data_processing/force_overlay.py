@@ -15,6 +15,7 @@ from constants.force import (
     Z_FORCE_SENSOR_TO_NEWTON,
 )
 from constants.plotting import MAX_PLOT_SWEEPS
+from constants.ui import ROSETTE_TAB_NAME
 from data_processing.force_state import get_force_runtime_state
 
 
@@ -28,6 +29,34 @@ def apply_force_plot_zero_threshold(force_values_newtons):
 
 class ForceOverlayMixin:
     """Force overlay time-window selection and curve rendering."""
+
+    def _get_force_plot_target(self):
+        """Return widgets and curve attributes for the currently visible force overlay."""
+        is_rosette_tab = False
+        if hasattr(self, "get_current_visualization_tab_name"):
+            try:
+                is_rosette_tab = self.get_current_visualization_tab_name() == ROSETTE_TAB_NAME
+            except Exception:
+                is_rosette_tab = False
+
+        if is_rosette_tab and hasattr(self, "rosette_force_viewbox"):
+            return {
+                "viewbox": self.rosette_force_viewbox,
+                "x_curve_attr": "_rosette_force_x_curve",
+                "z_curve_attr": "_rosette_force_z_curve",
+                "x_checkbox": getattr(self, "rosette_force_x_checkbox", None),
+                "z_checkbox": getattr(self, "rosette_force_z_checkbox", None),
+                "update_viewbox": getattr(self, "update_rosette_force_viewbox", None),
+            }
+
+        return {
+            "viewbox": getattr(self, "force_viewbox", None),
+            "x_curve_attr": "_force_x_curve",
+            "z_curve_attr": "_force_z_curve",
+            "x_checkbox": getattr(self, "force_x_checkbox", None),
+            "z_checkbox": getattr(self, "force_z_checkbox", None),
+            "update_viewbox": getattr(self, "update_force_viewbox", None),
+        }
 
     def _get_force_plot_time_window(self):
         """Return the active ADC plot time span that the force overlay should match."""
@@ -88,13 +117,24 @@ class ForceOverlayMixin:
                 return
 
         state = get_force_runtime_state(self)
-        show_x_force = self.force_x_checkbox and self.force_x_checkbox.isChecked()
-        show_z_force = self.force_z_checkbox and self.force_z_checkbox.isChecked()
+        target = self._get_force_plot_target()
+        viewbox = target["viewbox"]
+        if viewbox is None:
+            return
 
-        if not show_x_force and self._force_x_curve is not None:
-            self._force_x_curve.setVisible(False)
-        if not show_z_force and self._force_z_curve is not None:
-            self._force_z_curve.setVisible(False)
+        x_checkbox = target["x_checkbox"]
+        z_checkbox = target["z_checkbox"]
+        show_x_force = x_checkbox and x_checkbox.isChecked()
+        show_z_force = z_checkbox and z_checkbox.isChecked()
+        x_curve_attr = target["x_curve_attr"]
+        z_curve_attr = target["z_curve_attr"]
+        x_curve = getattr(self, x_curve_attr, None)
+        z_curve = getattr(self, z_curve_attr, None)
+
+        if not show_x_force and x_curve is not None:
+            x_curve.setVisible(False)
+        if not show_z_force and z_curve is not None:
+            z_curve.setVisible(False)
 
         if not state.data or (not show_x_force and not show_z_force):
             return
@@ -107,8 +147,9 @@ class ForceOverlayMixin:
             return
         min_time, max_time = time_window
 
-        if hasattr(self, 'update_force_viewbox'):
-            self.update_force_viewbox()
+        update_viewbox = target["update_viewbox"]
+        if callable(update_viewbox):
+            update_viewbox()
 
         try:
             force_array = np.array(state.data, dtype=np.float64)
@@ -133,24 +174,28 @@ class ForceOverlayMixin:
             z_forces = apply_force_plot_zero_threshold(z_forces)
 
             if show_x_force:
-                if self._force_x_curve is None:
+                x_curve = getattr(self, x_curve_attr, None)
+                if x_curve is None:
                     pen = pg.mkPen(color='r', width=2)
-                    self._force_x_curve = pg.PlotDataItem([], pen=pen, name='X Force [N]')
-                    self.force_viewbox.addItem(self._force_x_curve)
+                    x_curve = pg.PlotDataItem([], pen=pen, name='X Force [N]')
+                    viewbox.addItem(x_curve)
+                    setattr(self, x_curve_attr, x_curve)
 
-                self._force_x_curve.setVisible(True)
-                self._force_x_curve.setData(x=times, y=x_forces)
+                x_curve.setVisible(True)
+                x_curve.setData(x=times, y=x_forces)
 
             if show_z_force:
-                if self._force_z_curve is None:
+                z_curve = getattr(self, z_curve_attr, None)
+                if z_curve is None:
                     pen = pg.mkPen(color='b', width=2)
-                    self._force_z_curve = pg.PlotDataItem([], pen=pen, name='Z Force [N]')
-                    self.force_viewbox.addItem(self._force_z_curve)
+                    z_curve = pg.PlotDataItem([], pen=pen, name='Z Force [N]')
+                    viewbox.addItem(z_curve)
+                    setattr(self, z_curve_attr, z_curve)
 
-                self._force_z_curve.setVisible(True)
-                self._force_z_curve.setData(x=times, y=z_forces)
+                z_curve.setVisible(True)
+                z_curve.setData(x=times, y=z_forces)
 
-            self.force_viewbox.enableAutoRange(axis='y')
+            viewbox.enableAutoRange(axis='y')
 
         except Exception as e:
             self.log_status(f"ERROR: Failed to update force plot - {e}")

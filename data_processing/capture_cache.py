@@ -48,6 +48,12 @@ class CaptureCacheMixin:
             if self._force_z_curve is not None:
                 self.force_viewbox.removeItem(self._force_z_curve)
                 self._force_z_curve = None
+            if getattr(self, '_rosette_force_x_curve', None) is not None and hasattr(self, 'rosette_force_viewbox'):
+                self.rosette_force_viewbox.removeItem(self._rosette_force_x_curve)
+                self._rosette_force_x_curve = None
+            if getattr(self, '_rosette_force_z_curve', None) is not None and hasattr(self, 'rosette_force_viewbox'):
+                self.rosette_force_viewbox.removeItem(self._rosette_force_z_curve)
+                self._rosette_force_z_curve = None
 
             self.plot_widget.removeItem(self.adc_legend)
             self.adc_legend = self.plot_widget.addLegend(offset=(10, 10))
@@ -56,9 +62,14 @@ class CaptureCacheMixin:
             self.plot_widget.setYRange(0, 1, padding=0)
             self.force_viewbox.setXRange(0, 1, padding=0)
             self.force_viewbox.setYRange(0, 1, padding=0)
+            if hasattr(self, 'rosette_force_viewbox'):
+                self.rosette_force_viewbox.setXRange(0, 1, padding=0)
+                self.rosette_force_viewbox.setYRange(0, 1, padding=0)
 
             self.plot_widget.enableAutoRange()
             self.force_viewbox.enableAutoRange()
+            if hasattr(self, 'rosette_force_viewbox'):
+                self.rosette_force_viewbox.enableAutoRange()
 
             self.plot_widget.setLabel('left', 'ADC Value', units='counts')
             self.plot_widget.setLabel('bottom', 'Time', units='s')

@@ -200,6 +200,8 @@ class ADCStreamerGUI(
         self.rosette_channel_checkboxes: Dict[object, QCheckBox] = {}
         self.force_x_checkbox: Optional[QCheckBox] = None
         self.force_z_checkbox: Optional[QCheckBox] = None
+        self.rosette_force_x_checkbox: Optional[QCheckBox] = None
+        self.rosette_force_z_checkbox: Optional[QCheckBox] = None
         
         self.is_updating_plot = False
         self._adc_curves = {}
@@ -209,6 +211,8 @@ class ADCStreamerGUI(
         self._adc_curve_legend_added = {}
         self._force_x_curve = None
         self._force_z_curve = None
+        self._rosette_force_x_curve = None
+        self._rosette_force_z_curve = None
         self.force_plot_debounce_ms = FORCE_PLOT_DEBOUNCE_MS
         self._serial_disconnect_in_progress = False
     

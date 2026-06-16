@@ -16,6 +16,8 @@ from constants.plotting import (
     MAX_TOTAL_POINTS_TO_DISPLAY,
     PLOT_COLORS,
     ROSETTE_BASELINE_SAMPLE_COUNT,
+    ROSETTE_FIXED_Y_MAX_DEFAULT_OHMS,
+    ROSETTE_FIXED_Y_MIN_DEFAULT_OHMS,
 )
 
 
@@ -579,11 +581,30 @@ class ADCPlottingMixin:
 
         self.rosette_plot_widget.setLabel('left', 'Resistance', units='ohms')
         self.rosette_plot_widget.setLabel('bottom', 'Time', units='s')
-        self.rosette_plot_widget.enableAutoRange(axis='y')
+        self.apply_rosette_y_axis_range()
         if hasattr(self, 'rosette_plot_info_label'):
             self.rosette_plot_info_label.setText(
                 f"Rosette - Sweeps: {int(getattr(self, 'sweep_count', 0))} | Samples: {int(total_samples)}"
             )
+
+    def apply_rosette_y_axis_range(self):
+        """Apply Rosette Y-axis range settings to the RS plot."""
+        if not hasattr(self, 'rosette_plot_widget'):
+            return
+
+        range_combo = getattr(self, 'rosette_yaxis_range_combo', None)
+        if range_combo is None or range_combo.currentText() == "Adaptive":
+            self.rosette_plot_widget.enableAutoRange(axis='y')
+            return
+
+        min_spin = getattr(self, 'rosette_yaxis_min_spin', None)
+        max_spin = getattr(self, 'rosette_yaxis_max_spin', None)
+        y_min = float(min_spin.value()) if min_spin is not None else ROSETTE_FIXED_Y_MIN_DEFAULT_OHMS
+        y_max = float(max_spin.value()) if max_spin is not None else ROSETTE_FIXED_Y_MAX_DEFAULT_OHMS
+        if y_max <= y_min:
+            y_max = y_min + max(1.0, abs(y_min) * 0.01)
+        self.rosette_plot_widget.enableAutoRange(axis='y', enable=False)
+        self.rosette_plot_widget.setYRange(y_min, y_max, padding=0.0)
 
     def update_plot(self):
         """Update the plot with current data - optimized for fast updates and max 10K samples."""

@@ -14,6 +14,18 @@ class FakeSpinBox:
         return self._value
 
 
+class FakeCheckbox:
+    def __init__(self, checked=True):
+        self._checked = checked
+
+    def isChecked(self):
+        return self._checked
+
+
+class FakeViewBox:
+    pass
+
+
 class ForceOverlayHarness(ForceOverlayMixin):
     MAX_SWEEPS_BUFFER = 5
 
@@ -27,9 +39,36 @@ class ForceOverlayHarness(ForceOverlayMixin):
         self.is_capturing = False
         self.is_full_view = False
         self.force_data = []
+        self.force_viewbox = FakeViewBox()
+        self.force_x_checkbox = FakeCheckbox(True)
+        self.force_z_checkbox = FakeCheckbox(False)
+        self._force_x_curve = None
+        self._force_z_curve = None
 
 
 class ForceOverlayTests(unittest.TestCase):
+    def test_force_plot_target_uses_main_timeseries_by_default(self):
+        harness = ForceOverlayHarness()
+
+        target = harness._get_force_plot_target()
+
+        self.assertIs(target["viewbox"], harness.force_viewbox)
+        self.assertEqual(target["x_curve_attr"], "_force_x_curve")
+        self.assertIs(target["x_checkbox"], harness.force_x_checkbox)
+
+    def test_force_plot_target_uses_rosette_overlay_on_rosette_tab(self):
+        harness = ForceOverlayHarness()
+        harness.rosette_force_viewbox = FakeViewBox()
+        harness.rosette_force_x_checkbox = FakeCheckbox(False)
+        harness.rosette_force_z_checkbox = FakeCheckbox(True)
+        harness.get_current_visualization_tab_name = lambda: "Rosette (RS)"
+
+        target = harness._get_force_plot_target()
+
+        self.assertIs(target["viewbox"], harness.rosette_force_viewbox)
+        self.assertEqual(target["x_curve_attr"], "_rosette_force_x_curve")
+        self.assertIs(target["z_checkbox"], harness.rosette_force_z_checkbox)
+
     def test_time_window_uses_trailing_capture_window_before_wrap(self):
         harness = ForceOverlayHarness()
         harness.is_capturing = True

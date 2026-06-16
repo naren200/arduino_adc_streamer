@@ -26,10 +26,17 @@ from constants.ui import (
     WINDOW_SIZE_MIN,
 )
 from constants.plotting import (
+    ROSETTE_FIXED_Y_DECIMALS,
+    ROSETTE_FIXED_Y_MAX_DEFAULT_OHMS,
+    ROSETTE_FIXED_Y_MAX_LIMIT_OHMS,
+    ROSETTE_FIXED_Y_MIN_DEFAULT_OHMS,
+    ROSETTE_FIXED_Y_MIN_LIMIT_OHMS,
+    ROSETTE_FIXED_Y_STEP_OHMS,
     ROSETTE_MOVING_AVERAGE_DEFAULT_SAMPLES,
     ROSETTE_MOVING_AVERAGE_MAX_SAMPLES,
     ROSETTE_MOVING_AVERAGE_MIN_SAMPLES,
 )
+from gui.custom_widgets import NonScrollableDoubleSpinBox as QDoubleSpinBox
 
 
 class DisplayPanelsMixin:
@@ -175,7 +182,19 @@ class DisplayPanelsMixin:
         self.rosette_plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.rosette_plot_widget.setMouseEnabled(x=False, y=False)
         self.rosette_plot_widget.setMenuEnabled(False)
+
+        self.rosette_force_viewbox = pg.ViewBox()
+        self.rosette_plot_widget.scene().addItem(self.rosette_force_viewbox)
+        self.rosette_plot_widget.getAxis('right').linkToView(self.rosette_force_viewbox)
+        self.rosette_force_viewbox.setXLink(self.rosette_plot_widget)
+        self.rosette_plot_widget.setLabel('right', 'Force', units='N')
+        self.rosette_plot_widget.showAxis('right')
+
         self.rosette_plot_widget.addLegend(offset=(10, 10))
+        self.rosette_force_legend = pg.LegendItem(offset=(10, 100))
+        self.rosette_force_legend.setParentItem(self.rosette_plot_widget.graphicsItem())
+        self.rosette_plot_widget.getViewBox().sigResized.connect(self.update_rosette_force_viewbox)
+        self.update_rosette_force_viewbox()
         plot_layout.addWidget(self.rosette_plot_widget)
 
         self.rosette_plot_info_label = QLabel("Rosette - Sweeps: 0 | Samples: 0")
@@ -226,27 +245,27 @@ class DisplayPanelsMixin:
         main_layout.addWidget(channel_group)
 
         display_group = QGroupBox("Display Mode")
-        display_layout = QHBoxLayout()
+        display_layout = QGridLayout()
 
         self.rosette_subtract_baseline_check = QCheckBox("Subtract Baseline")
         self.rosette_subtract_baseline_check.setChecked(False)
         self.rosette_subtract_baseline_check.setToolTip("Subtract the Rosette baseline captured by Zero Signals")
         self.rosette_subtract_baseline_check.stateChanged.connect(self.trigger_plot_update)
-        display_layout.addWidget(self.rosette_subtract_baseline_check)
+        display_layout.addWidget(self.rosette_subtract_baseline_check, 0, 0)
 
         self.rosette_zero_signals_btn = QPushButton("Zero Signals")
         self.rosette_zero_signals_btn.setToolTip("Capture each Rosette baseline from the latest samples")
         self.rosette_zero_signals_btn.setMaximumWidth(90)
         self.rosette_zero_signals_btn.clicked.connect(self.zero_rosette_plot_baselines)
-        display_layout.addWidget(self.rosette_zero_signals_btn)
+        display_layout.addWidget(self.rosette_zero_signals_btn, 0, 1)
 
         self.rosette_moving_average_check = QCheckBox("Moving Avg")
         self.rosette_moving_average_check.setChecked(False)
         self.rosette_moving_average_check.setToolTip("Show a trailing moving average for each Rosette")
         self.rosette_moving_average_check.stateChanged.connect(self.trigger_plot_update)
-        display_layout.addWidget(self.rosette_moving_average_check)
+        display_layout.addWidget(self.rosette_moving_average_check, 0, 2)
 
-        display_layout.addWidget(QLabel("Samples:"))
+        display_layout.addWidget(QLabel("Samples:"), 0, 3)
         self.rosette_moving_average_spin = QSpinBox()
         self.rosette_moving_average_spin.setRange(
             ROSETTE_MOVING_AVERAGE_MIN_SAMPLES,
@@ -255,11 +274,66 @@ class DisplayPanelsMixin:
         self.rosette_moving_average_spin.setValue(ROSETTE_MOVING_AVERAGE_DEFAULT_SAMPLES)
         self.rosette_moving_average_spin.setToolTip("Trailing sample count used by Rosette moving average")
         self.rosette_moving_average_spin.valueChanged.connect(self.trigger_plot_update)
-        display_layout.addWidget(self.rosette_moving_average_spin)
+        display_layout.addWidget(self.rosette_moving_average_spin, 0, 4)
 
-        display_layout.addStretch()
+        display_layout.addWidget(QLabel("Y Range:"), 1, 0)
+        self.rosette_yaxis_range_combo = QComboBox()
+        self.rosette_yaxis_range_combo.addItems(["Adaptive", "Fixed"])
+        self.rosette_yaxis_range_combo.setCurrentText("Adaptive")
+        self.rosette_yaxis_range_combo.setToolTip("Adaptive: auto-scale to visible Rosette data | Fixed: use Min and Max")
+        self.rosette_yaxis_range_combo.currentIndexChanged.connect(self.on_rosette_yaxis_range_changed)
+        display_layout.addWidget(self.rosette_yaxis_range_combo, 1, 1)
+
+        self.rosette_yaxis_min_label = QLabel("Min:")
+        display_layout.addWidget(self.rosette_yaxis_min_label, 1, 2)
+        self.rosette_yaxis_min_spin = QDoubleSpinBox()
+        self.rosette_yaxis_min_spin.setRange(
+            ROSETTE_FIXED_Y_MIN_LIMIT_OHMS,
+            ROSETTE_FIXED_Y_MAX_LIMIT_OHMS,
+        )
+        self.rosette_yaxis_min_spin.setDecimals(ROSETTE_FIXED_Y_DECIMALS)
+        self.rosette_yaxis_min_spin.setSingleStep(ROSETTE_FIXED_Y_STEP_OHMS)
+        self.rosette_yaxis_min_spin.setSuffix(" ohm")
+        self.rosette_yaxis_min_spin.setValue(ROSETTE_FIXED_Y_MIN_DEFAULT_OHMS)
+        self.rosette_yaxis_min_spin.setToolTip("Minimum resistance shown when Rosette Y Range is Fixed")
+        self.rosette_yaxis_min_spin.valueChanged.connect(self.on_rosette_yaxis_range_changed)
+        display_layout.addWidget(self.rosette_yaxis_min_spin, 1, 3)
+
+        self.rosette_yaxis_max_label = QLabel("Max:")
+        display_layout.addWidget(self.rosette_yaxis_max_label, 1, 4)
+        self.rosette_yaxis_max_spin = QDoubleSpinBox()
+        self.rosette_yaxis_max_spin.setRange(
+            ROSETTE_FIXED_Y_MIN_LIMIT_OHMS,
+            ROSETTE_FIXED_Y_MAX_LIMIT_OHMS,
+        )
+        self.rosette_yaxis_max_spin.setDecimals(ROSETTE_FIXED_Y_DECIMALS)
+        self.rosette_yaxis_max_spin.setSingleStep(ROSETTE_FIXED_Y_STEP_OHMS)
+        self.rosette_yaxis_max_spin.setSuffix(" ohm")
+        self.rosette_yaxis_max_spin.setValue(ROSETTE_FIXED_Y_MAX_DEFAULT_OHMS)
+        self.rosette_yaxis_max_spin.setToolTip("Maximum resistance shown when Rosette Y Range is Fixed")
+        self.rosette_yaxis_max_spin.valueChanged.connect(self.on_rosette_yaxis_range_changed)
+        display_layout.addWidget(self.rosette_yaxis_max_spin, 1, 5)
+        self.on_rosette_yaxis_range_changed()
+
         display_group.setLayout(display_layout)
         main_layout.addWidget(display_group)
+
+        force_group = QGroupBox("Display Force")
+        force_layout = QHBoxLayout()
+        self.rosette_force_x_checkbox = QCheckBox("X Force [N]")
+        self.rosette_force_x_checkbox.setChecked(True)
+        self.rosette_force_x_checkbox.setStyleSheet("QCheckBox { color: red; }")
+        self.rosette_force_x_checkbox.stateChanged.connect(self.update_force_plot)
+        force_layout.addWidget(self.rosette_force_x_checkbox)
+
+        self.rosette_force_z_checkbox = QCheckBox("Z Force [N]")
+        self.rosette_force_z_checkbox.setChecked(True)
+        self.rosette_force_z_checkbox.setStyleSheet("QCheckBox { color: blue; }")
+        self.rosette_force_z_checkbox.stateChanged.connect(self.update_force_plot)
+        force_layout.addWidget(self.rosette_force_z_checkbox)
+        force_layout.addStretch()
+        force_group.setLayout(force_layout)
+        main_layout.addWidget(force_group)
 
         group.setLayout(main_layout)
         return group
@@ -287,6 +361,33 @@ class DisplayPanelsMixin:
         """Update force viewbox geometry to match main plot viewbox."""
         if hasattr(self, 'force_viewbox'):
             self.force_viewbox.setGeometry(self.plot_widget.getViewBox().sceneBoundingRect())
+
+    def update_rosette_force_viewbox(self):
+        """Update Rosette force viewbox geometry to match the Rosette plot."""
+        if hasattr(self, 'rosette_force_viewbox'):
+            self.rosette_force_viewbox.setGeometry(
+                self.rosette_plot_widget.getViewBox().sceneBoundingRect()
+            )
+
+    def on_rosette_yaxis_range_changed(self, _value=None):
+        """Apply Rosette Y-axis control visibility and queue a redraw."""
+        fixed = (
+            hasattr(self, 'rosette_yaxis_range_combo')
+            and self.rosette_yaxis_range_combo.currentText() == "Fixed"
+        )
+        for widget_name in (
+            'rosette_yaxis_min_label',
+            'rosette_yaxis_min_spin',
+            'rosette_yaxis_max_label',
+            'rosette_yaxis_max_spin',
+        ):
+            widget = getattr(self, widget_name, None)
+            if widget is not None:
+                widget.setVisible(fixed)
+        if hasattr(self, 'apply_rosette_y_axis_range'):
+            self.apply_rosette_y_axis_range()
+        if hasattr(self, 'trigger_plot_update'):
+            self.trigger_plot_update()
 
     def create_visualization_controls(self) -> QGroupBox:
         """Create visualization control section."""
