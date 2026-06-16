@@ -186,7 +186,10 @@ class DisplayPanelsMixin:
         self.rosette_force_viewbox = pg.ViewBox()
         self.rosette_plot_widget.scene().addItem(self.rosette_force_viewbox)
         self.rosette_plot_widget.getAxis('right').linkToView(self.rosette_force_viewbox)
-        self.rosette_force_viewbox.setXLink(self.rosette_plot_widget)
+        # Do NOT use setXLink here — bidirectional X linking causes the force viewbox's
+        # autorange (with no data) to propagate back to the main plot and disable its
+        # X autorange, making RS curves invisible. Instead, sync one-directionally via
+        # sigXRangeChanged in _sync_rosette_force_x_range.
         self.rosette_plot_widget.setLabel('right', 'Force', units='N')
         self.rosette_plot_widget.showAxis('right')
 
@@ -194,6 +197,7 @@ class DisplayPanelsMixin:
         self.rosette_force_legend = pg.LegendItem(offset=(10, 100))
         self.rosette_force_legend.setParentItem(self.rosette_plot_widget.graphicsItem())
         self.rosette_plot_widget.getViewBox().sigResized.connect(self.update_rosette_force_viewbox)
+        self.rosette_plot_widget.getViewBox().sigXRangeChanged.connect(self._sync_rosette_force_x_range)
         self.update_rosette_force_viewbox()
         plot_layout.addWidget(self.rosette_plot_widget)
 
@@ -364,10 +368,19 @@ class DisplayPanelsMixin:
 
     def update_rosette_force_viewbox(self):
         """Update Rosette force viewbox geometry to match the Rosette plot."""
-        if hasattr(self, 'rosette_force_viewbox'):
-            self.rosette_force_viewbox.setGeometry(
-                self.rosette_plot_widget.getViewBox().sceneBoundingRect()
-            )
+        if not hasattr(self, 'rosette_force_viewbox'):
+            return
+        self.rosette_force_viewbox.setGeometry(
+            self.rosette_plot_widget.getViewBox().sceneBoundingRect()
+        )
+        self._sync_rosette_force_x_range()
+
+    def _sync_rosette_force_x_range(self, *_args):
+        """Push main rosette plot X range into the force viewbox (one-directional, no feedback)."""
+        if not hasattr(self, 'rosette_force_viewbox') or not hasattr(self, 'rosette_plot_widget'):
+            return
+        x_min, x_max = self.rosette_plot_widget.getViewBox().viewRange()[0]
+        self.rosette_force_viewbox.setXRange(x_min, x_max, padding=0)
 
     def on_rosette_yaxis_range_changed(self, _value=None):
         """Apply Rosette Y-axis control visibility and queue a redraw."""

@@ -692,7 +692,12 @@ class ConfigurationMixin:
                     mapping = mux_mapping.get(sensor_id, {})
                 rs_channels = list(mapping.get('rs_channels', [])) if isinstance(mapping, dict) else []
 
-                for rs_idx, rs_channel in enumerate(rs_channels[:2]):
+                # Generate one spec per RS wire (always 2 per PZT sensor).
+                # When rs_channels is empty the ADC input pin is unconfigured; use -1 as
+                # a placeholder so RS data at the fixed slot positions 5 and 6 within the
+                # 7-sample-per-sensor block is still plotted.
+                for rs_idx in range(2):
+                    rs_channel = rs_channels[rs_idx] if rs_idx < len(rs_channels) else -1
                     sample_indices = []
                     base_idx = pzt_sensor_index * repeat_count * 7
                     for repeat_idx in range(repeat_count):
@@ -708,8 +713,7 @@ class ConfigurationMixin:
                     color_slot += 1
                 pzt_sensor_index += 1
 
-            if specs:
-                return specs
+            return specs
 
         for display_order, channel in enumerate(unique_channels):
             sample_indices = []
