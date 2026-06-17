@@ -13,6 +13,7 @@ namespace {
 static const uint32_t kRefreshMinMs = 0;
 static const uint8_t kMeasurePairsPerUpdate = 3;
 static const uint8_t kHeldMedianN = 5;
+static const uint8_t kBrokenTimeoutSweeps = 3;
 
 enum RefreshStage {
   REFRESH_IDLE,
@@ -44,6 +45,9 @@ static volatile uint32_t g_last_pair_h_cycles_by_channel[16] = {0};
 static volatile uint32_t g_last_pair_l_cycles_by_channel[16] = {0};
 static uint32_t g_discard_pairs_by_channel[16] = {0};
 static uint32_t g_timeouts_by_channel[16] = {0};
+static uint8_t g_timeout_streak_by_channel[16] = {0};
+static bool g_broken_by_channel[16] = {false};
+static uint32_t g_broken_skips_by_channel[16] = {0};
 static uint32_t g_total_updates = 0;
 static uint32_t g_mux_switches = 0;
 static uint32_t g_discard_pairs = 0;
@@ -156,6 +160,28 @@ static inline uint16_t quantizeOhms(float ra) {
   return static_cast<uint16_t>(v);
 }
 
+static void recordChannelTimeout(uint8_t ch) {
+  if (ch > 15) {
+    return;
+  }
+  g_channel_timeouts++;
+  g_timeouts_by_channel[ch]++;
+  if (g_timeout_streak_by_channel[ch] < 255) {
+    g_timeout_streak_by_channel[ch]++;
+  }
+  if (g_timeout_streak_by_channel[ch] >= kBrokenTimeoutSweeps) {
+    g_broken_by_channel[ch] = true;
+  }
+}
+
+static void recordSuccessfulUpdate(uint8_t ch) {
+  if (ch > 15) {
+    return;
+  }
+  g_timeout_streak_by_channel[ch] = 0;
+  g_broken_by_channel[ch] = false;
+}
+
 static void startNextRefreshChannel();
 
 static bool consumeReadyPair() {
@@ -164,10 +190,11 @@ static bool consumeReadyPair() {
   }
 
   if (g_channel_timeout_ms > 0 && (millis() - g_channel_start_ms) >= g_channel_timeout_ms) {
-    g_channel_timeouts++;
-    if (g_pending_channel < 16) {
-      g_timeouts_by_channel[g_pending_channel]++;
-    }
+    recordChannelTimeout(g_pending_channel);
+    // A timeout means the physical mux may still be parked on the failed
+    // channel. Force the next refresh step to re-select its channel even if it
+    // matches the last channel that produced a valid measurement.
+    g_prev_measured_channel = -1;
     startNextRefreshChannel();
     return false;
   }
@@ -196,7 +223,9 @@ static bool consumeReadyPair() {
     float ra = 0.0f;
     if (!pzr_controller::updateChannelRaFromPair(g_pending_channel, h_cycles, l_cycles, ra)) {
       g_measure_pairs_collected = 0;
-      g_channel_start_ms = millis();
+      // Keep the original channel timeout running. A broken/noisy RS channel can
+      // produce invalid pairs repeatedly; restarting the timer here would trap
+      // the shared refresh loop and starve the other configured RS channels.
       return true;
     }
 
@@ -206,6 +235,7 @@ static bool consumeReadyPair() {
       g_update_count_by_channel[g_pending_channel]++;
       g_last_update_ms_by_channel[g_pending_channel] = millis();
       g_total_updates++;
+      recordSuccessfulUpdate(g_pending_channel);
       g_prev_measured_channel = static_cast<int8_t>(g_pending_channel);
       g_last_refresh_ms = millis();
       startNextRefreshChannel();
@@ -231,6 +261,7 @@ static bool consumeReadyPair() {
     g_update_count_by_channel[g_pending_channel]++;
     g_last_update_ms_by_channel[g_pending_channel] = millis();
     g_total_updates++;
+    recordSuccessfulUpdate(g_pending_channel);
     g_prev_measured_channel = static_cast<int8_t>(g_pending_channel);
     g_last_refresh_ms = millis();
     g_measure_pairs_collected = 0;
@@ -251,8 +282,28 @@ static void startNextRefreshChannel() {
     return;
   }
 
-  g_pending_channel = g_rs_refresh_channels[g_refresh_index % g_rs_refresh_channel_count] & 0x0F;
-  g_refresh_index = static_cast<uint8_t>((g_refresh_index + 1u) % max(static_cast<uint8_t>(1), g_rs_refresh_channel_count));
+  bool found_measurable_channel = false;
+  for (uint8_t attempts = 0; attempts < g_rs_refresh_channel_count; ++attempts) {
+    const uint8_t ch = g_rs_refresh_channels[g_refresh_index % g_rs_refresh_channel_count] & 0x0F;
+    g_refresh_index = static_cast<uint8_t>(
+        (g_refresh_index + 1u) % max(static_cast<uint8_t>(1), g_rs_refresh_channel_count));
+    if (g_broken_by_channel[ch]) {
+      g_broken_skips_by_channel[ch]++;
+      continue;
+    }
+    g_pending_channel = ch;
+    found_measurable_channel = true;
+    break;
+  }
+
+  if (!found_measurable_channel) {
+    g_active_channel = 0xFF;
+    g_refresh_stage = REFRESH_IDLE;
+    g_discard_remaining = 0;
+    g_measure_pairs_collected = 0;
+    return;
+  }
+
   g_active_channel = g_pending_channel;
   g_measure_pairs_collected = 0;
 
@@ -412,13 +463,14 @@ uint32_t outputSamplesPerBlock(uint8_t repeat_count, uint8_t sweeps_per_block) {
 
 void resetState() {
   for (int ch = 0; ch < 16; ++ch) {
-    const float ra = isfinite(pzr_controller::lastPlotRa(ch)) ? pzr_controller::lastPlotRa(ch) : 0.0f;
+    const bool has_seed_ra = isfinite(pzr_controller::lastPlotRa(ch));
+    const float ra = has_seed_ra ? pzr_controller::lastPlotRa(ch) : 0.0f;
     g_last_ra_q_by_channel[ch] = quantizeOhms(ra);
     for (uint8_t i = 0; i < kHeldMedianN; ++i) {
       g_hold_median_buf_by_channel[ch][i] = ra;
     }
     g_hold_median_idx_by_channel[ch] = 0;
-    g_hold_median_count_by_channel[ch] = isfinite(ra) ? kHeldMedianN : 0;
+    g_hold_median_count_by_channel[ch] = has_seed_ra ? kHeldMedianN : 0;
     g_update_count_by_channel[ch] = 0;
     g_last_update_ms_by_channel[ch] = 0;
     g_rise_edges_by_channel[ch] = 0;
@@ -428,6 +480,9 @@ void resetState() {
     g_last_pair_l_cycles_by_channel[ch] = 0;
     g_discard_pairs_by_channel[ch] = 0;
     g_timeouts_by_channel[ch] = 0;
+    g_timeout_streak_by_channel[ch] = 0;
+    g_broken_by_channel[ch] = false;
+    g_broken_skips_by_channel[ch] = 0;
   }
 
   g_isr_fires = 0;
@@ -437,9 +492,9 @@ void resetState() {
   g_discard_pairs = 0;
   g_channel_timeouts = 0;
   g_channel_start_ms = 0;
-  g_channel_timeout_ms = pzr_controller::computePairTimeoutMs() *
-                         static_cast<uint32_t>(
-                             pzr_controller::kDiscardCyclesAfterSwitch + kMeasurePairsPerUpdate + 1u);
+  // One missed pair attempt skips the channel. Successful partial progress
+  // refreshes this timer for the next discard/measurement pair.
+  g_channel_timeout_ms = pzr_controller::computePairTimeoutMs();
   g_prev_measured_channel = -1;
   g_refresh_index = 0;
   g_last_refresh_ms = 0;
@@ -646,6 +701,30 @@ void printStatusDetails() {
   Serial.println(kMeasurePairsPerUpdate);
   Serial.print(F("# rs_held_median_n: "));
   Serial.println(kHeldMedianN);
+  Serial.print(F("# rs_broken_timeout_sweeps: "));
+  Serial.println(kBrokenTimeoutSweeps);
+  Serial.print(F("# RS broken channels: "));
+  bool any_broken_rs = false;
+  for (uint8_t i = 0; i < g_rs_refresh_channel_count; ++i) {
+    const uint8_t ch = g_rs_refresh_channels[i] & 0x0F;
+    if (!g_broken_by_channel[ch]) {
+      continue;
+    }
+    if (any_broken_rs) {
+      Serial.print(',');
+    }
+    Serial.print(ch);
+    Serial.print(F("(timeouts="));
+    Serial.print(g_timeouts_by_channel[ch]);
+    Serial.print(F(",skips="));
+    Serial.print(g_broken_skips_by_channel[ch]);
+    Serial.print(F(")"));
+    any_broken_rs = true;
+  }
+  if (!any_broken_rs) {
+    Serial.print(F("none"));
+  }
+  Serial.println();
   Serial.print(F("# capture_sequence_errors: "));
   Serial.println(pzr_controller::captureSequenceErrors());
   Serial.print(F("# RS held values/update counts: "));
@@ -681,6 +760,9 @@ void printRefreshDiagnostics(uint8_t ch, const __FlashStringHelper *prefix) {
   const uint32_t pairs_ready = g_pairs_ready_by_channel[ch];
   const uint32_t discard_pairs = g_discard_pairs_by_channel[ch];
   const uint32_t timeouts = g_timeouts_by_channel[ch];
+  const uint8_t timeout_streak = g_timeout_streak_by_channel[ch];
+  const bool broken = g_broken_by_channel[ch];
+  const uint32_t broken_skips = g_broken_skips_by_channel[ch];
   const uint32_t updates = g_update_count_by_channel[ch];
   const uint32_t last_h_cycles = g_last_pair_h_cycles_by_channel[ch];
   const uint32_t last_l_cycles = g_last_pair_l_cycles_by_channel[ch];
@@ -700,6 +782,12 @@ void printRefreshDiagnostics(uint8_t ch, const __FlashStringHelper *prefix) {
   Serial.print(updates);
   Serial.print(F(", timeouts="));
   Serial.print(timeouts);
+  Serial.print(F(", timeout_streak="));
+  Serial.print(timeout_streak);
+  Serial.print(F(", broken="));
+  Serial.print(broken ? F("true") : F("false"));
+  Serial.print(F(", broken_skips="));
+  Serial.print(broken_skips);
   Serial.print(F(", last_pair_h_us="));
   if (last_h_cycles > 0) {
     Serial.print(pzr_controller::cyclesToUs(last_h_cycles), 3);

@@ -248,6 +248,9 @@ static volatile uint32_t pztRsLastPairHCycByChannel[16] = {0};
 static volatile uint32_t pztRsLastPairLCycByChannel[16] = {0};
 static uint32_t       pztRsDiscardPairsByChannel[16] = {0};
 static uint32_t       pztRsTimeoutsByChannel[16] = {0};
+static uint8_t        pztRsTimeoutStreakByChannel[16] = {0};
+static bool           pztRsBrokenByChannel[16] = {false};
+static uint32_t       pztRsBrokenSkipsByChannel[16] = {0};
 static uint32_t       pztRsTotalUpdates = 0;
 static uint32_t       pztRsMuxSwitches = 0;
 static uint32_t       pztRsDiscardPairs = 0;
@@ -260,6 +263,7 @@ static uint32_t       pztRsLastRefreshMs = 0;
 static const uint32_t PZT_RS_REFRESH_MIN_MS = 0; // Pair-ready paced; do not add artificial scan delay.
 static const uint8_t  PZT_RS_MEASURE_PAIRS_PER_UPDATE = 3;
 static const uint8_t  PZT_RS_HELD_MEDIAN_N = 5;
+static const uint8_t  PZT_RS_BROKEN_TIMEOUT_SWEEPS = 3;
 
 enum PZTRsRefreshStage { PZT_RS_REFRESH_IDLE, PZT_RS_REFRESH_DISCARD, PZT_RS_REFRESH_MEASURE };
 static PZTRsRefreshStage pztRsRefreshStage = PZT_RS_REFRESH_IDLE;
@@ -1321,6 +1325,9 @@ static void pzt_printRsRefreshDiagnostics(uint8_t ch, const __FlashStringHelper 
   const uint32_t pairsReady = pztRsPairsReadyByChannel[ch];
   const uint32_t discardPairs = pztRsDiscardPairsByChannel[ch];
   const uint32_t timeouts = pztRsTimeoutsByChannel[ch];
+  const uint8_t timeoutStreak = pztRsTimeoutStreakByChannel[ch];
+  const bool broken = pztRsBrokenByChannel[ch];
+  const uint32_t brokenSkips = pztRsBrokenSkipsByChannel[ch];
   const uint32_t updates = pztRsUpdateCountByChannel[ch];
   const uint32_t lastHCyc = pztRsLastPairHCycByChannel[ch];
   const uint32_t lastLCyc = pztRsLastPairLCycByChannel[ch];
@@ -1340,6 +1347,12 @@ static void pzt_printRsRefreshDiagnostics(uint8_t ch, const __FlashStringHelper 
   Serial.print(updates);
   Serial.print(F(", timeouts="));
   Serial.print(timeouts);
+  Serial.print(F(", timeout_streak="));
+  Serial.print(timeoutStreak);
+  Serial.print(F(", broken="));
+  Serial.print(broken ? F("true") : F("false"));
+  Serial.print(F(", broken_skips="));
+  Serial.print(brokenSkips);
   Serial.print(F(", last_pair_h_us="));
   if (lastHCyc > 0) Serial.print(pzr_cyclesToUs(lastHCyc), 3);
   else              Serial.print(F("nan"));
@@ -1472,16 +1485,33 @@ static inline uint16_t pzt_rsQuantizeOhms(float ra) {
   return (uint16_t)v;
 }
 
+static void pzt_rsRecordChannelTimeout(uint8_t ch) {
+  if (ch > 15) return;
+  pztRsChannelTimeouts++;
+  pztRsTimeoutsByChannel[ch]++;
+  if (pztRsTimeoutStreakByChannel[ch] < 255) pztRsTimeoutStreakByChannel[ch]++;
+  if (pztRsTimeoutStreakByChannel[ch] >= PZT_RS_BROKEN_TIMEOUT_SWEEPS) {
+    pztRsBrokenByChannel[ch] = true;
+  }
+}
+
+static void pzt_rsRecordSuccessfulUpdate(uint8_t ch) {
+  if (ch > 15) return;
+  pztRsTimeoutStreakByChannel[ch] = 0;
+  pztRsBrokenByChannel[ch] = false;
+}
+
 // Seed held RS values from latest channel estimates before PZT_RS run starts.
 static void pzt_rsResetState() {
   for (int ch = 0; ch < 16; ++ch) {
-    float ra = isfinite(pzr_chState[ch].lastPlotRa) ? pzr_chState[ch].lastPlotRa : 0.0f;
+    const bool hasSeedRa = isfinite(pzr_chState[ch].lastPlotRa);
+    float ra = hasSeedRa ? pzr_chState[ch].lastPlotRa : 0.0f;
     pztRsLastRaQByChannel[ch] = pzt_rsQuantizeOhms(ra);
     for (uint8_t i = 0; i < PZT_RS_HELD_MEDIAN_N; ++i) {
       pztRsHoldMedianBufByChannel[ch][i] = ra;
     }
     pztRsHoldMedianIdxByChannel[ch] = 0;
-    pztRsHoldMedianCountByChannel[ch] = isfinite(ra) ? PZT_RS_HELD_MEDIAN_N : 0;
+    pztRsHoldMedianCountByChannel[ch] = hasSeedRa ? PZT_RS_HELD_MEDIAN_N : 0;
     pztRsUpdateCountByChannel[ch] = 0;
     pztRsLastUpdateMsByChannel[ch] = 0;
     pztRsRiseEdgesByChannel[ch] = 0;
@@ -1491,6 +1521,9 @@ static void pzt_rsResetState() {
     pztRsLastPairLCycByChannel[ch] = 0;
     pztRsDiscardPairsByChannel[ch] = 0;
     pztRsTimeoutsByChannel[ch] = 0;
+    pztRsTimeoutStreakByChannel[ch] = 0;
+    pztRsBrokenByChannel[ch] = false;
+    pztRsBrokenSkipsByChannel[ch] = 0;
   }
   pztRsIsrFires = 0;
   pztRsActiveChannel = 0xFF;
@@ -1499,10 +1532,9 @@ static void pzt_rsResetState() {
   pztRsDiscardPairs = 0;
   pztRsChannelTimeouts = 0;
   pztRsChannelStartMs = 0;
-  // Per-channel timeout: worst-case 555 period × discard/measure pairs + margin.
-  pztRsChannelTimeoutMs =
-      pzr_computePairTimeoutMs() *
-      (uint32_t)(PZR_DISCARD_CYCLES_AFTER_SWITCH + PZT_RS_MEASURE_PAIRS_PER_UPDATE + 1u);
+  // Per-channel timeout is one 555 pair window. Successful partial progress
+  // refreshes this timer; a broken channel is skipped after the first miss.
+  pztRsChannelTimeoutMs = pzr_computePairTimeoutMs();
   pztRsPrevMeasuredChannel = -1;
   pztRsRefreshIndex = 0;
   pztRsLastRefreshMs = 0;
@@ -1517,12 +1549,15 @@ static void pzt_rsResetState() {
 static bool pzt_rsConsumeReadyPair() {
   if (pztRsRefreshStage == PZT_RS_REFRESH_IDLE) return false;
 
-  // Timeout: if the 555 hasn't produced a pair within the worst-case period,
-  // the channel is broken/disconnected. Skip it so working channels are not blocked.
+  // Timeout: one missed pair attempt means this channel visit failed. After
+  // three failed visits in the current run, mark it broken and skip it.
   if (pztRsChannelTimeoutMs > 0 &&
       (millis() - pztRsChannelStartMs) >= pztRsChannelTimeoutMs) {
-    pztRsChannelTimeouts++;
-    if (pztRsPendingChannel < 16) pztRsTimeoutsByChannel[pztRsPendingChannel]++;
+    pzt_rsRecordChannelTimeout(pztRsPendingChannel);
+    // A timeout means the physical mux may still be parked on the failed
+    // channel. Force the next refresh step to re-select its channel even if it
+    // matches the last channel that produced a valid measurement.
+    pztRsPrevMeasuredChannel = -1;
     pzt_rsStartNextRefreshChannel();
     return false;
   }
@@ -1542,7 +1577,9 @@ static bool pzt_rsConsumeReadyPair() {
     float ra = 0.0f;
     if (!pzr_updateChannelRaFromPair(pztRsPendingChannel, hCyc, lCyc, ra)) {
       pztRsMeasurePairsCollected = 0;
-      pztRsChannelStartMs = millis();
+      // Keep the original channel timeout running. A broken/noisy RS channel can
+      // produce invalid pairs repeatedly; restarting the timer here would trap
+      // the shared refresh loop and starve the other configured RS channels.
       return true; // stay on this channel and wait for the next pair
     }
 
@@ -1552,6 +1589,7 @@ static bool pzt_rsConsumeReadyPair() {
       pztRsUpdateCountByChannel[pztRsPendingChannel]++;
       pztRsLastUpdateMsByChannel[pztRsPendingChannel] = millis();
       pztRsTotalUpdates++;
+      pzt_rsRecordSuccessfulUpdate(pztRsPendingChannel);
       pztRsPrevMeasuredChannel = (int8_t)pztRsPendingChannel;
       pztRsLastRefreshMs = millis();
       pzt_rsStartNextRefreshChannel(); // 555 immediately starts measuring next channel
@@ -1578,6 +1616,7 @@ static bool pzt_rsConsumeReadyPair() {
     pztRsUpdateCountByChannel[pztRsPendingChannel]++;
     pztRsLastUpdateMsByChannel[pztRsPendingChannel] = millis();
     pztRsTotalUpdates++;
+    pzt_rsRecordSuccessfulUpdate(pztRsPendingChannel);
     pztRsPrevMeasuredChannel = (int8_t)pztRsPendingChannel;
     pztRsLastRefreshMs = millis();
     pztRsMeasurePairsCollected = 0;
@@ -1598,9 +1637,28 @@ static void pzt_rsStartNextRefreshChannel() {
     return;
   }
 
-  pztRsPendingChannel = pzt.rsRefreshChannels[pztRsRefreshIndex % pzt.rsRefreshChannelCount] & 0x0F;
-  pztRsRefreshIndex =
-      (uint8_t)((pztRsRefreshIndex + 1u) % max((uint8_t)1, pzt.rsRefreshChannelCount));
+  bool foundMeasurableChannel = false;
+  for (uint8_t attempts = 0; attempts < pzt.rsRefreshChannelCount; ++attempts) {
+    uint8_t ch = pzt.rsRefreshChannels[pztRsRefreshIndex % pzt.rsRefreshChannelCount] & 0x0F;
+    pztRsRefreshIndex =
+        (uint8_t)((pztRsRefreshIndex + 1u) % max((uint8_t)1, pzt.rsRefreshChannelCount));
+    if (pztRsBrokenByChannel[ch]) {
+      pztRsBrokenSkipsByChannel[ch]++;
+      continue;
+    }
+    pztRsPendingChannel = ch;
+    foundMeasurableChannel = true;
+    break;
+  }
+
+  if (!foundMeasurableChannel) {
+    pztRsActiveChannel = 0xFF;
+    pztRsRefreshStage = PZT_RS_REFRESH_IDLE;
+    pztRsDiscardRemaining = 0;
+    pztRsMeasurePairsCollected = 0;
+    return;
+  }
+
   pztRsActiveChannel = pztRsPendingChannel;
   pztRsMeasurePairsCollected = 0;
 
@@ -2187,6 +2245,23 @@ static void pzt_printStatus() {
   Serial.print(F(", channel_timeout_ms=")); Serial.println(pztRsChannelTimeoutMs);
   Serial.print(F("# rs_measure_pairs_per_update: ")); Serial.println(PZT_RS_MEASURE_PAIRS_PER_UPDATE);
   Serial.print(F("# rs_held_median_n: ")); Serial.println(PZT_RS_HELD_MEDIAN_N);
+  Serial.print(F("# rs_broken_timeout_sweeps: ")); Serial.println(PZT_RS_BROKEN_TIMEOUT_SWEEPS);
+  Serial.print(F("# RS broken channels: "));
+  bool anyBrokenRs = false;
+  for (uint8_t i = 0; i < pzt.rsRefreshChannelCount; i++) {
+    uint8_t ch = pzt.rsRefreshChannels[i] & 0x0F;
+    if (!pztRsBrokenByChannel[ch]) continue;
+    if (anyBrokenRs) Serial.print(',');
+    Serial.print(ch);
+    Serial.print(F("(timeouts="));
+    Serial.print(pztRsTimeoutsByChannel[ch]);
+    Serial.print(F(",skips="));
+    Serial.print(pztRsBrokenSkipsByChannel[ch]);
+    Serial.print(F(")"));
+    anyBrokenRs = true;
+  }
+  if (!anyBrokenRs) Serial.print(F("none"));
+  Serial.println();
   Serial.print(F("# capture_sequence_errors: ")); Serial.println(pzr_cap.sequenceErrors);
   Serial.print(F("# RS held values/update counts: "));
   for (uint8_t i = 0; i < pzt.rsRefreshChannelCount; i++) {

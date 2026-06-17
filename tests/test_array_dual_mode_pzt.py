@@ -115,6 +115,34 @@ class ArrayDualModePZTTests(unittest.TestCase):
             "PZT1:M1 ADC[0,1,2,3,4] RS[14,14]",
         )
 
+    def test_pzt_rs_preserves_mixed_rs_channel_15_pairs_for_display(self):
+        harness = DualModePZTHarness()
+        harness.current_mcu = "Array_PZT_PZR1.7"
+        harness.array_mode_combo = DummyCombo("PZT_RS")
+        harness.config["selected_array_sensors"] = ["PZT6"]
+        harness.config["channels"] = [10, 11, 12, 13, 14]
+
+        for rs_channels, expected_keys in (
+            ([15, 2], [("rs", "PZT6", 1, 15), ("rs", "PZT6", 2, 2)]),
+            ([1, 15], [("rs", "PZT6", 1, 1), ("rs", "PZT6", 2, 15)]),
+        ):
+            with self.subTest(rs_channels=rs_channels):
+                harness.get_active_sensor_configuration = lambda rs_channels=rs_channels: {
+                    "mux_mapping": {
+                        "PZT6": {
+                            "mux": 1,
+                            "channels": [10, 11, 12, 13, 14],
+                            "rs_channels": rs_channels,
+                        },
+                    }
+                }
+
+                self.assertEqual(harness.get_rs_mux_channels_for_arduino_command(), rs_channels)
+
+                rs_specs = harness.get_rosette_display_channel_specs()
+                self.assertEqual([spec["key"] for spec in rs_specs], expected_keys)
+                self.assertEqual([spec["sample_indices"] for spec in rs_specs], [[5], [6]])
+
     def test_pcb17_five_sensor_layout_uses_seven_values_per_sensor(self):
         harness = DualModePZTHarness()
         harness.current_mcu = "Array_PZT_PZR1.7"

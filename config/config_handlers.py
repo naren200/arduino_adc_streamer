@@ -60,7 +60,9 @@ class ConfigurationMixin:
         )
 
     def get_estimated_pzt_rs_channel_timeout_ms(self) -> int:
-        return self.get_estimated_555_pair_timeout_ms() * 3
+        # PZT_RS now fails fast: one missed 555 pair attempt skips the channel.
+        # Successful partial progress refreshes this window for the next pair.
+        return self.get_estimated_555_pair_timeout_ms()
 
     def uses_generic_555_tuning_defaults(self) -> bool:
         return (
