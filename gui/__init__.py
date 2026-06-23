@@ -7,6 +7,7 @@ GUI components and layout management for the active application views.
 from gui.control_panels import ControlPanelsMixin
 from gui.display_panels import DisplayPanelsMixin
 from gui.file_panels import FilePanelsMixin
+from gui.force_calibration_panel import ForceCalibrationPanelMixin
 from gui.heatmap_panel import HeatmapPanelMixin
 from gui.signal_integration_panel import PressureMapPanelMixin, SignalIntegrationPanelMixin
 from gui.pressure_map_widget import PressureMapWidget
@@ -18,6 +19,7 @@ __all__ = [
     'ControlPanelsMixin',
     'DisplayPanelsMixin',
     'FilePanelsMixin',
+    'ForceCalibrationPanelMixin',
     'HeatmapPanelMixin',
     'PressureMapPanelMixin',
     'PressureMapWidget',

@@ -25,6 +25,7 @@ PZT_RS_PZT_TAB_NAME = "PZT"
 ROSETTE_TAB_NAME = "Rosette (RS)"
 PRESSURE_MAP_TAB_NAME = "Pressure Map"
 HEATMAP_TAB_NAME = "Heatmap"
+FORCE_CALIBRATION_TAB_NAME = "Force Calibration"
 SPECTRUM_TAB_NAME = "Spectrum"
 SENSOR_TAB_NAME = "Sensor"
 

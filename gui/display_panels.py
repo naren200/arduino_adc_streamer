@@ -16,6 +16,7 @@ import types
 from constants.ui import (
     CHANNEL_SCROLL_HEIGHT,
     DEFAULT_WINDOW_SIZE,
+    FORCE_CALIBRATION_TAB_NAME,
     HEATMAP_TAB_NAME,
     PRESSURE_MAP_TAB_NAME,
     PZT_RS_PZT_TAB_NAME,
@@ -71,15 +72,20 @@ class DisplayPanelsMixin:
         self.visualization_tabs.addTab(heatmap_tab, HEATMAP_TAB_NAME)
         self.heatmap_tab_index = 3
 
+        # Create force calibration tab (from ForceCalibrationPanelMixin)
+        force_calib_tab = self.create_force_calibration_tab()
+        self.visualization_tabs.addTab(force_calib_tab, FORCE_CALIBRATION_TAB_NAME)
+        self.force_calibration_tab_index = 4
+
         # Create spectrum tab (from SpectrumPanelMixin)
         spectrum_tab = self.create_spectrum_tab()
         self.visualization_tabs.addTab(spectrum_tab, SPECTRUM_TAB_NAME)
-        self.spectrum_tab_index = 4
+        self.spectrum_tab_index = 5
 
         # Create sensor tab last (from SensorPanelMixin)
         sensor_tab = self.create_sensor_tab()
         self.visualization_tabs.addTab(sensor_tab, SENSOR_TAB_NAME)
-        self.sensor_tab_index = 5
+        self.sensor_tab_index = 6
         
         return self.visualization_tabs
     

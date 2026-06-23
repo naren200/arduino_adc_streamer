@@ -91,6 +91,7 @@ class ForceSerialMixin:
                 self.calibrate_force_sensors()
 
             self._apply_force_connection_view_state(build_force_connected_view_state())
+            self.enable_force_calibration_start_stop(True)
             
             # Update channel list to add force checkboxes
             if self.config['channels']:  # Only if ADC is already configured
@@ -149,6 +150,7 @@ class ForceSerialMixin:
             
             self.log_status("Force sensor disconnected")
             self._apply_force_connection_view_state(build_force_disconnected_view_state())
+            self.enable_force_calibration_start_stop(False)
             
             # Update channel list to remove force checkboxes
             if self.config['channels']:  # Only if ADC is configured

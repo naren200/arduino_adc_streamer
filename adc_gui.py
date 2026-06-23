@@ -71,6 +71,7 @@ from gui import (
     ControlPanelsMixin,
     DisplayPanelsMixin,
     FilePanelsMixin,
+    ForceCalibrationPanelMixin,
     HeatmapPanelMixin,
     PressureMapPanelMixin,
     SensorPanelMixin,
@@ -91,23 +92,24 @@ from file_operations import (
 
 class ADCStreamerGUI(
     QMainWindow,
-    ADCSerialMixin,         # ✅ Serial communication
-    ForceSerialMixin,       # ✅ Force sensor communication
-    MCUDetectorMixin,       # ✅ MCU detection
-    StatusLoggingMixin,     # GUI status logging
-    ControlPanelsMixin,     # ✅ Control panel UI
-    DisplayPanelsMixin,     # ✅ Display panel UI
-    FilePanelsMixin,        # ✅ File panel UI
-    SensorPanelMixin,       # ✅ Sensor panel UI
-    PressureMapPanelMixin,  # Pressure Map tab pipeline and controls
-    HeatmapPanelMixin,      # Heatmap tab pipeline and controls
-    SpectrumPanelMixin,     # ✅ Spectrum panel UI
-    ConfigurationMixin,     # ✅ Configuration management
-    DataProcessorMixin,     # ✅ Data processing
-    SpectrumProcessorMixin, # ✅ Spectrum processing
-    DataExporterMixin,      # ✅ Data export
-    PlotExporterMixin,      # ✅ Plot export
-    ArchiveLoaderMixin      # ✅ Archive loading
+    ADCSerialMixin,             # ✅ Serial communication
+    ForceSerialMixin,           # ✅ Force sensor communication
+    MCUDetectorMixin,           # ✅ MCU detection
+    StatusLoggingMixin,         # GUI status logging
+    ControlPanelsMixin,         # ✅ Control panel UI
+    DisplayPanelsMixin,         # ✅ Display panel UI
+    FilePanelsMixin,            # ✅ File panel UI
+    SensorPanelMixin,           # ✅ Sensor panel UI
+    PressureMapPanelMixin,      # Pressure Map tab pipeline and controls
+    HeatmapPanelMixin,          # Heatmap tab pipeline and controls
+    ForceCalibrationPanelMixin, # Force Calibration tab and controls
+    SpectrumPanelMixin,         # ✅ Spectrum panel UI
+    ConfigurationMixin,         # ✅ Configuration management
+    DataProcessorMixin,         # ✅ Data processing
+    SpectrumProcessorMixin,     # ✅ Spectrum processing
+    DataExporterMixin,          # ✅ Data export
+    PlotExporterMixin,          # ✅ Plot export
+    ArchiveLoaderMixin          # ✅ Archive loading
 ):
     """
     Main application window that coordinates serial I/O, plotting, sensor views,
@@ -128,6 +130,7 @@ class ADCStreamerGUI(
         self.init_sensor_config_state()
         self._init_signal_integration_state()
         self.init_heatmap_processing_state()
+        self.init_force_calibration_state()
         self._init_spectrum_state()
         self._init_timers()
 
@@ -137,6 +140,7 @@ class ADCStreamerGUI(
         self.load_last_spectrum_settings()
         self.load_last_heatmap_settings()
         self.load_last_shear_settings()
+        self.load_last_force_calibration_state()
 
         # Post-initialization
         self.update_port_list()
