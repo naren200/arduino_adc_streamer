@@ -54,6 +54,7 @@ COP_EPS = 1e-6
 # Gaussian blob parameters
 BLOB_SIGMA_X = 0.15
 BLOB_SIGMA_Y = 0.15
+ELLIPSE_SHAPE_ENABLED = True
 
 # Smoothing parameter (exponential moving average)
 SMOOTH_ALPHA = 0.8

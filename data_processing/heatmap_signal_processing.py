@@ -11,6 +11,17 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 
+def resolve_heatmap_blob_sigmas(settings, default_x: float, default_y: float) -> tuple[float, float]:
+    """Return configured blob sigmas, or one shared radius for circular mode."""
+    sigma_x = max(float(settings.get("blob_sigma_x", default_x)), 1e-6)
+    sigma_y = max(float(settings.get("blob_sigma_y", default_y)), 1e-6)
+    if bool(settings.get("ellipse_shape_enabled", True)):
+        return sigma_x, sigma_y
+
+    circular_sigma = (sigma_x + sigma_y) / 2.0
+    return circular_sigma, circular_sigma
+
+
 class HeatmapSignalProcessor:
     """Process per-channel samples into bias-removed RMS magnitudes."""
 

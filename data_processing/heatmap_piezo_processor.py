@@ -13,6 +13,7 @@ from constants.heatmap import (
     HEATMAP_REQUIRED_CHANNELS, MAX_SENSOR_PACKAGES, CONFIDENCE_INTENSITY_REF, SIGMA_SPREAD_FACTOR,
     AXIS_SIGMA_FACTOR,
 )
+from data_processing.heatmap_signal_processing import resolve_heatmap_blob_sigmas
 
 
 class PiezoHeatmapProcessorMixin:
@@ -148,13 +149,16 @@ class PiezoHeatmapProcessorMixin:
         dx = self.heatmap_x_grid - cop_x
         dy = self.heatmap_y_grid - cop_y
 
-        sigma_x = settings.get('blob_sigma_x', BLOB_SIGMA_X)
-        sigma_y = settings.get('blob_sigma_y', BLOB_SIGMA_Y)
+        sigma_x, sigma_y = resolve_heatmap_blob_sigmas(settings, BLOB_SIGMA_X, BLOB_SIGMA_Y)
         sigma_scale = settings.get('sigma_scale', 1.0)
         sigma_scale_x = settings.get('sigma_scale_x', 1.0)
         sigma_scale_y = settings.get('sigma_scale_y', 1.0)
-        sigma_x = max(1e-6, sigma_x * sigma_scale * sigma_scale_x)
-        sigma_y = max(1e-6, sigma_y * sigma_scale * sigma_scale_y)
+        if bool(settings.get('ellipse_shape_enabled', True)):
+            sigma_x = max(1e-6, sigma_x * sigma_scale * sigma_scale_x)
+            sigma_y = max(1e-6, sigma_y * sigma_scale * sigma_scale_y)
+        else:
+            sigma_x = max(1e-6, sigma_x * sigma_scale)
+            sigma_y = sigma_x
         gaussian = np.exp(-(dx**2 / (2 * sigma_x**2) + dy**2 / (2 * sigma_y**2)))
 
         amplitude = intensity * settings.get('intensity_scale', INTENSITY_SCALE)

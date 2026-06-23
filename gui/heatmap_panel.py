@@ -15,7 +15,7 @@ from constants.heatmap import (
     HEATMAP_WIDTH, HEATMAP_HEIGHT, HEATMAP_COORD_EXTENT, SENSOR_CALIBRATION, SENSOR_SIZE,
     INTENSITY_SCALE, BLOB_SIGMA_X, BLOB_SIGMA_Y, SMOOTH_ALPHA,
     RMS_WINDOW_MS, SENSOR_NOISE_FLOOR, HEATMAP_DC_REMOVAL_MODE,
-    HPF_CUTOFF_HZ, HEATMAP_CHANNEL_SENSOR_MAP, HEATMAP_THRESHOLD,
+    HPF_CUTOFF_HZ, HEATMAP_CHANNEL_SENSOR_MAP, HEATMAP_THRESHOLD, ELLIPSE_SHAPE_ENABLED,
     CONFIDENCE_INTENSITY_REF, SIGMA_SPREAD_FACTOR,
     MAX_SENSOR_PACKAGES,
     R_HEATMAP_DELTA_THRESHOLD,
@@ -111,6 +111,7 @@ class HeatmapPanelMixin:
                 "intensity_scale",
                 "blob_sigma_x",
                 "blob_sigma_y",
+                "ellipse_shape_enabled",
                 "smooth_alpha",
                 "delta_threshold",  # Backward compatibility for older settings files
                 "cop_smooth_alpha",
@@ -132,6 +133,7 @@ class HeatmapPanelMixin:
             "intensity_scale",
             "blob_sigma_x",
             "blob_sigma_y",
+            "ellipse_shape_enabled",
             "smooth_alpha",
             "rms_window_ms",
             "dc_removal_mode",
@@ -384,6 +386,9 @@ class HeatmapPanelMixin:
             if "show_circle_overlay" in mode_settings and hasattr(self, "show_heatmap_circle_check"):
                 self.show_heatmap_circle_check.setChecked(bool(mode_settings["show_circle_overlay"]))
                 changed = True
+            if "ellipse_shape_enabled" in mode_settings and hasattr(self, "ellipse_shape_check"):
+                self.ellipse_shape_check.setChecked(bool(mode_settings["ellipse_shape_enabled"]))
+                changed = True
             if "show_position_labels" in mode_settings and hasattr(self, "show_heatmap_position_labels_check"):
                 self.show_heatmap_position_labels_check.setChecked(bool(mode_settings["show_position_labels"]))
                 changed = True
@@ -464,6 +469,7 @@ class HeatmapPanelMixin:
         self.dc_removal_combo.currentIndexChanged.connect(self.save_last_heatmap_settings)
         self.heatmap_colormap_combo.currentTextChanged.connect(self._on_heatmap_colormap_changed)
         self.show_heatmap_position_labels_check.stateChanged.connect(self._on_heatmap_position_labels_toggled)
+        self.ellipse_shape_check.stateChanged.connect(self._on_heatmap_ellipse_shape_toggled)
         # Note: Per-sensor threshold and gain spinboxes are connected in _build_per_sensor_calibration_ui()
 
     def _on_heatmap_circle_overlay_toggled(self, _state=False):
@@ -475,6 +481,13 @@ class HeatmapPanelMixin:
         self._refresh_display_item_overlays()
         if not getattr(self, "_heatmap_settings_loading", False):
             self.save_last_heatmap_settings()
+
+    def _on_heatmap_ellipse_shape_toggled(self, _state=False):
+        if getattr(self, "_heatmap_settings_loading", False):
+            return
+        self.save_last_heatmap_settings()
+        if hasattr(self, "trigger_heatmap_update"):
+            self.trigger_heatmap_update()
 
     def _create_heatmap_image_item(self):
         return pg.ImageItem(axisOrder="row-major")
@@ -1131,6 +1144,12 @@ class HeatmapPanelMixin:
         self.blob_sigma_y_spin.setDecimals(4)
         self.blob_sigma_y_spin.setValue(BLOB_SIGMA_Y)
         display_layout.addWidget(self.blob_sigma_y_spin, 1, 3)
+        self.ellipse_shape_check = QCheckBox("Ellipse Shape")
+        self.ellipse_shape_check.setChecked(ELLIPSE_SHAPE_ENABLED)
+        self.ellipse_shape_check.setToolTip(
+            "Allow outer-sensor balance to stretch the blob; turn off for a circular blob"
+        )
+        display_layout.addWidget(self.ellipse_shape_check, 2, 2, 1, 2)
         display_layout.addWidget(QLabel("Signal Smooth Alpha (sensor):"), 2, 0)
         self.smooth_alpha_spin = QDoubleSpinBox()
         self.smooth_alpha_spin.setRange(0.0, 1.0)
@@ -1142,11 +1161,11 @@ class HeatmapPanelMixin:
         self.show_heatmap_circle_check.setChecked(False)
         self.show_heatmap_circle_check.setToolTip("Draw the sensor boundary circle over each heatmap")
         self.show_heatmap_circle_check.stateChanged.connect(self._on_heatmap_circle_overlay_toggled)
-        display_layout.addWidget(self.show_heatmap_circle_check, 2, 2, 1, 2)
+        display_layout.addWidget(self.show_heatmap_circle_check, 3, 2, 1, 2)
         self.show_heatmap_position_labels_check = QCheckBox("Show Position Labels")
         self.show_heatmap_position_labels_check.setChecked(False)
         self.show_heatmap_position_labels_check.setToolTip("Show selected sensor IDs over the array heatmap display")
-        display_layout.addWidget(self.show_heatmap_position_labels_check, 3, 2, 1, 2)
+        display_layout.addWidget(self.show_heatmap_position_labels_check, 4, 2, 1, 2)
         display_layout.addWidget(QLabel("Color Scale:"), 3, 0)
         self.heatmap_colormap_combo = QComboBox()
         self.heatmap_colormap_combo.addItems(list(self.HEATMAP_COLOR_MAPS.keys()))
@@ -1230,6 +1249,11 @@ class HeatmapPanelMixin:
             "intensity_scale": self.intensity_scale_spin.value(),
             "blob_sigma_x": self.blob_sigma_x_spin.value(),
             "blob_sigma_y": self.blob_sigma_y_spin.value(),
+            "ellipse_shape_enabled": (
+                self.ellipse_shape_check.isChecked()
+                if hasattr(self, "ellipse_shape_check")
+                else ELLIPSE_SHAPE_ENABLED
+            ),
             "smooth_alpha": self.smooth_alpha_spin.value(),
             "rms_window_ms": self.rms_window_spin.value(),
             "dc_removal_mode": "bias" if self.dc_removal_combo.currentIndex() == 0 else "highpass",

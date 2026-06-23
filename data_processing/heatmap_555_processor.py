@@ -17,6 +17,7 @@ from constants.heatmap import (
     R_HEATMAP_COP_SMOOTH_ALPHA,
     MAX_SENSOR_PACKAGES,
 )
+from data_processing.heatmap_signal_processing import resolve_heatmap_blob_sigmas
 
 
 class Heatmap555ProcessorMixin:
@@ -323,8 +324,7 @@ class Heatmap555ProcessorMixin:
             state['last_concentration'] = concentration
             state['last_confidence'] = confidence
 
-            sigma_x = max(float(settings.get('blob_sigma_x', BLOB_SIGMA_X)), 1e-6)
-            sigma_y = max(float(settings.get('blob_sigma_y', BLOB_SIGMA_Y)), 1e-6)
+            sigma_x, sigma_y = resolve_heatmap_blob_sigmas(settings, BLOB_SIGMA_X, BLOB_SIGMA_Y)
 
             label_to_weight = {label: float(weights[idx]) for idx, label in enumerate(sensor_order)}
             left_weight = label_to_weight.get('L', 0.0)
@@ -334,11 +334,12 @@ class Heatmap555ProcessorMixin:
             lr = (left_weight + right_weight) / (intensity + COP_EPS) if intensity > 0 else 0.0
             tb = (top_weight + bottom_weight) / (intensity + COP_EPS) if intensity > 0 else 0.0
 
-            axis_k = max(0.0, float(settings.get('axis_adapt_strength', R_HEATMAP_AXIS_ADAPT_STRENGTH)))
-            if lr > tb:
-                sigma_x *= (1.0 + axis_k * min(1.0, lr - tb))
-            elif tb > lr:
-                sigma_y *= (1.0 + axis_k * min(1.0, tb - lr))
+            if bool(settings.get('ellipse_shape_enabled', True)):
+                axis_k = max(0.0, float(settings.get('axis_adapt_strength', R_HEATMAP_AXIS_ADAPT_STRENGTH)))
+                if lr > tb:
+                    sigma_x *= (1.0 + axis_k * min(1.0, lr - tb))
+                elif tb > lr:
+                    sigma_y *= (1.0 + axis_k * min(1.0, tb - lr))
 
             dx = self.heatmap_x_grid - state['smoothed_x']
             dy = self.heatmap_y_grid - state['smoothed_y']

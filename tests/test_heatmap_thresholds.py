@@ -218,6 +218,63 @@ class HeatmapThresholdTests(unittest.TestCase):
         self.assertLess(left_col, int(HEATMAP_WIDTH * 0.25))
         self.assertLess(abs(left_row - center_row), int(HEATMAP_HEIGHT * 0.1))
 
+    def test_piezo_circular_blob_mode_uses_equal_axis_spread(self):
+        processor = DirectPiezoHeatmapProcessor()
+        settings = {
+            "blob_sigma_x": 0.1,
+            "blob_sigma_y": 0.5,
+            "sigma_scale": 1.2,
+            "sigma_scale_x": 2.0,
+            "sigma_scale_y": 0.5,
+            "ellipse_shape_enabled": False,
+            "intensity_scale": 1.0,
+        }
+
+        heatmap = processor.generate_heatmap(0.0, 0.0, 1.0, settings)
+
+        np.testing.assert_allclose(heatmap, heatmap.T, rtol=1e-5, atol=1e-6)
+
+    def test_piezo_ellipse_blob_mode_keeps_independent_axis_spread(self):
+        processor = DirectPiezoHeatmapProcessor()
+        settings = {
+            "blob_sigma_x": 0.1,
+            "blob_sigma_y": 0.5,
+            "ellipse_shape_enabled": True,
+            "intensity_scale": 1.0,
+        }
+
+        heatmap = processor.generate_heatmap(0.0, 0.0, 1.0, settings)
+
+        self.assertFalse(np.allclose(heatmap, heatmap.T, rtol=1e-5, atol=1e-6))
+
+    def test_555_circular_blob_mode_ignores_axis_adaptation(self):
+        processor = Dummy555Processor()
+        coordinates = np.linspace(-HEATMAP_COORD_EXTENT, HEATMAP_COORD_EXTENT, HEATMAP_WIDTH)
+        processor.heatmap_x_grid, processor.heatmap_y_grid = np.meshgrid(coordinates, coordinates)
+        settings = {
+            "channel_sensor_map": ["T", "B", "R", "L", "C"],
+            "global_noise_threshold": 0.0,
+            "sensor_calibration_dict": {},
+            "sensor_calibration": [1.0] * 5,
+            "cop_smooth_alpha": 1.0,
+            "map_smooth_alpha": 1.0,
+            "intensity_scale": 0.001,
+            "intensity_min": 0.0,
+            "intensity_max": 100.0,
+            "blob_sigma_x": 0.1,
+            "blob_sigma_y": 0.5,
+            "axis_adapt_strength": 5.0,
+            "ellipse_shape_enabled": False,
+        }
+
+        heatmap, cop_x, cop_y, *_ = processor.process_555_displacement_heatmap(settings)[0]
+        total = float(np.sum(heatmap))
+        self.assertGreater(total, 0.0)
+        variance_x = float(np.sum(heatmap * (processor.heatmap_x_grid - cop_x) ** 2) / total)
+        variance_y = float(np.sum(heatmap * (processor.heatmap_y_grid - cop_y) ** 2) / total)
+
+        self.assertAlmostEqual(variance_x, variance_y, delta=0.002)
+
     def test_heatmap_panel_uses_row_major_images_without_transpose(self):
         panel = HeatmapPanelMixin.__new__(HeatmapPanelMixin)
         image_item = panel._create_heatmap_image_item()
