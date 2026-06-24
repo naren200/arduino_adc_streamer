@@ -220,6 +220,18 @@ class BinaryProcessorMixin:
                 if store_capture_data:
                     now = time.time()
                     if (
+                        hasattr(self, 'update_force_calibration_live_reading_from_selected_source')
+                        and getattr(self, 'force_calibration_state', None) is not None
+                        and getattr(self.force_calibration_state, 'is_capturing', False)
+                        and now - getattr(self, '_last_force_calibration_update_time', 0.0) >= PLOT_UPDATE_INTERVAL_SEC
+                    ):
+                        self._last_force_calibration_update_time = now
+                        try:
+                            self.update_force_calibration_live_reading_from_selected_source()
+                        except Exception as exc:
+                            self.log_status(f"WARNING: Force calibration live update unavailable: {exc}")
+
+                    if (
                         (
                             not hasattr(self, 'should_update_live_timeseries_display')
                             or self.should_update_live_timeseries_display()
