@@ -184,7 +184,7 @@ class DataExporterTests(unittest.TestCase):
             with csv_files[0].open("r", encoding="utf-8", newline="") as handle:
                 rows = list(csv.reader(handle))
 
-            self.assertEqual(rows[0], ["CH0", "Force_X", "Force_Z"])
+            self.assertEqual(rows[0], ["CH0", "Force_X_N", "Force_Z_N"])
             exported_values = np.asarray([float(row[0]) for row in rows[1:]], dtype=np.float64)
             raw_values = harness.raw_data[:, 0].astype(np.float64)
             self.assertEqual(len(exported_values), len(raw_values))

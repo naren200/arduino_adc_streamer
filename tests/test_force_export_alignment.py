@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import numpy as np
 
+from constants.force import X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
 from file_operations.data_exporter import DataExporterMixin
 from file_operations.force_export_alignment import (
     build_export_row_timestamps,
@@ -73,9 +74,9 @@ class ForceExportHarness(DataExporterMixin):
         self.max_sweep_spin = SimpleSpin(0)
         self.buffer_spin = SimpleSpin(8)
         self.force_data = [
-            (0.10, 1.0, 10.0),
-            (0.30, 3.0, 30.0),
-            (0.50, 5.0, 50.0),
+            (0.10, 1.0 * X_FORCE_SENSOR_TO_NEWTON, 10.0 * Z_FORCE_SENSOR_TO_NEWTON),
+            (0.30, 3.0 * X_FORCE_SENSOR_TO_NEWTON, 30.0 * Z_FORCE_SENSOR_TO_NEWTON),
+            (0.50, 5.0 * X_FORCE_SENSOR_TO_NEWTON, 50.0 * Z_FORCE_SENSOR_TO_NEWTON),
         ]
         self.force_calibration_offset = {"x": 0.0, "z": 0.0}
         self.raw_data = np.array([[11.0], [22.0], [33.0]], dtype=np.float32)
@@ -118,6 +119,9 @@ class ForceExportHarness(DataExporterMixin):
     def is_array_pzt1_mode(self):
         return False
 
+    def is_array_pzt_rs_mode(self):
+        return False
+
     def get_effective_samples_per_sweep(self):
         return 1
 
@@ -138,9 +142,9 @@ class ForceExportAlignmentTests(unittest.TestCase):
     def test_build_force_export_series_sorts_by_timestamp(self):
         series = build_force_export_series(
             [
-                (0.30, 3.0, 30.0),
-                (0.10, 1.0, 10.0),
-                (0.20, 2.0, 20.0),
+                (0.30, 3.0 * X_FORCE_SENSOR_TO_NEWTON, 30.0 * Z_FORCE_SENSOR_TO_NEWTON),
+                (0.10, 1.0 * X_FORCE_SENSOR_TO_NEWTON, 10.0 * Z_FORCE_SENSOR_TO_NEWTON),
+                (0.20, 2.0 * X_FORCE_SENSOR_TO_NEWTON, 20.0 * Z_FORCE_SENSOR_TO_NEWTON),
             ]
         )
 
@@ -152,8 +156,8 @@ class ForceExportAlignmentTests(unittest.TestCase):
     def test_get_nearest_force_values_prefers_earlier_sample_on_tie(self):
         series = build_force_export_series(
             [
-                (0.10, 1.0, 10.0),
-                (0.30, 3.0, 30.0),
+                (0.10, 1.0 * X_FORCE_SENSOR_TO_NEWTON, 10.0 * Z_FORCE_SENSOR_TO_NEWTON),
+                (0.30, 3.0 * X_FORCE_SENSOR_TO_NEWTON, 30.0 * Z_FORCE_SENSOR_TO_NEWTON),
             ]
         )
 
@@ -184,7 +188,7 @@ class ForceExportAlignmentTests(unittest.TestCase):
             with csv_files[0].open("r", encoding="utf-8", newline="") as handle:
                 rows = list(csv.reader(handle))
 
-            self.assertEqual(rows[0], ["CH0", "Force_X", "Force_Z"])
+            self.assertEqual(rows[0], ["CH0", "Force_X_N", "Force_Z_N"])
             self.assertEqual(rows[1], ["11.0", "1.0", "10.0"])
             self.assertEqual(rows[2], ["22.0", "3.0", "30.0"])
             self.assertEqual(rows[3], ["33.0", "5.0", "50.0"])

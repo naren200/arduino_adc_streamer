@@ -525,7 +525,7 @@ class DataExporterMixin:
                 # Write header
                 if is_555_mode:
                     header.insert(0, "Timestamp_s")
-                header.extend(["Force_X", "Force_Z"])
+                header.extend(["Force_X_N", "Force_Z_N"])
                 writer.writerow(header)
 
                 # Precompute capture duration for approximate timestamp mapping
@@ -611,9 +611,10 @@ class DataExporterMixin:
                     "x_force_available": has_force_x,
                     "z_force_available": has_force_z,
                     "total_force_samples": len(force_state.data),
+                    "csv_units": "N",
                     "calibration_offset_x": force_state.calibration_offset['x'],
                     "calibration_offset_z": force_state.calibration_offset['z'],
-                    "note": "Force data not available" if not force_state.data else "Force data synchronized with ADC samples (calibrated to zero at connection)"
+                    "note": "Force data not available" if not force_state.data else "Force data synchronized with ADC samples and exported in Newtons (calibrated to zero at connection)"
                 },
                 "row_timestamp": {
                     "included_in_csv": bool(is_555_mode),

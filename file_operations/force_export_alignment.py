@@ -10,6 +10,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from constants.force import X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
+
 
 @dataclass(frozen=True, slots=True)
 class ForceExportSeries:
@@ -21,7 +23,7 @@ class ForceExportSeries:
 
 
 def build_force_export_series(force_samples) -> ForceExportSeries | None:
-    """Return a sorted force-sample view for export alignment."""
+    """Return sorted, Newton-converted force samples for export alignment."""
     if not force_samples:
         return None
 
@@ -33,8 +35,8 @@ def build_force_export_series(force_samples) -> ForceExportSeries | None:
     force_array = force_array[sort_order]
     return ForceExportSeries(
         timestamps_s=force_array[:, 0],
-        x_force=force_array[:, 1],
-        z_force=force_array[:, 2],
+        x_force=force_array[:, 1] / X_FORCE_SENSOR_TO_NEWTON,
+        z_force=force_array[:, 2] / Z_FORCE_SENSOR_TO_NEWTON,
     )
 
 
@@ -58,7 +60,7 @@ def get_nearest_force_values(
     force_series: ForceExportSeries | None,
     sweep_time_s: float | None,
 ) -> tuple[float, float]:
-    """Return the nearest calibrated force sample for one exported sweep row."""
+    """Return the nearest calibrated force sample in Newtons for one export row."""
     if force_series is None or sweep_time_s is None or len(force_series.timestamps_s) == 0:
         return (0.0, 0.0)
 
