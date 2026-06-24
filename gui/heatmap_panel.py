@@ -16,6 +16,7 @@ from constants.heatmap import (
     INTENSITY_SCALE, BLOB_SIGMA_X, BLOB_SIGMA_Y, SMOOTH_ALPHA,
     RMS_WINDOW_MS, SENSOR_NOISE_FLOOR, HEATMAP_DC_REMOVAL_MODE,
     HPF_CUTOFF_HZ, HEATMAP_CHANNEL_SENSOR_MAP, HEATMAP_THRESHOLD, ELLIPSE_SHAPE_ENABLED,
+    REMOVE_NEGATIVES,
     CONFIDENCE_INTENSITY_REF, SIGMA_SPREAD_FACTOR,
     MAX_SENSOR_PACKAGES,
     R_HEATMAP_DELTA_THRESHOLD,
@@ -138,6 +139,7 @@ class HeatmapPanelMixin:
             "rms_window_ms",
             "dc_removal_mode",
             "hpf_cutoff_hz",
+            "remove_negatives",
             "general_threshold",  # Changed from magnitude_threshold
             "sensor_calibration_dict",  # Per-sensor calibration indexed by sensor ID
             "show_circle_overlay",
@@ -389,6 +391,9 @@ class HeatmapPanelMixin:
             if "ellipse_shape_enabled" in mode_settings and hasattr(self, "ellipse_shape_check"):
                 self.ellipse_shape_check.setChecked(bool(mode_settings["ellipse_shape_enabled"]))
                 changed = True
+            if "remove_negatives" in mode_settings and hasattr(self, "remove_negatives_check"):
+                self.remove_negatives_check.setChecked(bool(mode_settings["remove_negatives"]))
+                changed = True
             if "show_position_labels" in mode_settings and hasattr(self, "show_heatmap_position_labels_check"):
                 self.show_heatmap_position_labels_check.setChecked(bool(mode_settings["show_position_labels"]))
                 changed = True
@@ -470,6 +475,7 @@ class HeatmapPanelMixin:
         self.heatmap_colormap_combo.currentTextChanged.connect(self._on_heatmap_colormap_changed)
         self.show_heatmap_position_labels_check.stateChanged.connect(self._on_heatmap_position_labels_toggled)
         self.ellipse_shape_check.stateChanged.connect(self._on_heatmap_ellipse_shape_toggled)
+        self.remove_negatives_check.stateChanged.connect(self._on_heatmap_remove_negatives_toggled)
         # Note: Per-sensor threshold and gain spinboxes are connected in _build_per_sensor_calibration_ui()
 
     def _on_heatmap_circle_overlay_toggled(self, _state=False):
@@ -483,6 +489,13 @@ class HeatmapPanelMixin:
             self.save_last_heatmap_settings()
 
     def _on_heatmap_ellipse_shape_toggled(self, _state=False):
+        if getattr(self, "_heatmap_settings_loading", False):
+            return
+        self.save_last_heatmap_settings()
+        if hasattr(self, "trigger_heatmap_update"):
+            self.trigger_heatmap_update()
+
+    def _on_heatmap_remove_negatives_toggled(self, _state=False):
         if getattr(self, "_heatmap_settings_loading", False):
             return
         self.save_last_heatmap_settings()
@@ -1032,6 +1045,12 @@ class HeatmapPanelMixin:
         self.hpf_cutoff_spin.setValue(HPF_CUTOFF_HZ)
         self.hpf_cutoff_spin.setMinimumHeight(28)
         signal_layout.addWidget(self.hpf_cutoff_spin, 1, 1)
+        self.remove_negatives_check = QCheckBox("Remove negatives")
+        self.remove_negatives_check.setChecked(REMOVE_NEGATIVES)
+        self.remove_negatives_check.setToolTip(
+            "Set negative samples to zero after DC removal before calculating RMS"
+        )
+        signal_layout.addWidget(self.remove_negatives_check, 1, 2, 1, 2)
         self.dc_removal_combo.currentIndexChanged.connect(self._on_dc_mode_changed)
         self._on_dc_mode_changed(self.dc_removal_combo.currentIndex())
         self.heatmap_signal_group = signal_group
@@ -1258,6 +1277,11 @@ class HeatmapPanelMixin:
             "rms_window_ms": self.rms_window_spin.value(),
             "dc_removal_mode": "bias" if self.dc_removal_combo.currentIndex() == 0 else "highpass",
             "hpf_cutoff_hz": self.hpf_cutoff_spin.value(),
+            "remove_negatives": (
+                self.remove_negatives_check.isChecked()
+                if hasattr(self, "remove_negatives_check")
+                else REMOVE_NEGATIVES
+            ),
             "channel_sensor_map": channel_sensor_map,
             "channel_to_baseline": channel_to_baseline,
             "confidence_intensity_ref": CONFIDENCE_INTENSITY_REF,

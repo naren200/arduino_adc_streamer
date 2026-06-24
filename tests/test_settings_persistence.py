@@ -110,6 +110,7 @@ class HeatmapSettingsHarness(HeatmapPanelMixin):
         self.blob_sigma_x_spin = SimpleSpin(0.31)
         self.blob_sigma_y_spin = SimpleSpin(0.41)
         self.ellipse_shape_check = SimpleCheck(True)
+        self.remove_negatives_check = SimpleCheck(True)
         self.smooth_alpha_spin = SimpleSpin(0.51)
         self.hpf_cutoff_spin = SimpleSpin(3.5)
         self.r555_cop_smooth_alpha_spin = SimpleSpin(0.61)
@@ -242,6 +243,7 @@ class SettingsPersistenceTests(unittest.TestCase):
             self.assertEqual(payload["heatmap_settings"]["global_noise_threshold"], 3.0)
             self.assertEqual(payload["heatmap_settings"]["heatmap_colormap"], "Grayscale")
             self.assertTrue(payload["heatmap_settings"]["ellipse_shape_enabled"])
+            self.assertTrue(payload["heatmap_settings"]["remove_negatives"])
             self.assertTrue(payload["heatmap_settings"]["show_circle_overlay"])
             self.assertTrue(payload["heatmap_settings"]["show_position_labels"])
             self.assertNotIn("cop_smooth_alpha", payload["heatmap_settings"])
@@ -253,6 +255,7 @@ class SettingsPersistenceTests(unittest.TestCase):
             harness.show_heatmap_circle_check.setChecked(False)
             harness.show_heatmap_position_labels_check.setChecked(False)
             harness.ellipse_shape_check.setChecked(False)
+            harness.remove_negatives_check.setChecked(False)
             harness.heatmap_colormap_combo.setCurrentText("Thermal")
 
             applied = harness.load_last_heatmap_settings()
@@ -264,6 +267,7 @@ class SettingsPersistenceTests(unittest.TestCase):
             self.assertTrue(harness.show_heatmap_circle_check.isChecked())
             self.assertTrue(harness.show_heatmap_position_labels_check.isChecked())
             self.assertTrue(harness.ellipse_shape_check.isChecked())
+            self.assertTrue(harness.remove_negatives_check.isChecked())
             self.assertEqual(harness.heatmap_colormap_combo.currentText(), "Grayscale")
 
     def test_shear_save_last_and_load_last_round_trip(self):

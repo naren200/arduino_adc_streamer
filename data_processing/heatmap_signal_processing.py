@@ -102,6 +102,7 @@ class HeatmapSignalProcessor:
         dc_removal_mode: str,
         sample_rate_hz: float,
         window_end_time_sec: Optional[float],
+        remove_negatives: bool = False,
     ) -> Tuple[List[float], np.ndarray]:
         self.update_channel_count(len(channel_samples))
 
@@ -113,6 +114,8 @@ class HeatmapSignalProcessor:
                     rms_values.append(0.0)
                     continue
                 centered = samples - self.bias_values[idx]
+                if remove_negatives:
+                    centered = np.maximum(centered, 0.0)
                 rms_values.append(float(np.sqrt(np.mean(centered ** 2))))
             return rms_values, self.bias_values.copy()
 
@@ -122,6 +125,8 @@ class HeatmapSignalProcessor:
             if filtered.size == 0:
                 rms_values.append(0.0)
                 continue
+            if remove_negatives:
+                filtered = np.maximum(filtered, 0.0)
             rms_values.append(float(np.sqrt(np.mean(filtered ** 2))))
 
         return rms_values, self.bias_values.copy()

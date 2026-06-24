@@ -6,6 +6,7 @@ import numpy as np
 from constants.heatmap import HEATMAP_COORD_EXTENT, HEATMAP_HEIGHT, HEATMAP_WIDTH, MAX_SENSOR_PACKAGES
 from data_processing.heatmap_555_processor import Heatmap555ProcessorMixin
 from data_processing.heatmap_piezo_processor import PiezoHeatmapProcessorMixin
+from data_processing.heatmap_signal_processing import HeatmapSignalProcessor
 from gui.heatmap_panel import HeatmapPanelMixin
 
 
@@ -37,7 +38,14 @@ class StubSignalProcessor:
     def set_hpf_cutoff(self, cutoff_hz):
         self.cutoff_hz = cutoff_hz
 
-    def compute_rms(self, channel_samples, dc_removal_mode, sample_rate_hz, window_end_time_sec):
+    def compute_rms(
+        self,
+        channel_samples,
+        dc_removal_mode,
+        sample_rate_hz,
+        window_end_time_sec,
+        remove_negatives=False,
+    ):
         return [11.0, 19.0, 32.0, 39.0, 56.0], np.zeros(5, dtype=np.float64)
 
     def smooth_and_threshold(self, values, alpha, threshold):
@@ -48,7 +56,14 @@ class MeanSignalProcessor:
     def set_hpf_cutoff(self, cutoff_hz):
         self.cutoff_hz = cutoff_hz
 
-    def compute_rms(self, channel_samples, dc_removal_mode, sample_rate_hz, window_end_time_sec):
+    def compute_rms(
+        self,
+        channel_samples,
+        dc_removal_mode,
+        sample_rate_hz,
+        window_end_time_sec,
+        remove_negatives=False,
+    ):
         values = []
         for samples in channel_samples:
             sample_array = np.asarray(samples, dtype=np.float64)
@@ -183,6 +198,23 @@ class HeatmapLayoutHarness(HeatmapPanelMixin):
 class HeatmapThresholdTests(unittest.TestCase):
     def _peak_row_col(self, heatmap):
         return np.unravel_index(int(np.argmax(heatmap)), heatmap.shape)
+
+    def test_remove_negatives_uses_half_wave_rms(self):
+        processor = HeatmapSignalProcessor(channel_count=1, bias_duration_sec=2.0, hpf_cutoff_hz=0.5)
+        processor.bias_ready = True
+        samples = [np.asarray([-4.0, 3.0], dtype=np.float64)]
+
+        full_rms, _ = processor.compute_rms(samples, "bias", 1000.0, 3.0)
+        positive_rms, _ = processor.compute_rms(
+            samples,
+            "bias",
+            1000.0,
+            3.0,
+            remove_negatives=True,
+        )
+
+        self.assertAlmostEqual(full_rms[0], np.sqrt(12.5))
+        self.assertAlmostEqual(positive_rms[0], np.sqrt(4.5))
 
     def test_piezo_heatmap_blob_uses_columns_for_left_right_motion(self):
         settings = {

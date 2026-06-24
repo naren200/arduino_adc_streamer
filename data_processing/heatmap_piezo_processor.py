@@ -328,6 +328,7 @@ class PiezoHeatmapProcessorMixin:
                 settings.get('dc_removal_mode', 'bias'),
                 per_channel_rate_hz,
                 window_end_time_sec,
+                remove_negatives=bool(settings.get('remove_negatives', False)),
             )
 
             sensor_values = [
@@ -418,6 +419,7 @@ class PiezoHeatmapProcessorMixin:
                 settings.get('dc_removal_mode', 'bias'),
                 per_channel_rate_hz,
                 window_end_time_sec,
+                remove_negatives=bool(settings.get('remove_negatives', False)),
             )
 
             sensor_values_map = {label: 0.0 for label in sensor_labels}

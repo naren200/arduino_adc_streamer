@@ -76,6 +76,7 @@ RMS_WINDOW_MS = 20
 BIAS_CALIBRATION_DURATION_SEC = 2.0
 HPF_CUTOFF_HZ = 0.5
 HEATMAP_DC_REMOVAL_MODE = "highpass"
+REMOVE_NEGATIVES = False
 
 # Default channel-to-sensor mapping for archived heatmap and shear.
 HEATMAP_CHANNEL_SENSOR_MAP = list(DEFAULT_SENSOR_CONFIGURATION["channel_sensor_map"])
