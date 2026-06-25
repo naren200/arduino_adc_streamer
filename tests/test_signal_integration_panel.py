@@ -17,6 +17,7 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_SHOW_MARKER,
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
+    DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH,
     SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ,
 )
 from constants.shear import SHEAR_SENSOR_POSITIONS
@@ -91,6 +92,7 @@ class SignalIntegrationPanelHarness(PressureMapPanelMixin):
         self.sensor_package_groups = []
         self.active_sensor_configuration = {"array_layout": {"cells": []}}
         self.signal_integration_display_enabled = True
+        self.signal_integration_show_graph = DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH
         self.pressure_map_pzt_rs_mode = False
         self.signal_integration_timeline_mode = "PZT"
         self.signal_integration_rosette_rs1_enabled = True
@@ -149,6 +151,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.signal_integration_rosette_rs2_check = DummyCheckBox(True)
         harness.signal_integration_rosette_y_min_spin = DummySpinBox(100.0)
         harness.signal_integration_rosette_y_max_spin = DummySpinBox(2500.0)
+        harness.signal_integration_show_graph_check = DummyCheckBox(True)
         harness.shear_noise_threshold_spin = DummySpinBox(0.75)
         harness._pressure_package_sensor_gains = {
             "PZT3": {position: float(index + 1.25) for index, position in enumerate(SHEAR_SENSOR_POSITIONS)}
@@ -504,6 +507,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertTrue(settings["signal_integration"]["show_rs2"])
             self.assertEqual(settings["signal_integration"]["rosette_y_min_ohms"], 100.0)
             self.assertEqual(settings["signal_integration"]["rosette_y_max_ohms"], 2500.0)
+            self.assertTrue(settings["signal_integration"]["show_graph"])
             self.assertEqual(settings["processing"]["noise_threshold"], 0.75)
             self.assertEqual(settings["processing"]["package_sensor_gains"]["PZT3"]["C"], 1.25)
             self.assertFalse(settings["visualization"]["arrow_width_scales"])
@@ -530,6 +534,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             harness.signal_integration_rosette_rs2_check.setChecked(False)
             harness.signal_integration_rosette_y_min_spin.setValue(-10.0)
             harness.signal_integration_rosette_y_max_spin.setValue(10.0)
+            harness.signal_integration_show_graph_check.setChecked(False)
             harness.shear_noise_threshold_spin.setValue(3.0)
             harness.shear_arrow_width_scales_check.setChecked(True)
             harness.pressure_sensor_spacing_spin.setValue(2.0)
@@ -553,6 +558,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertTrue(harness.signal_integration_rosette_rs2_check.isChecked())
             self.assertEqual(harness.signal_integration_rosette_y_min_spin.value(), 100.0)
             self.assertEqual(harness.signal_integration_rosette_y_max_spin.value(), 2500.0)
+            self.assertTrue(harness.signal_integration_show_graph_check.isChecked())
             self.assertEqual(harness.shear_noise_threshold_spin.value(), 0.75)
             self.assertFalse(harness.shear_arrow_width_scales_check.isChecked())
             self.assertEqual(harness.pressure_sensor_spacing_spin.value(), 1.75)
@@ -583,6 +589,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 "signal_integration_rosette_rs2_check": "shows rs1, rs2, or both together",
                 "signal_integration_rosette_y_min_spin": "fixed y-axis range",
                 "signal_integration_rosette_y_max_spin": "fixed y-axis range",
+                "signal_integration_show_graph_check": "show or hide the top pressure map timeline graph",
                 "shear_noise_threshold_spin": "zeros each integrated channel",
                 "shear_arrow_gain_spin": "displayed arrow length",
                 "shear_arrow_threshold_spin": "hides only the displayed arrow",
@@ -606,6 +613,23 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             for widget_name, expected_text in expected_tooltips.items():
                 widget = getattr(harness, widget_name)
                 self.assertIn(expected_text, widget.toolTip().lower(), msg=widget_name)
+        finally:
+            tab.close()
+
+    def test_pressure_map_graph_toggle_defaults_off_and_hides_timeline(self):
+        harness = SignalIntegrationPanelHarness()
+
+        tab = harness.create_signal_integration_tab()
+        try:
+            self.assertFalse(harness.signal_integration_show_graph_check.isChecked())
+            self.assertTrue(harness.signal_integration_plot_widget.isHidden())
+            self.assertTrue(harness.signal_integration_status_label.isHidden())
+
+            harness.signal_integration_show_graph_check.setChecked(True)
+            harness.on_signal_integration_show_graph_changed()
+
+            self.assertFalse(harness.signal_integration_plot_widget.isHidden())
+            self.assertFalse(harness.signal_integration_status_label.isHidden())
         finally:
             tab.close()
 

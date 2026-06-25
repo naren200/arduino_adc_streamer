@@ -61,6 +61,7 @@ from constants.pressure_map import (
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
+    DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH,
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS1_ENABLED,
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS2_ENABLED,
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MAX_OHMS,
@@ -318,6 +319,19 @@ class PressureMapPanelMixin:
         self.signal_integration_reset_btn.clicked.connect(self.on_signal_integration_reset_clicked)
         controls_layout.addWidget(self.signal_integration_reset_btn, 0, 6)
 
+        show_graph_tooltip = (
+            "Show or hide the top Pressure Map timeline graph while keeping the pressure maps live."
+        )
+        self.signal_integration_show_graph_check = QCheckBox("Show graph")
+        self.signal_integration_show_graph_check.setChecked(
+            bool(getattr(self, "signal_integration_show_graph", DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH))
+        )
+        self.signal_integration_show_graph_check.setToolTip(show_graph_tooltip)
+        self.signal_integration_show_graph_check.toggled.connect(
+            self.on_signal_integration_show_graph_changed
+        )
+        controls_layout.addWidget(self.signal_integration_show_graph_check, 2, 0, 1, 2)
+
         timeline_mode_tooltip = (
             "Choose whether the Pressure Map timeline shows integrated PZT signals "
             "or the held Rosette (PZR) values available in PZT_RS mode."
@@ -420,6 +434,7 @@ class PressureMapPanelMixin:
 
         self.signal_integration_status_label = QLabel("Waiting for raw ADC data")
         display_layout.addWidget(self.signal_integration_status_label)
+        self._apply_signal_integration_graph_visibility()
 
         self.shear_detector = ShearDetector()
         self.normal_force_calculator = NormalForceCalculator()
@@ -1023,6 +1038,10 @@ class PressureMapPanelMixin:
                     "signal_integration_rosette_y_max_spin",
                     float(getattr(self, "signal_integration_rosette_y_max_ohms", DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MAX_OHMS)),
                 ),
+                "show_graph": self._check_bool(
+                    "signal_integration_show_graph_check",
+                    bool(getattr(self, "signal_integration_show_graph", DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH)),
+                ),
             },
             "processing": {
                 "noise_threshold": self._spin_float(
@@ -1304,6 +1323,11 @@ class PressureMapPanelMixin:
             "rosette_y_max_ohms",
             float,
         )
+        changed |= self._set_check_value(
+            "signal_integration_show_graph_check",
+            signal_integration,
+            "show_graph",
+        )
         legacy_rosette_channel = str(signal_integration.get("rosette_channel", "")).strip().upper()
         if legacy_rosette_channel in {"RS1", "RS2"}:
             changed |= self._set_check_value(
@@ -1513,6 +1537,8 @@ class PressureMapPanelMixin:
         self.signal_integration_hpf_cutoff_hz = float(self.signal_integration_hpf_spin.value())
         self.signal_integration_window_samples = int(self.signal_integration_window_spin.value())
         self.signal_integration_display_window_sec = float(self.signal_integration_display_window_spin.value())
+        self.signal_integration_show_graph = self._get_signal_integration_show_graph()
+        self._apply_signal_integration_graph_visibility()
         self._signal_integration_filter_warning = ""
         self.update_signal_integration_plot()
         self._refresh_pressure_package_gain_controls(
@@ -1530,6 +1556,12 @@ class PressureMapPanelMixin:
             self.signal_integration_rosette_y_max_ohms,
         ) = self._get_signal_integration_rosette_y_range()
         self.update_pressure_map_timeline_controls()
+        self.update_signal_integration_plot()
+        self.save_last_shear_settings()
+
+    def on_signal_integration_show_graph_changed(self, _checked: bool | None = None) -> None:
+        self.signal_integration_show_graph = self._get_signal_integration_show_graph()
+        self._apply_signal_integration_graph_visibility()
         self.update_signal_integration_plot()
         self.save_last_shear_settings()
 
@@ -1678,6 +1710,8 @@ class PressureMapPanelMixin:
         if self._signal_integration_updating_plot:
             return
 
+        graph_visible = self._get_signal_integration_show_graph()
+        self._apply_signal_integration_graph_visibility()
         self._signal_integration_updating_plot = True
         try:
             if not self.config["channels"]:
@@ -1733,7 +1767,7 @@ class PressureMapPanelMixin:
             )
 
             for spec_index, spec in enumerate(display_specs):
-                should_plot = timeline_mode != "PZR" and not multi_package_force_mode
+                should_plot = graph_visible and timeline_mode != "PZR" and not multi_package_force_mode
                 shear_position = self._get_shear_position_for_display_spec(spec, spec_index)
                 should_collect_package = shear_position in SHEAR_SENSOR_POSITIONS
                 should_collect_shear = (
@@ -1792,13 +1826,13 @@ class PressureMapPanelMixin:
                         desired_curve_keys,
                     )
 
-            if multi_package_force_mode:
+            if graph_visible and multi_package_force_mode:
                 self._plot_signal_integration_package_force_series(
                     package_series_by_position,
                     package_layout,
                     desired_curve_keys,
                 )
-            elif timeline_mode == "PZR":
+            elif graph_visible and timeline_mode == "PZR":
                 self._plot_signal_integration_rosette_series(
                     timeline_specs,
                     data_array,
@@ -1812,10 +1846,11 @@ class PressureMapPanelMixin:
                 if key not in desired_curve_keys:
                     curve.setVisible(False)
 
-            self._apply_signal_integration_axis_settings(
-                is_package_force_mode=multi_package_force_mode,
-                is_rosette_mode=timeline_mode == "PZR",
-            )
+            if graph_visible:
+                self._apply_signal_integration_axis_settings(
+                    is_package_force_mode=multi_package_force_mode,
+                    is_rosette_mode=timeline_mode == "PZR",
+                )
             self._latest_signal_integration_values_by_package = latest_integrated_by_package
             self._latest_signal_integration_package_layout = package_layout
             self._latest_signal_integration_values_by_position = (
@@ -1860,6 +1895,23 @@ class PressureMapPanelMixin:
 
     def _should_refresh_pressure_map_display(self) -> bool:
         return self._should_refresh_signal_integration_plot()
+
+    def _get_signal_integration_show_graph(self) -> bool:
+        graph_check = getattr(self, "signal_integration_show_graph_check", None)
+        if graph_check is not None and hasattr(graph_check, "isChecked"):
+            return bool(graph_check.isChecked())
+        return bool(getattr(self, "signal_integration_show_graph", DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH))
+
+    def _apply_signal_integration_graph_visibility(self) -> None:
+        graph_visible = self._get_signal_integration_show_graph()
+        plot_widget = getattr(self, "signal_integration_plot_widget", None)
+        if plot_widget is not None and hasattr(plot_widget, "setVisible"):
+            plot_widget.setVisible(graph_visible)
+        status_label = getattr(self, "signal_integration_status_label", None)
+        if status_label is not None and hasattr(status_label, "setVisible"):
+            status_label.setVisible(graph_visible)
+        if not graph_visible and hasattr(self, "signal_integration_curves"):
+            self._hide_all_signal_integration_curves()
 
     def _hide_all_signal_integration_curves(self) -> None:
         for curve in self.signal_integration_curves.values():

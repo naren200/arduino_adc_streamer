@@ -32,6 +32,7 @@ from constants.pressure_map import (
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_SCALE_BY_DT,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
+    DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH,
     SIGNAL_INTEGRATION_CHANNEL_COUNT,
     SIGNAL_INTEGRATION_DISPLAY_BUFFER_MARGIN_SAMPLES,
     SIGNAL_INTEGRATION_DISPLAY_SAMPLE_RATE_FALLBACK_HZ,
@@ -63,6 +64,7 @@ class SignalIntegrationProcessorMixin:
         self.signal_integration_hpf_cutoff_hz = DEFAULT_HPF_CUTOFF_HZ
         self.signal_integration_window_samples = DEFAULT_INTEGRATION_WINDOW_SAMPLES
         self.signal_integration_display_window_sec = DEFAULT_DISPLAY_WINDOW_SEC
+        self.signal_integration_show_graph = DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH
         self.signal_integrator: SignalIntegrator | None = None
         self.signal_integration_display_buffers: dict[Hashable, dict[str, deque]] = {}
         self.signal_integration_display_sample_rate_hz = 0.0
