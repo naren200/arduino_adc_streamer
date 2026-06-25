@@ -55,6 +55,7 @@ COP_EPS = 1e-6
 BLOB_SIGMA_X = 0.15
 BLOB_SIGMA_Y = 0.15
 ELLIPSE_SHAPE_ENABLED = True
+HEATMAP_MIRROR_DISPLAY = False
 
 # Smoothing parameter (exponential moving average)
 SMOOTH_ALPHA = 0.8

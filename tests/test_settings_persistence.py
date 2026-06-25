@@ -122,6 +122,7 @@ class HeatmapSettingsHarness(HeatmapPanelMixin):
         self.dc_removal_combo = SimpleCombo(["Bias (2s)", "High-pass"], current="High-pass")
         self.show_heatmap_circle_check = SimpleCheck(True)
         self.show_heatmap_position_labels_check = SimpleCheck(True)
+        self.heatmap_mirror_check = SimpleCheck(True)
         self.heatmap_colormap_combo = SimpleCombo(
             ["Thermal", "Grayscale", "Viridis", "Magma"],
             current="Grayscale",
@@ -246,6 +247,7 @@ class SettingsPersistenceTests(unittest.TestCase):
             self.assertTrue(payload["heatmap_settings"]["remove_negatives"])
             self.assertTrue(payload["heatmap_settings"]["show_circle_overlay"])
             self.assertTrue(payload["heatmap_settings"]["show_position_labels"])
+            self.assertTrue(payload["heatmap_settings"]["mirror_display"])
             self.assertNotIn("cop_smooth_alpha", payload["heatmap_settings"])
             self.assertNotIn("global_channel_release_thresholds", payload["heatmap_settings"])
 
@@ -254,6 +256,7 @@ class SettingsPersistenceTests(unittest.TestCase):
             harness.dc_removal_combo.setCurrentText("Bias (2s)")
             harness.show_heatmap_circle_check.setChecked(False)
             harness.show_heatmap_position_labels_check.setChecked(False)
+            harness.heatmap_mirror_check.setChecked(False)
             harness.ellipse_shape_check.setChecked(False)
             harness.remove_negatives_check.setChecked(False)
             harness.heatmap_colormap_combo.setCurrentText("Thermal")
@@ -266,6 +269,7 @@ class SettingsPersistenceTests(unittest.TestCase):
             self.assertEqual(harness.dc_removal_combo.currentText(), "High-pass")
             self.assertTrue(harness.show_heatmap_circle_check.isChecked())
             self.assertTrue(harness.show_heatmap_position_labels_check.isChecked())
+            self.assertTrue(harness.heatmap_mirror_check.isChecked())
             self.assertTrue(harness.ellipse_shape_check.isChecked())
             self.assertTrue(harness.remove_negatives_check.isChecked())
             self.assertEqual(harness.heatmap_colormap_combo.currentText(), "Grayscale")

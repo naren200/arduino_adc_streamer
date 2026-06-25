@@ -16,7 +16,7 @@ from constants.heatmap import (
     INTENSITY_SCALE, BLOB_SIGMA_X, BLOB_SIGMA_Y, SMOOTH_ALPHA,
     RMS_WINDOW_MS, SENSOR_NOISE_FLOOR, HEATMAP_DC_REMOVAL_MODE,
     HPF_CUTOFF_HZ, HEATMAP_CHANNEL_SENSOR_MAP, HEATMAP_THRESHOLD, ELLIPSE_SHAPE_ENABLED,
-    REMOVE_NEGATIVES,
+    HEATMAP_MIRROR_DISPLAY, REMOVE_NEGATIVES,
     CONFIDENCE_INTENSITY_REF, SIGMA_SPREAD_FACTOR,
     MAX_SENSOR_PACKAGES,
     R_HEATMAP_DELTA_THRESHOLD,
@@ -90,13 +90,23 @@ class HeatmapPanelMixin:
             self.save_last_heatmap_settings()
 
     def _is_display_mirror_enabled(self) -> bool:
-        checkbox = getattr(self, "display_mirror_check", None)
+        checkbox = getattr(self, "heatmap_mirror_check", None)
+        if checkbox is None:
+            checkbox = getattr(self, "display_mirror_check", None)
         return bool(checkbox is not None and checkbox.isChecked())
 
     def _on_display_mirror_toggled(self, _checked=False):
         self._update_display_plot_view()
         if hasattr(self, "trigger_plot_update"):
             self.trigger_plot_update()
+
+    def _on_heatmap_mirror_toggled(self, _checked=False):
+        self._update_display_plot_view()
+        self._refresh_display_item_overlays()
+        if not getattr(self, "_heatmap_settings_loading", False):
+            self.save_last_heatmap_settings()
+            if hasattr(self, "trigger_heatmap_update"):
+                self.trigger_heatmap_update()
 
     def _get_heatmap_mode_key(self) -> str:
         is_pzr_mode = bool(hasattr(self, "is_555_analyzer_mode") and self.is_555_analyzer_mode())
@@ -123,6 +133,7 @@ class HeatmapPanelMixin:
                 "sensor_calibration_dict",  # Per-sensor calibration indexed by sensor ID
                 "show_circle_overlay",
                 "show_position_labels",
+                "mirror_display",
                 "heatmap_colormap",
             }
         return {
@@ -144,6 +155,7 @@ class HeatmapPanelMixin:
             "sensor_calibration_dict",  # Per-sensor calibration indexed by sensor ID
             "show_circle_overlay",
             "show_position_labels",
+            "mirror_display",
             "heatmap_colormap",
         }
 
@@ -397,6 +409,9 @@ class HeatmapPanelMixin:
             if "show_position_labels" in mode_settings and hasattr(self, "show_heatmap_position_labels_check"):
                 self.show_heatmap_position_labels_check.setChecked(bool(mode_settings["show_position_labels"]))
                 changed = True
+            if "mirror_display" in mode_settings and hasattr(self, "heatmap_mirror_check"):
+                self.heatmap_mirror_check.setChecked(bool(mode_settings["mirror_display"]))
+                changed = True
             if "heatmap_colormap" in mode_settings and hasattr(self, "heatmap_colormap_combo"):
                 color_map_name = str(mode_settings["heatmap_colormap"]).strip()
                 if color_map_name in self.HEATMAP_COLOR_MAPS:
@@ -475,6 +490,7 @@ class HeatmapPanelMixin:
         self.heatmap_colormap_combo.currentTextChanged.connect(self._on_heatmap_colormap_changed)
         self.show_heatmap_position_labels_check.stateChanged.connect(self._on_heatmap_position_labels_toggled)
         self.ellipse_shape_check.stateChanged.connect(self._on_heatmap_ellipse_shape_toggled)
+        self.heatmap_mirror_check.stateChanged.connect(self._on_heatmap_mirror_toggled)
         self.remove_negatives_check.stateChanged.connect(self._on_heatmap_remove_negatives_toggled)
         # Note: Per-sensor threshold and gain spinboxes are connected in _build_per_sensor_calibration_ui()
 
@@ -942,7 +958,8 @@ class HeatmapPanelMixin:
             item = self.display_items[index]
             center_x, center_y = centers[index]
 
-            self._set_heatmap_image(item["image"], heatmap)
+            display_heatmap = np.fliplr(heatmap) if self._is_display_mirror_enabled() else heatmap
+            self._set_heatmap_image(item["image"], display_heatmap)
             item["image"].setRect(QRectF(center_x - (heatmap_size * 0.5), center_y - (heatmap_size * 0.5), heatmap_size, heatmap_size))
             item["image"].setVisible(True)
         self._refresh_display_item_overlays()
@@ -1185,6 +1202,12 @@ class HeatmapPanelMixin:
         self.show_heatmap_position_labels_check.setChecked(False)
         self.show_heatmap_position_labels_check.setToolTip("Show selected sensor IDs over the array heatmap display")
         display_layout.addWidget(self.show_heatmap_position_labels_check, 4, 2, 1, 2)
+        self.heatmap_mirror_check = QCheckBox("Mirror")
+        self.heatmap_mirror_check.setChecked(HEATMAP_MIRROR_DISPLAY)
+        self.heatmap_mirror_check.setToolTip(
+            "Mirror the heatmap display horizontally, swapping left/right packages and sensors"
+        )
+        display_layout.addWidget(self.heatmap_mirror_check, 4, 0, 1, 2)
         display_layout.addWidget(QLabel("Color Scale:"), 3, 0)
         self.heatmap_colormap_combo = QComboBox()
         self.heatmap_colormap_combo.addItems(list(self.HEATMAP_COLOR_MAPS.keys()))
@@ -1301,6 +1324,11 @@ class HeatmapPanelMixin:
                 self.show_heatmap_position_labels_check.isChecked()
                 if hasattr(self, "show_heatmap_position_labels_check")
                 else False
+            ),
+            "mirror_display": (
+                self.heatmap_mirror_check.isChecked()
+                if hasattr(self, "heatmap_mirror_check")
+                else HEATMAP_MIRROR_DISPLAY
             ),
             "heatmap_colormap": self._get_selected_heatmap_colormap_name(),
         }

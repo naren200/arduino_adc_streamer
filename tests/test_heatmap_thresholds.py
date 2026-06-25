@@ -167,6 +167,12 @@ class FakeImageItem:
         self.autoLevels = autoLevels
         self.levels = levels
 
+    def setRect(self, rect):
+        self.rect = rect
+
+    def setVisible(self, visible):
+        self.visible = bool(visible)
+
 
 class HeatmapLayoutHarness(HeatmapPanelMixin):
     def __init__(self):
@@ -193,6 +199,30 @@ class HeatmapLayoutHarness(HeatmapPanelMixin):
                 ]
             }
         }
+
+
+class MirroredHeatmapLayoutHarness(HeatmapLayoutHarness):
+    def _is_display_mirror_enabled(self):
+        return True
+
+
+class HeatmapRenderHarness(HeatmapPanelMixin):
+    def __init__(self, mirrored=False):
+        self.mirrored = mirrored
+        self.display_items = [{"image": FakeImageItem()}]
+        self.display_heatmap_size = 10.0
+
+    def _is_display_mirror_enabled(self):
+        return self.mirrored
+
+    def update_visible_display_cards(self, visible_count):
+        self.display_visible_count = visible_count
+
+    def _get_display_package_centers(self, visible_count):
+        return [(0.0, 0.0)] if visible_count else []
+
+    def _refresh_display_item_overlays(self):
+        pass
 
 
 class HeatmapThresholdTests(unittest.TestCase):
@@ -338,6 +368,30 @@ class HeatmapThresholdTests(unittest.TestCase):
                 (0.0, -160.0),
             ],
         )
+
+    def test_heatmap_mirror_flips_array_package_centers(self):
+        panel = MirroredHeatmapLayoutHarness()
+
+        centers = panel._get_display_package_centers(5)
+
+        self.assertEqual(
+            centers,
+            [
+                (160.0, 0.0),
+                (0.0, 160.0),
+                (-160.0, 0.0),
+                (0.0, 0.0),
+                (0.0, -160.0),
+            ],
+        )
+
+    def test_heatmap_mirror_flips_display_image_left_right(self):
+        panel = HeatmapRenderHarness(mirrored=True)
+        heatmap = np.asarray([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+
+        panel.update_display_tab([(heatmap, 0.0, 0.0, 0.0, 0.0, [])])
+
+        np.testing.assert_array_equal(panel.display_items[0]["image"].image, np.fliplr(heatmap))
 
     def test_heatmap_display_bounds_expand_to_viewport_aspect(self):
         panel = HeatmapLayoutHarness()
