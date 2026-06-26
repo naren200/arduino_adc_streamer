@@ -3,6 +3,7 @@ import json
 import shutil
 import unittest
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
@@ -60,6 +61,9 @@ class SimpleSpin:
 
 class ExportHarness(DataExporterMixin, FilterProcessorMixin):
     def __init__(self, output_dir: Path):
+        capture_start_dt = datetime(2024, 1, 2, 3, 4, 5, 678000)
+        capture_start_time = capture_start_dt.timestamp()
+
         self.device_mode = "adc"
         self.current_mcu = "ADC"
         self.dir_input = SimpleText(str(output_dir))
@@ -76,6 +80,16 @@ class ExportHarness(DataExporterMixin, FilterProcessorMixin):
             dtype=np.float32,
         )
         self.sweep_timestamps = np.arange(len(self.raw_data), dtype=np.float64) / 100.0
+        self.expected_row_times = [
+            capture_start_dt.strftime("%H:%M:%S.%f"),
+            "03:04:05.688000",
+            "03:04:05.698000",
+            "03:04:05.708000",
+            "03:04:05.718000",
+            "03:04:05.728000",
+            "03:04:05.738000",
+            "03:04:05.748000",
+        ]
         self.raw_data_buffer = None
         self.sweep_timestamps_buffer = None
         self.samples_per_sweep = 1
@@ -96,8 +110,8 @@ class ExportHarness(DataExporterMixin, FilterProcessorMixin):
             "Timing",
             (),
             {
-                "capture_start_time": None,
-                "capture_end_time": None,
+                "capture_start_time": capture_start_time,
+                "capture_end_time": capture_start_time + float(self.sweep_timestamps[-1]),
                 "arduino_sample_times": [],
                 "timing_data": {"arduino_sample_rate_hz": 100.0},
             },
@@ -184,8 +198,9 @@ class DataExporterTests(unittest.TestCase):
             with csv_files[0].open("r", encoding="utf-8", newline="") as handle:
                 rows = list(csv.reader(handle))
 
-            self.assertEqual(rows[0], ["CH0", "Force_X_N", "Force_Z_N"])
-            exported_values = np.asarray([float(row[0]) for row in rows[1:]], dtype=np.float64)
+            self.assertEqual(rows[0], ["Timestamp", "CH0", "Force_X_N", "Force_Z_N"])
+            self.assertEqual([row[0] for row in rows[1:]], harness.expected_row_times)
+            exported_values = np.asarray([float(row[1]) for row in rows[1:]], dtype=np.float64)
             raw_values = harness.raw_data[:, 0].astype(np.float64)
             self.assertEqual(len(exported_values), len(raw_values))
             self.assertFalse(np.allclose(exported_values, raw_values))
@@ -198,6 +213,9 @@ class DataExporterTests(unittest.TestCase):
             self.assertEqual(metadata["filtering"]["settings"]["main_type"], "lowpass")
             self.assertEqual(metadata["filtering"]["settings"]["notches"], [])
             self.assertEqual(metadata["export_source"], "full_view")
+            self.assertEqual(metadata["row_timestamp"]["column_name"], "Timestamp")
+            self.assertEqual(metadata["row_timestamp"]["format"], "HH:MM:SS.ffffff")
+            self.assertTrue(metadata["row_timestamp"]["absolute_time_available"])
 
     def test_save_data_shows_and_hides_progress_notice(self):
         with workspace_tempdir("data_exporter_notice") as tmpdir:
@@ -213,6 +231,28 @@ class DataExporterTests(unittest.TestCase):
             self.assertTrue(any(kind == "update" and "Writing CSV data" in text for kind, text in harness.save_notice_updates))
             self.assertTrue(any(kind == "update" and "Writing metadata" in text for kind, text in harness.save_notice_updates))
 
+    def test_save_data_keeps_555_seconds_column_alongside_clock_timestamp(self):
+        with workspace_tempdir("data_exporter_555") as tmpdir:
+            harness = ExportHarness(tmpdir)
+            harness.device_mode = "555"
+            harness.current_mcu = "555"
+
+            with patch("file_operations.data_exporter.QMessageBox.information"), patch(
+                "file_operations.data_exporter.QMessageBox.warning"
+            ), patch("file_operations.data_exporter.QMessageBox.critical"):
+                harness.save_data()
+
+            csv_files = sorted(tmpdir.glob("capture_*.csv"))
+            self.assertEqual(len(csv_files), 1)
+
+            with csv_files[0].open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.reader(handle))
+
+            self.assertEqual(rows[0], ["Timestamp", "Timestamp_s", "CH0", "Force_X_N", "Force_Z_N"])
+            self.assertEqual(rows[1][0], harness.expected_row_times[0])
+            self.assertEqual(rows[1][1], "0.0")
+            self.assertEqual(rows[2][1], "0.01")
+
     def test_save_data_streams_archive_beyond_display_buffer_limit(self):
         with workspace_tempdir("data_exporter_archive_stream") as tmpdir:
             harness = ExportHarness(tmpdir)
@@ -222,7 +262,18 @@ class DataExporterTests(unittest.TestCase):
             harness.sweep_count = 50005
             archive_path = tmpdir / "capture_cache.jsonl"
             with archive_path.open("w", encoding="utf-8") as handle:
-                handle.write(json.dumps({"metadata": {"channels": [0], "repeat": 1}}) + "\n")
+                handle.write(
+                    json.dumps(
+                        {
+                            "metadata": {
+                                "channels": [0],
+                                "repeat": 1,
+                                "start_time": "2024-01-02T03:04:05.678000",
+                            }
+                        }
+                    )
+                    + "\n"
+                )
                 for idx in range(harness.sweep_count):
                     handle.write(json.dumps({"timestamp_s": idx / 1000.0, "samples": [idx]}) + "\n")
             harness._archive_path = str(archive_path)
@@ -243,8 +294,10 @@ class DataExporterTests(unittest.TestCase):
                 rows = list(csv.reader(handle))
 
             self.assertEqual(len(rows), harness.sweep_count + 1)
-            self.assertEqual(rows[1][0], "0.0")
-            self.assertEqual(rows[-1][0], str(float(harness.sweep_count - 1)))
+            self.assertEqual(rows[0], ["Timestamp", "CH0", "Force_X_N", "Force_Z_N"])
+            self.assertEqual(rows[1][0], "03:04:05.678000")
+            self.assertEqual(rows[1][1], "0.0")
+            self.assertEqual(rows[-1][1], str(float(harness.sweep_count - 1)))
 
             metadata = json.loads(metadata_files[0].read_text(encoding="utf-8"))
             self.assertEqual(metadata["export_source"], "archive")

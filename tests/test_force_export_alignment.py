@@ -1,6 +1,7 @@
 import csv
 import unittest
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
@@ -12,7 +13,9 @@ from file_operations.data_exporter import DataExporterMixin
 from file_operations.force_export_alignment import (
     build_export_row_timestamps,
     build_force_export_series,
+    format_export_clock_time,
     get_nearest_force_values,
+    resolve_export_start_datetime,
 )
 
 
@@ -64,6 +67,9 @@ class SimpleSpin:
 
 class ForceExportHarness(DataExporterMixin):
     def __init__(self, output_dir: Path):
+        capture_start_dt = datetime(2024, 1, 2, 3, 4, 5, 600000)
+        capture_start_time = capture_start_dt.timestamp()
+
         self.device_mode = "adc"
         self.current_mcu = "ADC"
         self.dir_input = SimpleText(str(output_dir))
@@ -81,6 +87,11 @@ class ForceExportHarness(DataExporterMixin):
         self.force_calibration_offset = {"x": 0.0, "z": 0.0}
         self.raw_data = np.array([[11.0], [22.0], [33.0]], dtype=np.float32)
         self.sweep_timestamps = np.array([0.05, 0.28, 0.52], dtype=np.float64)
+        self.expected_row_times = [
+            "03:04:05.650000",
+            "03:04:05.880000",
+            "03:04:06.120000",
+        ]
         self.raw_data_buffer = None
         self.sweep_timestamps_buffer = None
         self.samples_per_sweep = 1
@@ -100,8 +111,8 @@ class ForceExportHarness(DataExporterMixin):
             "Timing",
             (),
             {
-                "capture_start_time": 0.0,
-                "capture_end_time": 0.60,
+                "capture_start_time": capture_start_time,
+                "capture_end_time": capture_start_time + 0.60,
                 "arduino_sample_times": [],
                 "timing_data": {
                     "per_channel_rate_hz": None,
@@ -173,6 +184,13 @@ class ForceExportAlignmentTests(unittest.TestCase):
         self.assertIsNotNone(row_timestamps)
         self.assertTrue(np.allclose(row_timestamps, [0.0, 0.3, 0.6]))
 
+    def test_format_export_clock_time_uses_microseconds(self):
+        export_start = resolve_export_start_datetime(
+            capture_start_time_s=datetime(2024, 1, 2, 3, 4, 5, 600000).timestamp()
+        )
+
+        self.assertEqual(format_export_clock_time(export_start, 0.28), "03:04:05.880000")
+
     def test_save_data_aligns_force_columns_by_nearest_sweep_timestamp(self):
         with workspace_tempdir("force_export_alignment") as tmpdir:
             harness = ForceExportHarness(tmpdir)
@@ -188,10 +206,10 @@ class ForceExportAlignmentTests(unittest.TestCase):
             with csv_files[0].open("r", encoding="utf-8", newline="") as handle:
                 rows = list(csv.reader(handle))
 
-            self.assertEqual(rows[0], ["CH0", "Force_X_N", "Force_Z_N"])
-            self.assertEqual(rows[1], ["11.0", "1.0", "10.0"])
-            self.assertEqual(rows[2], ["22.0", "3.0", "30.0"])
-            self.assertEqual(rows[3], ["33.0", "5.0", "50.0"])
+            self.assertEqual(rows[0], ["Timestamp", "CH0", "Force_X_N", "Force_Z_N"])
+            self.assertEqual(rows[1], [harness.expected_row_times[0], "11.0", "1.0", "10.0"])
+            self.assertEqual(rows[2], [harness.expected_row_times[1], "22.0", "3.0", "30.0"])
+            self.assertEqual(rows[3], [harness.expected_row_times[2], "33.0", "5.0", "50.0"])
 
 
 if __name__ == "__main__":

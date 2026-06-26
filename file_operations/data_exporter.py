@@ -18,7 +18,9 @@ from data_processing.force_state import get_force_runtime_state
 from file_operations.force_export_alignment import (
     build_export_row_timestamps,
     build_force_export_series,
+    format_export_clock_time,
     get_nearest_force_values,
+    resolve_export_start_datetime,
 )
 
 
@@ -248,6 +250,7 @@ class DataExporterMixin:
         is_555_mode: bool,
         force_series,
         capture_duration_s,
+        export_start_datetime,
         apply_filter: bool,
         rs_round_indices: list | None = None,
     ):
@@ -318,8 +321,9 @@ class DataExporterMixin:
                     for _i in rs_round_indices:
                         if _i < len(row):
                             row[_i] = round(row[_i], 2)
+                row.insert(0, format_export_clock_time(export_start_datetime, row_time))
                 if is_555_mode:
-                    row.insert(0, float(row_time if row_time is not None else 0.0))
+                    row.insert(1, float(row_time if row_time is not None else 0.0))
                 row.extend(list(get_nearest_force_values(force_series, row_time)))
                 writer.writerow(row)
                 saved_index += 1
@@ -476,6 +480,18 @@ class DataExporterMixin:
 
             force_state = get_force_runtime_state(self)
             force_series = build_force_export_series(force_state.data)
+            archive_metadata = self._read_archive_metadata(archive_path) if archive_path is not None else {}
+            archive_metadata_block = archive_metadata.get("metadata", {})
+            archive_start_time_iso = None
+            if isinstance(archive_metadata_block, dict):
+                archive_start_time_iso = archive_metadata_block.get("start_time")
+            elif isinstance(archive_metadata, dict):
+                archive_start_time_iso = archive_metadata.get("start_time")
+
+            export_start_datetime = resolve_export_start_datetime(
+                capture_start_time_s=getattr(self.timing_state, "capture_start_time", None),
+                archive_start_time_iso=archive_start_time_iso if export_source == "archive" else None,
+            )
 
             # Determine if we have force data
             has_force_x = bool(force_series is not None and np.any(force_series.x_force != 0.0))
@@ -523,8 +539,9 @@ class DataExporterMixin:
                 writer = csv.writer(f)
 
                 # Write header
+                header.insert(0, "Timestamp")
                 if is_555_mode:
-                    header.insert(0, "Timestamp_s")
+                    header.insert(1, "Timestamp_s")
                 header.extend(["Force_X_N", "Force_Z_N"])
                 writer.writerow(header)
 
@@ -543,6 +560,7 @@ class DataExporterMixin:
                         is_555_mode=is_555_mode,
                         force_series=force_series,
                         capture_duration_s=capture_duration,
+                        export_start_datetime=export_start_datetime,
                         apply_filter=bool(applied_filter_to_csv),
                         rs_round_indices=rs_round_indices,
                     )
@@ -565,9 +583,10 @@ class DataExporterMixin:
                             for _i in rs_round_indices:
                                 if _i < len(row):
                                     row[_i] = round(row[_i], 2)
+                        row.insert(0, format_export_clock_time(export_start_datetime, row_time))
                         if is_555_mode:
                             timestamp_to_write = row_time if row_time is not None else 0.0
-                            row.insert(0, float(timestamp_to_write))
+                            row.insert(1, float(timestamp_to_write))
                         row.extend(list(get_nearest_force_values(force_series, row_time)))
                         writer.writerow(row)
 
@@ -617,15 +636,25 @@ class DataExporterMixin:
                     "note": "Force data not available" if not force_state.data else "Force data synchronized with ADC samples and exported in Newtons (calibrated to zero at connection)"
                 },
                 "row_timestamp": {
-                    "included_in_csv": bool(is_555_mode),
-                    "column_name": "Timestamp_s" if is_555_mode else None,
-                    "source": (
+                    "included_in_csv": True,
+                    "column_name": "Timestamp",
+                    "format": "HH:MM:SS.ffffff",
+                    "relative_seconds_column_name": "Timestamp_s" if is_555_mode else None,
+                    "absolute_time_available": bool(export_start_datetime is not None),
+                    "absolute_start_time_source": (
+                        "archive_metadata.start_time"
+                        if export_source == "archive" and archive_start_time_iso
+                        else "timing_state.capture_start_time"
+                        if getattr(self.timing_state, "capture_start_time", None) is not None
+                        else None
+                    ),
+                    "row_offset_source": (
                         "archive_sweep_timestamps_with_linear_fallback"
                         if export_source == "archive"
                         else "selected_sweep_timestamps_with_linear_fallback"
                         if selected_timestamps is not None
                         else "capture_duration_linear_fallback"
-                    )
+                    ),
                 },
                 "export_source": export_source,
             }

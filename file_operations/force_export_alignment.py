@@ -7,6 +7,7 @@ Helpers for aligning captured force samples to exported ADC sweep rows.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 import numpy as np
 
@@ -54,6 +55,40 @@ def build_export_row_timestamps(
         return None
 
     return np.linspace(0.0, float(capture_duration_s), num=saved_total, dtype=np.float64)
+
+
+def resolve_export_start_datetime(
+    *,
+    capture_start_time_s: float | None = None,
+    archive_start_time_iso: str | None = None,
+) -> datetime | None:
+    """Resolve the absolute wall-clock start time for a CSV export."""
+    if archive_start_time_iso:
+        try:
+            return datetime.fromisoformat(archive_start_time_iso.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+
+    if capture_start_time_s is None:
+        return None
+
+    try:
+        return datetime.fromtimestamp(float(capture_start_time_s))
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def format_export_clock_time(
+    export_start_datetime: datetime | None,
+    row_offset_s: float | None,
+) -> str:
+    """Format one export row's wall-clock time as ``HH:MM:SS.ffffff``."""
+    if export_start_datetime is None:
+        return ""
+
+    offset_s = 0.0 if row_offset_s is None else float(row_offset_s)
+    row_datetime = export_start_datetime + timedelta(seconds=offset_s)
+    return row_datetime.strftime("%H:%M:%S.%f")
 
 
 def get_nearest_force_values(
