@@ -26,6 +26,7 @@ PRESSURE_MAP_TAB_NAME = "Pressure Map"
 HEATMAP_TAB_NAME = "Heatmap"
 FORCE_CALIBRATION_TAB_NAME = "Force Calibration"
 SPECTRUM_TAB_NAME = "Spectrum"
+ANALYSIS_TAB_NAME = "Analysis"
 SENSOR_TAB_NAME = "Sensor"
 
 # Sweep range spinners

@@ -9,6 +9,7 @@ from gui.display_panels import DisplayPanelsMixin
 from gui.file_panels import FilePanelsMixin
 from gui.force_calibration_panel import ForceCalibrationPanelMixin
 from gui.heatmap_panel import HeatmapPanelMixin
+from gui.analysis_panel import AnalysisPanelMixin
 from gui.signal_integration_panel import PressureMapPanelMixin, SignalIntegrationPanelMixin
 from gui.pressure_map_widget import PressureMapWidget
 from gui.sensor_panel import SensorPanelMixin
@@ -21,6 +22,7 @@ __all__ = [
     'FilePanelsMixin',
     'ForceCalibrationPanelMixin',
     'HeatmapPanelMixin',
+    'AnalysisPanelMixin',
     'PressureMapPanelMixin',
     'PressureMapWidget',
     'SensorPanelMixin',

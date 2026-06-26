@@ -37,6 +37,7 @@ from constants.ui import (
     CONTROL_PANEL_STRETCH,
     FORCE_PLOT_DEBOUNCE_MS,
     HEATMAP_TAB_NAME,
+    ANALYSIS_TAB_NAME,
     MAIN_PANEL_LAYOUT_SPACING,
     PRESSURE_MAP_TAB_NAME,
     PZT_RS_PZT_TAB_NAME,
@@ -73,6 +74,7 @@ from gui import (
     FilePanelsMixin,
     ForceCalibrationPanelMixin,
     HeatmapPanelMixin,
+    AnalysisPanelMixin,
     PressureMapPanelMixin,
     SensorPanelMixin,
     SpectrumPanelMixin,
@@ -102,6 +104,7 @@ class ADCStreamerGUI(
     SensorPanelMixin,           # Sensor panel UI
     PressureMapPanelMixin,      # Pressure Map tab pipeline and controls
     HeatmapPanelMixin,          # Heatmap tab pipeline and controls
+    AnalysisPanelMixin,         # Offline Analysis tab
     ForceCalibrationPanelMixin, # Force Calibration tab and controls
     SpectrumPanelMixin,         # Spectrum panel UI
     ConfigurationMixin,         # Configuration management
@@ -132,6 +135,7 @@ class ADCStreamerGUI(
         self.init_heatmap_processing_state()
         self.init_force_calibration_state()
         self._init_spectrum_state()
+        self._init_analysis_state()
         self._init_timers()
 
         # Build user interface
@@ -141,6 +145,7 @@ class ADCStreamerGUI(
         self.load_last_heatmap_settings()
         self.load_last_shear_settings()
         self.load_last_force_calibration_state()
+        self.load_last_analysis_settings()
 
         # Post-initialization
         self.update_port_list()
@@ -369,6 +374,7 @@ class ADCStreamerGUI(
         self.save_last_spectrum_settings()
         self.save_last_heatmap_settings()
         self.save_last_shear_settings()
+        self.save_last_analysis_settings()
 
         if self.serial_port and self.serial_port.is_open:
             self.disconnect_serial()
@@ -411,6 +417,11 @@ class ADCStreamerGUI(
         if current_tab == HEATMAP_TAB_NAME:
             self.update_heatmap_ui_for_mode()
             self.update_heatmap_plot()
+
+        if current_tab == ANALYSIS_TAB_NAME:
+            self.update_analysis_availability()
+            if getattr(self, "analysis_snapshot", None) is not None:
+                self.refresh_analysis_plot()
 
     def get_current_visualization_tab_name(self) -> str:
         """Return the current visualization tab title."""

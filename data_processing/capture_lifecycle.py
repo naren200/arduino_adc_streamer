@@ -194,6 +194,8 @@ class CaptureLifecycleMixin:
             self.log_status(f"WARNING: Could not open block timing file: {e}")
 
         self.is_capturing = True
+        if hasattr(self, "update_analysis_availability"):
+            self.update_analysis_availability()
         if self.serial_thread:
             expected_samples_per_sweep = self.get_effective_samples_per_sweep()
             self.serial_thread.set_capturing(True, expected_samples_per_sweep=expected_samples_per_sweep)
@@ -239,6 +241,8 @@ class CaptureLifecycleMixin:
             self.serial_thread.set_capturing(False)
 
         self.is_capturing = False
+        if hasattr(self, "update_analysis_availability"):
+            self.update_analysis_availability()
 
         self.drain_serial_input(0.15)
 
@@ -250,6 +254,8 @@ class CaptureLifecycleMixin:
         timing.capture_end_time = time.time()
 
         self.is_capturing = False
+        if hasattr(self, "update_analysis_availability"):
+            self.update_analysis_availability()
         get_force_runtime_state(self).start_time = None
 
         if self.serial_thread:
