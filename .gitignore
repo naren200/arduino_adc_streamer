@@ -34,6 +34,10 @@ ENV/
 *~
 .codex_test_tmp/
 .codex_pytest_tmp/
+.tmp_pytest_basetemp/
+.tmp_pytest_runtime/
+tmp_pytest_basetemp/
+tmp_pytest_runtime/
 .pytest_cache/
 
 # Local sandboxes
