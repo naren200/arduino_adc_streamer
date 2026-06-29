@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import json
 from dataclasses import dataclass, field
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -111,6 +112,7 @@ def reorder_circular_capture(
 
 def build_in_memory_snapshot(owner) -> AnalysisSourceSnapshot:
     """Copy the latest retained in-memory capture from the GUI owner."""
+    owner_config = getattr(owner, "config", {}) or {}
     with owner.buffer_lock:
         data, timestamps = reorder_circular_capture(
             getattr(owner, "raw_data_buffer", None),
@@ -123,13 +125,14 @@ def build_in_memory_snapshot(owner) -> AnalysisSourceSnapshot:
     if data.size == 0:
         raise ValueError("No in-memory capture is available yet.")
 
-    channel_labels = _default_channel_labels(
-        getattr(owner, "config", {}).get("channels", []),
-        int(getattr(owner, "config", {}).get("repeat", 1) or 1),
+    channel_labels = _build_in_memory_channel_labels(
+        owner,
         data.shape[1],
+        fallback_channels=_config_get(owner_config, "channels", []),
+        fallback_repeat=int(_config_get(owner_config, "repeat", 1) or 1),
     )
     metadata = {
-        "configuration": dict(getattr(owner, "config", {}) or {}),
+        "configuration": _config_to_dict(owner_config),
         "source": "in_memory",
     }
     return AnalysisSourceSnapshot(
@@ -246,11 +249,12 @@ def prepare_analysis_data(
 
     visible_set = set(visible_labels or snapshot.channel_labels)
     x_base, x_label, x_units = build_trace_x_axis(snapshot, axis_mode)
-    traces = [
-        AnalysisTrace(label=label, x=x_base[:, column], y=data[:, column].astype(np.float64), group="signal")
-        for column, label in enumerate(snapshot.channel_labels)
-        if label in visible_set and column < data.shape[1]
-    ]
+    traces = []
+    for column, label in enumerate(snapshot.channel_labels):
+        if label not in visible_set or column >= data.shape[1]:
+            continue
+        y_values = _signal_display_values(label, data[:, column], vref_voltage)
+        traces.append(AnalysisTrace(label=label, x=x_base[:, column], y=y_values, group="signal"))
 
     force_traces = build_force_traces(snapshot, axis_mode)
     overlays = build_overlay_traces(
@@ -423,6 +427,17 @@ def counts_to_volts(values, vref_voltage: float) -> np.ndarray:
     return (np.asarray(values, dtype=np.float64) / max_adc_value) * float(vref_voltage)
 
 
+def _signal_display_values(label: str, values, vref_voltage: float) -> np.ndarray:
+    if _is_resistance_like_label(label):
+        return np.asarray(values, dtype=np.float64)
+    return counts_to_volts(values, vref_voltage)
+
+
+def _is_resistance_like_label(label: str) -> bool:
+    normalized = str(label).strip().upper()
+    return "_RS" in normalized or normalized.startswith("RS_") or normalized.startswith("RS ")
+
+
 def _position_column_map(labels: list[str]) -> dict[str, int]:
     result: dict[str, int] = {}
     for index, label in enumerate(labels):
@@ -455,6 +470,67 @@ def _default_channel_labels(channels: list, repeat: int, column_count: int) -> l
     if len(labels) != column_count:
         labels = [f"Col{index}" for index in range(column_count)]
     return labels
+
+
+def _build_in_memory_channel_labels(owner, column_count: int, *, fallback_channels: list, fallback_repeat: int) -> list[str]:
+    labels = [None] * int(column_count)
+    specs = []
+    if hasattr(owner, "get_display_channel_specs"):
+        try:
+            specs.extend(list(owner.get_display_channel_specs() or []))
+        except Exception:
+            specs = []
+    if hasattr(owner, "get_rosette_display_channel_specs"):
+        try:
+            specs.extend(list(owner.get_rosette_display_channel_specs() or []))
+        except Exception:
+            pass
+
+    for spec in specs:
+        label = str(spec.get("label", "")).strip()
+        sample_indices = list(spec.get("sample_indices", []) or [])
+        if not label or not sample_indices:
+            continue
+        for offset, sample_index in enumerate(sample_indices):
+            try:
+                column = int(sample_index)
+            except (TypeError, ValueError):
+                continue
+            if column < 0 or column >= column_count:
+                continue
+            labels[column] = label if len(sample_indices) == 1 else f"{label}.{offset + 1}"
+
+    fallback = _default_channel_labels(fallback_channels, fallback_repeat, column_count)
+    return [
+        label if label is not None else fallback[index]
+        for index, label in enumerate(labels)
+    ]
+
+
+def _config_get(config, key: str, default=None):
+    if hasattr(config, "get"):
+        return config.get(key, default)
+    return getattr(config, key, default)
+
+
+def _config_to_dict(config) -> dict:
+    if isinstance(config, dict):
+        return dict(config)
+    if is_dataclass(config):
+        return asdict(config)
+    if hasattr(config, "__dict__"):
+        return dict(vars(config))
+    keys = (
+        "channels",
+        "repeat",
+        "ground_pin",
+        "use_ground",
+        "osr",
+        "gain",
+        "reference",
+        "sample_rate",
+    )
+    return {key: getattr(config, key) for key in keys if hasattr(config, key)}
 
 
 def _normalize_timestamps(timestamps, count: int) -> np.ndarray:

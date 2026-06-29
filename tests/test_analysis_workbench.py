@@ -1,12 +1,16 @@
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
+from config.adc_config_state import ADCConfigurationState
 from data_processing.analysis_workbench import (
     AnalysisSourceSnapshot,
+    build_in_memory_snapshot,
     build_overlay_traces,
     load_exported_csv_snapshot,
     prepare_analysis_data,
@@ -41,6 +45,46 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             np.asarray([[10, 11], [20, 21], [30, 31], [40, 41], [50, 51]], dtype=np.float32),
         )
         np.testing.assert_array_equal(ordered_timestamps, np.asarray([1, 2, 3, 4, 5], dtype=np.float64))
+
+    def test_build_in_memory_snapshot_accepts_typed_config_state(self):
+        owner = SimpleNamespace(
+            buffer_lock=threading.Lock(),
+            raw_data_buffer=np.asarray([[1, 2], [3, 4]], dtype=np.float32),
+            sweep_timestamps_buffer=np.asarray([0.0, 0.01], dtype=np.float64),
+            sweep_count=2,
+            buffer_write_index=2,
+            MAX_SWEEPS_BUFFER=10,
+            config=ADCConfigurationState(channels=[1, 2], repeat=1, sample_rate=200),
+            force_state=SimpleNamespace(data=[]),
+        )
+        owner.get_display_channel_specs = lambda: [
+            {"label": "PZT6_B", "sample_indices": [0]},
+            {"label": "PZT6_C", "sample_indices": [1]},
+        ]
+        owner.get_rosette_display_channel_specs = lambda: []
+
+        snapshot = build_in_memory_snapshot(owner)
+
+        self.assertEqual(snapshot.channel_labels, ["PZT6_B", "PZT6_C"])
+        self.assertEqual(snapshot.metadata["configuration"]["channels"], [1, 2])
+        np.testing.assert_array_equal(snapshot.data, owner.raw_data_buffer)
+
+    def test_prepare_analysis_data_converts_adc_counts_to_volts(self):
+        snapshot = AnalysisSourceSnapshot(
+            data=np.asarray([[0, 2000, 474.6]], dtype=np.float32),
+            timestamps_s=np.asarray([0.0], dtype=np.float64),
+            channel_labels=["PZT6_B", "PZT6_C", "PZT6_RS1"],
+            metadata={"configuration": {"channels": [1, 2, 3], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=1000.0,
+        )
+
+        prepared = prepare_analysis_data(snapshot, vref_voltage=3.3)
+        values_by_label = {trace.label: trace.y for trace in prepared.traces}
+
+        np.testing.assert_allclose(values_by_label["PZT6_B"], [0.0])
+        np.testing.assert_allclose(values_by_label["PZT6_C"], [3.3 * 2000.0 / 4095.0])
+        np.testing.assert_allclose(values_by_label["PZT6_RS1"], [474.6])
 
     def test_load_exported_csv_snapshot_validates_metadata_column_count(self):
         with tempfile.TemporaryDirectory() as temp_dir:

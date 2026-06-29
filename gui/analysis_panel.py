@@ -452,7 +452,7 @@ class AnalysisPanelMixin:
                 curve.setVisible(False)
 
         self.analysis_signal_plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
-        self.analysis_signal_plot.setLabel("left", "Signals / Overlays")
+        self.analysis_signal_plot.setLabel("left", "Signals", units="V")
         self.analysis_force_plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
         self.analysis_force_plot.setLabel("left", "Force", units="N")
         self.analysis_marker_vline.setVisible(bool(self.analysis_marker_check.isChecked()))
