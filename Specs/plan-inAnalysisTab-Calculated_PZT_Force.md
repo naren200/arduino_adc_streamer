@@ -8,7 +8,7 @@
 
 ---
 
-# 1. Purpose
+## 1. Purpose
 
 Extend the Analysis tab with the ability to reconstruct the applied force on each piezoelectric (PZT) sensor from the measured voltage waveform.
 
@@ -18,7 +18,7 @@ This feature is completely read-only and does not affect firmware, acquisition, 
 
 ---
 
-# 2. Background
+## 2. Background
 
 The Analysis tab may already display a measured force signal acquired from an external force sensor (load cell).
 
@@ -34,13 +34,13 @@ The two force sources are independent and may be displayed simultaneously for co
 
 ---
 
-# 3. User Interface
+## 3. User Interface
 
-## Analysis Tab
+### Analysis Tab
 
 Add a new toggle:
 
-```
+```text
 Calculate PZT Force
 ```
 
@@ -71,7 +71,7 @@ The Display sub-tab shall be scrollable so control lists and plots can exceed th
 
 ---
 
-## Force Graph
+### Force Graph
 
 The existing Force graph shall become a combined graph capable of displaying:
 
@@ -101,7 +101,7 @@ The Force graph shall be large enough for comparison workflows and may occupy ro
 
 ---
 
-# 4. Analysis Settings
+## 4. Analysis Settings
 
 Add a new **PZT Force Settings** section inside the Analysis Settings tab.
 
@@ -122,7 +122,7 @@ Settings are stored in the Analysis settings JSON and persist across application
 
 Default values:
 
-```
+```text
 Cpzt = 150 pF
 Rleak = 1000000 ohm
 d33 = 600 pC/N
@@ -144,7 +144,7 @@ These per-channel values shall be used by calculated force when present.
 
 ---
 
-# 4.1 Channel Display Rules
+### 4.1 Channel Display Rules
 
 When Analysis operates on in-memory data, channel labels and sample columns shall be taken from the same runtime display-channel specifications used by the Time Series graph.
 
@@ -158,7 +158,7 @@ If runtime display specs are unavailable, Analysis may fall back to generated la
 
 ---
 
-# 5. Parameters Extracted Automatically
+## 5. Parameters Extracted Automatically
 
 The following values are obtained directly from the loaded capture and are not user configurable.
 
@@ -175,13 +175,13 @@ For multiplexed captures, the sampling interval shall be computed between consec
 
 ---
 
-# 6. Force Reconstruction
+## 6. Force Reconstruction
 
 For every PZT channel:
 
 Preferred Vmid and noise threshold estimation:
 
-```
+```python
 Vquiet = first QuietDuration seconds of the channel voltage
 Vmid = median(Vquiet)
 MAD = median(|Vquiet - Vmid|)
@@ -200,13 +200,13 @@ used and the force calculator may fall back to a full-trace median Vmid.
 
 Measured voltage:
 
-```
+```python
 v[n] = Vpzt[n] - Vmid
 ```
 
 Noise thresholding:
 
-```
+```python
 if |v[n]| < NoiseThreshold:
     v[n] = 0
 ```
@@ -215,43 +215,43 @@ Voltage samples below the noise threshold shall not contribute to integrated cal
 
 Leakage time constant:
 
-```
+```text
 τ = Rleak × Cpzt
 ```
 
 Per-sample interval:
 
-```
+```text
 dt = t[n] - t[n-1]
 ```
 
 Leakage factor:
 
-```
+```text
 α = exp(-dt / τ)
 ```
 
 Generated charge:
 
-```
+```text
 ΔQ = Cpzt × (v[n] - α × v[n-1])
 ```
 
 Generated force increment:
 
-```
+```text
 ΔF = ΔQ / d33
 ```
 
 Integrated force:
 
-```
+```text
 F[n] = F[n-1] + ΔF
 ```
 
 Expanded equation:
 
-```
+```text
 F[n] = F[n-1]
       + (Cpzt / d33)
       × (v[n] - α × v[n-1])
@@ -259,13 +259,13 @@ F[n] = F[n-1]
 
 Default:
 
-```
+```text
 d33 = 600 pC/N
 ```
 
 ---
 
-# 6.1 Implementation Ownership
+### 6.1 Implementation Ownership
 
 PZT force reconstruction shall be reusable outside the Analysis tab:
 
@@ -278,23 +278,23 @@ The calculation module shall not depend on Analysis tab data structures or GUI w
 
 ---
 
-# 7. Automatic Force Zeroing
+## 7. Automatic Force Zeroing
 
 Because piezoelectric sensors cannot accurately measure static force indefinitely, small integration drift is expected.
 
 To prevent long-term drift, the application performs automatic force zeroing.
 
-## Event Detection
+### Event Detection
 
 Detect a signal event whenever
 
-```
+```text
 v > NoiseThreshold
 ```
 
 or
 
-```
+```text
 v < -NoiseThreshold
 ```
 
@@ -302,7 +302,7 @@ Record the event polarity.
 
 ---
 
-## Opposite Polarity Detection
+### Opposite Polarity Detection
 
 Detect when
 
@@ -316,20 +316,20 @@ occurs.
 
 ---
 
-## Zero Condition
+### Zero Condition
 
 When:
 
 - opposite-polarity pair detected
 - absolute voltage falls below the noise threshold
 
-```
+```text
 |v| < NoiseThreshold
 ```
 
 then
 
-```
+```text
 Force = 0
 ```
 
@@ -342,7 +342,7 @@ This zeroing is performed independently for every PZT channel.
 
 ---
 
-# 8. Compute Pipeline
+## 8. Compute Pipeline
 
 The processing order shall be:
 
@@ -361,18 +361,18 @@ Force calculation shall use the filtered voltage signal whenever filtering is en
 
 ---
 
-# 9. Plot Behaviour
+## 9. Plot Behaviour
 
 The Analysis tab shall contain synchronized stacked plots:
 
-## Voltage Graph
+### Voltage Graph
 
 Displays:
 
 - PZT voltages
 - only labeled runtime-display channels when available
 
-## Integrated Graph
+### Integrated Graph
 
 Displays:
 
@@ -380,7 +380,7 @@ Displays:
 - the same color for each integrated trace as its source raw voltage trace
 - continuous line traces
 
-## Force Graph
+### Force Graph
 
 Displays:
 
@@ -395,7 +395,7 @@ Both graphs shall share:
 - marker
 - cursor
 
-## Shear / Normal Graph
+### Shear / Normal Graph
 
 Displays:
 
@@ -417,9 +417,9 @@ Hiding a PZT voltage channel shall also hide its integrated trace and calculated
 
 ---
 
-# 10. Export
+## 10. Export
 
-## Image Export
+### Image Export
 
 The Display sub-tab shall provide Analysis image export controls. The user can choose any combination of:
 
@@ -430,13 +430,13 @@ The Display sub-tab shall provide Analysis image export controls. The user can c
 
 Selected plots are saved as PNG images. When more than one plot is selected, the exported filenames shall include plot-specific suffixes.
 
-## Data Export
+### Data Export
 
 When exporting Analysis results to CSV, the exported file shall include both the original captured data and any enabled derived calculations.
 
 The export shall contain, where available:
 
-## Original Signals
+#### Original Signals
 
 - Timestamp
 - Sample Index
@@ -444,7 +444,7 @@ The export shall contain, where available:
 - Measured Force
 - Other acquired channels
 
-## Derived Signals
+#### Derived Signals
 
 - Calculated PZT Force [N]
 - Shear Left/Right [V]
@@ -462,7 +462,7 @@ Column names shall clearly identify:
 
 Example:
 
-```
+```text
 Timestamp_ms
 
 PZT1_V
@@ -487,7 +487,7 @@ The exported CSV shall contain the exact data currently displayed in the Analysi
 
 ---
 
-# 11. Caching
+## 11. Caching
 
 Calculated force traces shall be cached using:
 
@@ -504,7 +504,7 @@ Changing any parameter invalidates the cached force traces.
 
 ---
 
-# 12. Error Handling
+## 12. Error Handling
 
 Force calculation shall not execute when:
 
@@ -519,7 +519,7 @@ The application shall display an informative warning while leaving the remainder
 
 ---
 
-# 13. Acceptance Criteria
+## 13. Acceptance Criteria
 
 - User can enable or disable calculated PZT force.
 - PZT force settings live in the Analysis Settings sub-tab.
