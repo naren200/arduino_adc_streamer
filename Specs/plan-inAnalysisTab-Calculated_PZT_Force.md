@@ -363,7 +363,7 @@ Force calculation shall use the filtered voltage signal whenever filtering is en
 
 # 9. Plot Behaviour
 
-The Analysis tab shall contain:
+The Analysis tab shall contain synchronized stacked plots:
 
 ## Voltage Graph
 
@@ -371,6 +371,14 @@ Displays:
 
 - PZT voltages
 - only labeled runtime-display channels when available
+
+## Integrated Graph
+
+Displays:
+
+- one independently integrated trace for each visible voltage channel
+- the same color for each integrated trace as its source raw voltage trace
+- continuous line traces
 
 ## Force Graph
 
@@ -387,11 +395,42 @@ Both graphs shall share:
 - marker
 - cursor
 
-Hiding a PZT voltage channel shall also hide its calculated force trace.
+## Shear / Normal Graph
+
+Displays:
+
+- Shear Left/Right [V]
+- Shear Top/Bottom [V]
+- Normal Pressure [V]
+
+Shear and normal pressure require position-aware R/L/C/T/B channels. Integration does not require positional channel mapping and is calculated per visible channel independently.
+
+All Analysis plots shall share:
+
+- X-axis
+- zoom
+- pan
+- marker
+- cursor
+
+Hiding a PZT voltage channel shall also hide its integrated trace and calculated force trace.
 
 ---
 
 # 10. Export
+
+## Image Export
+
+The Display sub-tab shall provide Analysis image export controls. The user can choose any combination of:
+
+- Raw signals
+- Integrated signals
+- Shear / Normal
+- Force
+
+Selected plots are saved as PNG images. When more than one plot is selected, the exported filenames shall include plot-specific suffixes.
+
+## Data Export
 
 When exporting Analysis results to CSV, the exported file shall include both the original captured data and any enabled derived calculations.
 
@@ -489,6 +528,9 @@ The application shall display an informative warning while leaving the remainder
 - Force graph supports measured force and calculated force simultaneously.
 - One calculated force trace is produced for every PZT channel.
 - Force graph is synchronized with the voltage graphs.
+- Integration graph is separate from raw voltage data and uses source-channel colors.
+- Shear and normal pressure share a separate derived graph.
+- User can save selected Analysis plots as PNG images.
 - Force settings persist across application restarts.
 - User can calculate and view per-channel Vmid/noise estimates from the initial quiet window.
 - Calculated force uses per-channel Vmid/noise estimates when available.

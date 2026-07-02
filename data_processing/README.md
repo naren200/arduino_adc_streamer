@@ -1,6 +1,6 @@
 # Data Processing
 
-This folder implements the data pipeline that sits between the serial/binary input stream and the GUI plots. It covers binary ADC block parsing into circular numpy buffers, the live and static IIR filter pipeline, ADC and Rosette (RS) curve rendering, force-sensor ingestion/calibration/overlay, spectrum (FFT/Welch) computation on a background thread, the piezo and 555-resistance heatmap pipelines (including shear detection, normal-force computation, and pressure-map surface generation), capture lifecycle/archival (JSONL archive writer plus block-timing CSV), capture-cache cleanup, and capture timing bookkeeping. Most files are PyQt6 mixins composed together in `processing_stack.py` into the single `DataProcessorMixin` consumed by the main GUI class; a smaller set of files (`shear_detector.py`, `normal_force_calculator.py`, `pressure_map_generator.py`, `signal_integrator.py`, `heatmap_signal_processing.py`) are GUI-independent, unit-testable signal-processing classes. `__init__.py` re-exports the mixins and key classes as the public surface of the package.
+This folder implements the data pipeline that sits between the serial/binary input stream and the GUI plots. It covers binary ADC block parsing into circular numpy buffers, the live and static IIR filter pipeline, ADC and Rosette (RS) curve rendering, force-sensor ingestion/calibration/overlay, offline Analysis tab preparation, spectrum (FFT/Welch) computation on a background thread, the piezo and 555-resistance heatmap pipelines (including shear detection, normal-force computation, and pressure-map surface generation), capture lifecycle/archival (JSONL archive writer plus block-timing CSV), capture-cache cleanup, and capture timing bookkeeping. Most files are PyQt6 mixins composed together in `processing_stack.py` into the single `DataProcessorMixin` consumed by the main GUI class; a smaller set of files (`shear_detector.py`, `normal_force_calculator.py`, `pressure_map_generator.py`, `signal_integrator.py`, `heatmap_signal_processing.py`, `pzt_force_calculation.py`) are GUI-independent, unit-testable signal-processing classes. `__init__.py` re-exports the mixins and key classes as the public surface of the package.
 
 ## Files
 
@@ -9,6 +9,29 @@ This folder implements the data pipeline that sits between the serial/binary inp
 Package entry point that imports and re-exports all mixins and standalone classes used by the rest of the app via `__all__`.
 
 - No functions/classes defined directly; re-exports `DataProcessorMixin`, `ADCPlottingMixin`, `CaptureCacheMixin`, `CaptureLifecycleMixin`, `BinaryProcessorMixin`, `FilterProcessorMixin`, `ForceOverlayMixin`, `ForceProcessorMixin`, `HeatmapProcessorMixin`, `NormalForceCalculator`, `NormalForceResult`, `PressureMapGenerator`, `PressureMapResult`, `PressureQuadrantPlane`, `ShearDetector`, `ShearResult`, `SignalIntegrator`, `SignalIntegrationProcessorMixin`, `TimingDisplayMixin`, `SpectrumProcessorMixin`.
+
+### analysis_workbench.py
+
+GUI-independent helpers for the Analysis tab's offline data model, source loading, trace preparation, and derived calculations.
+
+- `AnalysisSourceSnapshot` / `AnalysisTrace` / `AnalysisPreparedData` — dataclasses carrying loaded source data, individual plot traces, and prepared render payloads.
+- `build_in_memory_snapshot(owner)` — copies the active circular capture buffer in chronological order, preserves display-channel labels when available, and includes measured force traces.
+- `load_exported_csv_snapshot(csv_path, metadata_path)` — loads app-exported CSV plus metadata JSON, converts force columns to Newtons, tolerates older files with redundant `ColN` placeholders, and records CSV/metadata count mismatches as warnings when the data can still load.
+- `prepare_analysis_data(...)` — builds raw signal traces, measured force traces, optional calculated PZT force, integration, shear, and normal-pressure traces for the GUI.
+- `build_calculated_pzt_force_traces(...)` / `estimate_analysis_pzt_force_calibration(...)` — adapt Analysis voltage channels to the reusable PZT force-calculation helpers and quiet-window Vmid/noise estimation.
+- `build_integration_traces(...)` / `integrate_voltage_series(...)` — compute one independent integrated trace per visible voltage channel using `SignalIntegrator`.
+- `build_overlay_traces(...)` — computes shear and normal-pressure derived traces from position-aware R/L/C/T/B channels.
+- `counts_to_volts(...)`, `build_trace_x_axis(...)`, `build_force_traces(...)`, `filter_offline_data(...)` — shared conversion, axis, force, and optional filter helpers.
+
+### pzt_force_calculation.py
+
+Reusable PZT voltage-to-force reconstruction helpers, intentionally independent of Analysis tab dataclasses and GUI widgets.
+
+- `PztQuietBaselineEstimate` — dataclass containing Vmid, noise threshold, MAD, displayed sigma, and quiet-window sample count.
+- `estimate_pzt_quiet_baseline(...)` — estimates Vmid from an initial quiet window and uses a consistent percentile-deviation threshold for each channel.
+- `calculate_pzt_force_from_settings(...)` — convenience wrapper that accepts UI/persisted settings from `constants.pzt_force`.
+- `calculate_pzt_force_from_voltage(...)` — low-level SI-unit force reconstruction using PZT capacitance, leak resistance, d33, per-channel Vmid/noise thresholding, and bipolar-event zeroing.
+- `pzt_capacitance_to_farads(...)` / `validate_pzt_force_settings(...)` — unit conversion and parameter validation helpers.
 
 ### adc_filter_engine.py
 

@@ -288,7 +288,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
 
         self.assertEqual(force.shape, (2,))
 
-    def test_load_exported_csv_snapshot_validates_metadata_column_count(self):
+    def test_load_exported_csv_snapshot_accepts_matching_metadata_column_count(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             csv_path = temp_path / "capture.csv"
@@ -316,6 +316,39 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             self.assertEqual(snapshot.data.shape, (2, 2))
             np.testing.assert_allclose(snapshot.timestamps_s, [0.0, 0.01])
             np.testing.assert_allclose(snapshot.force_x_n, [0.5, 0.6])
+
+    def test_load_exported_csv_snapshot_tolerates_legacy_col_placeholders_and_metadata_mismatch(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            csv_path = temp_path / "legacy_array.csv"
+            metadata_path = temp_path / "legacy_array_metadata.json"
+            csv_path.write_text(
+                "Timestamp,PZT3_B,Col1,PZT3_L,Col3,PZT3_C,Col5,PZT3_R,Col7,PZT3_T,Col9,Force_X_N,Force_Z_N\n"
+                "13:29:44.971321,2045.0,2046.0,2043.0,2047.0,2047.0,2047.0,2040.0,2046.0,2049.0,2047.0,0.0,0.0\n"
+                "13:29:44.971931,2047.0,2046.0,2046.0,2049.0,2048.0,2048.0,2040.0,2046.0,2049.0,2047.0,0.0,0.0\n",
+                encoding="utf-8",
+            )
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "configuration": {
+                            "channels": [1, 2, 3, 4, 5],
+                            "repeat_count": 4,
+                            "buffer_total_samples": 20,
+                        },
+                        "capture_duration_seconds": 0.01,
+                        "timing": {"arduino_sample_rate_hz": 1000.0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            snapshot = load_exported_csv_snapshot(csv_path, metadata_path)
+
+            self.assertEqual(snapshot.channel_labels, ["PZT3_B", "PZT3_L", "PZT3_C", "PZT3_R", "PZT3_T"])
+            self.assertEqual(snapshot.data.shape, (2, 5))
+            self.assertIn("analysis_warnings", snapshot.metadata)
+            self.assertIn("metadata expects 20 signal columns", snapshot.metadata["analysis_warnings"][0])
 
     def test_load_exported_csv_snapshot_converts_legacy_force_columns_to_newtons(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -426,6 +459,44 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             hpf_cutoff_hz=0.0,
         )
         self.assertEqual([trace.label for trace in direct_overlays], ["Shear L/R [V]", "Shear T/B [V]"])
+
+    def test_prepare_analysis_data_builds_integration_for_generic_channel_labels(self):
+        snapshot = AnalysisSourceSnapshot(
+            data=np.asarray(
+                [
+                    [100, -100, 80, 40, -40],
+                    [120, -120, 100, 50, -50],
+                    [140, -140, 120, 60, -60],
+                ],
+                dtype=np.float32,
+            ),
+            timestamps_s=np.asarray([0.0, 0.01, 0.02], dtype=np.float64),
+            channel_labels=["CH1", "CH2", "CH3", "CH4", "CH5"],
+            metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=500.0,
+        )
+
+        prepared = prepare_analysis_data(
+            snapshot,
+            axis_mode="time_ms",
+            visible_labels=["CH1", "CH2", "CH3", "CH4", "CH5"],
+            overlay_flags={"integration": True},
+            vref_voltage=3.3,
+            integration_window_samples=1,
+            hpf_cutoff_hz=0.0,
+        )
+
+        self.assertEqual(
+            [trace.label for trace in prepared.overlay_traces if trace.group == "integration"],
+            [
+                "Integrated CH1 [V samples]",
+                "Integrated CH2 [V samples]",
+                "Integrated CH3 [V samples]",
+                "Integrated CH4 [V samples]",
+                "Integrated CH5 [V samples]",
+            ],
+        )
 
 
 if __name__ == "__main__":

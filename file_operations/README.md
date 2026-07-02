@@ -39,7 +39,9 @@ sidecar, and finalizing the background archive writer before reading it back.
 Mixin handling the full CSV + metadata-JSON export workflow: choosing the best data source
 (archive vs. in-memory full view vs. ring buffer), aligning the nearest force sample to each
 exported row, optional ADC filtering at export time, sweep-range-limited export, and writing both
-the CSV rows and a detailed metadata JSON sidecar.
+the CSV rows and a detailed metadata JSON sidecar. Array-mode exports prefer display-channel
+labels such as `PZT3_B` over generated placeholders and write load-cell columns as
+`Force_X_N` / `Force_Z_N` in Newtons.
 
 - `DataExporterMixin` — mixin class for data export operations.
   - `_show_save_data_notice(label_text)` / `_update_save_data_notice(label_text)` /
@@ -62,6 +64,8 @@ the CSV rows and a detailed metadata JSON sidecar.
   - `save_data()` — top-level Save Data handler: determine export source and sweep range,
     build the CSV header from display-channel specs, optionally filter, write the CSV file and a
     metadata JSON file (configuration, timing, force-data, filtering, row-timestamp provenance, notes).
+    Older exports may still contain redundant `ColN` placeholder columns; the Analysis loader
+    treats those as a compatibility case and hides them when real signal labels are present.
 
 ### force_export_alignment.py
 

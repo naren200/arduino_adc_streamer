@@ -185,10 +185,11 @@ def load_exported_csv_snapshot(csv_path, metadata_path) -> AnalysisSourceSnapsho
     if not rows:
         raise ValueError("CSV file contains no data rows.")
 
-    data_columns = [
+    raw_data_columns = [
         name for name in fieldnames
         if _column_key(name) not in ANALYSIS_TIMESTAMP_COLUMNS | ANALYSIS_FORCE_COLUMNS
     ]
+    data_columns = _analysis_signal_columns_from_csv(raw_data_columns)
     if not data_columns:
         raise ValueError("CSV file has no signal columns after timestamp and force columns.")
 
@@ -212,7 +213,11 @@ def load_exported_csv_snapshot(csv_path, metadata_path) -> AnalysisSourceSnapsho
     if expected_columns <= 0:
         expected_columns = len(channels) * max(1, repeat)
     if expected_columns > 0 and expected_columns != data.shape[1]:
-        raise ValueError(
+        warnings = metadata.setdefault("analysis_warnings", [])
+        if not isinstance(warnings, list):
+            warnings = [str(warnings)]
+            metadata["analysis_warnings"] = warnings
+        warnings.append(
             f"CSV/metadata schema mismatch: metadata expects {expected_columns} signal columns, "
             f"CSV has {data.shape[1]}."
         )
@@ -250,13 +255,18 @@ def prepare_analysis_data(
 
     data = np.asarray(snapshot.data, dtype=np.float32)
     status_parts: list[str] = []
+    warnings = snapshot.metadata.get("analysis_warnings", [])
+    if isinstance(warnings, list):
+        status_parts.extend(str(warning) for warning in warnings if warning)
+    elif warnings:
+        status_parts.append(str(warnings))
     if filter_enabled and filter_settings and bool(filter_settings.get("enabled", True)):
         try:
             data = filter_offline_data(snapshot, filter_settings)
         except Exception as exc:
             status_parts.append(f"Filter skipped: {exc}")
 
-    visible_set = set(visible_labels or snapshot.channel_labels)
+    visible_set = set(snapshot.channel_labels if visible_labels is None else visible_labels)
     x_base, x_label, x_units = build_trace_x_axis(snapshot, axis_mode)
     time_base_s = build_trace_time_axis_seconds(snapshot)
     traces = []
@@ -285,6 +295,7 @@ def prepare_analysis_data(
         snapshot,
         data,
         axis_mode=axis_mode,
+        visible_labels=visible_set,
         overlay_flags=overlay_flags or {},
         vref_voltage=vref_voltage,
         integration_window_samples=integration_window_samples,
@@ -350,7 +361,7 @@ def estimate_analysis_pzt_force_calibration(
     if filter_enabled and filter_settings and bool(filter_settings.get("enabled", True)):
         data = filter_offline_data(snapshot, filter_settings)
 
-    visible_set = set(visible_labels or snapshot.channel_labels)
+    visible_set = set(snapshot.channel_labels if visible_labels is None else visible_labels)
     time_base_s = build_trace_time_axis_seconds(snapshot)
     estimates: dict[str, dict[str, float | int]] = {}
     for label, column in iter_analysis_signal_columns(snapshot):
@@ -458,6 +469,7 @@ def build_overlay_traces(
     data: np.ndarray,
     *,
     axis_mode: str,
+    visible_labels: Iterable[str] | None = None,
     overlay_flags: Mapping[str, bool],
     vref_voltage: float,
     integration_window_samples: int,
@@ -466,39 +478,54 @@ def build_overlay_traces(
     if not any(bool(overlay_flags.get(key, False)) for key in ("shear", "normal", "integration")):
         return []
 
-    position_columns = _position_column_map(snapshot)
-    if not all(position in position_columns for position in SHEAR_SENSOR_POSITIONS):
-        if snapshot.samples_per_sweep < len(SHEAR_SENSOR_POSITIONS):
-            return []
-        position_columns = {position: index for index, position in enumerate(SHEAR_SENSOR_POSITIONS)}
-
-    volts_by_position = {
-        position: counts_to_volts(data[:, column], vref_voltage)
-        for position, column in position_columns.items()
-        if column < data.shape[1]
-    }
-    if not all(position in volts_by_position for position in SHEAR_SENSOR_POSITIONS):
-        return []
-
-    sample_rate_hz = _overlay_sample_rate_hz(snapshot)
-    integrator = SignalIntegrator(
-        channel_count=len(SHEAR_SENSOR_POSITIONS),
-        hpf_cutoff_hz=float(hpf_cutoff_hz),
-        integration_window_samples=int(integration_window_samples),
-        sample_rate_hz=sample_rate_hz if sample_rate_hz > 0 else None,
-        channel_map=list(SHEAR_SENSOR_POSITIONS),
-    )
-    try:
-        integrated = integrator.process(
-            [volts_by_position[position] for position in SHEAR_SENSOR_POSITIONS],
-            sample_rate_hz=sample_rate_hz if sample_rate_hz > 0 else None,
-        )
-    except Exception:
-        integrated = _fallback_integrated(volts_by_position, int(integration_window_samples))
-
+    visible_set = set(snapshot.channel_labels if visible_labels is None else visible_labels)
     x_matrix, _label, _units = build_trace_x_axis(snapshot, axis_mode)
     x = x_matrix[:, 0] if x_matrix.size else np.empty(0, dtype=np.float64)
     overlays: list[AnalysisTrace] = []
+
+    if overlay_flags.get("integration", False):
+        overlays.extend(
+            build_integration_traces(
+                snapshot,
+                data,
+                x,
+                visible_labels=visible_set,
+                vref_voltage=vref_voltage,
+                integration_window_samples=integration_window_samples,
+                hpf_cutoff_hz=hpf_cutoff_hz,
+            )
+        )
+
+    if not any(bool(overlay_flags.get(key, False)) for key in ("shear", "normal")):
+        return overlays
+
+    position_channels = _position_channel_map(snapshot)
+    if not all(position in position_channels for position in SHEAR_SENSOR_POSITIONS):
+        if snapshot.samples_per_sweep < len(SHEAR_SENSOR_POSITIONS):
+            return overlays
+        position_channels = {
+            position: (
+                index,
+                snapshot.channel_labels[index] if index < len(snapshot.channel_labels) else position,
+            )
+            for index, position in enumerate(SHEAR_SENSOR_POSITIONS)
+        }
+
+    volts_by_position = {
+        position: counts_to_volts(data[:, column], vref_voltage)
+        for position, (column, _label) in position_channels.items()
+        if column < data.shape[1]
+    }
+    if not all(position in volts_by_position for position in SHEAR_SENSOR_POSITIONS):
+        return overlays
+
+    integrated = integrate_voltage_series(
+        volts_by_position,
+        sample_rate_hz=_overlay_sample_rate_hz(snapshot),
+        integration_window_samples=integration_window_samples,
+        hpf_cutoff_hz=hpf_cutoff_hz,
+        channel_map=list(SHEAR_SENSOR_POSITIONS),
+    )
     shear_detector = ShearDetector()
     normal_calculator = NormalForceCalculator()
     shear_lr: list[float] = []
@@ -517,21 +544,74 @@ def build_overlay_traces(
         normal.append(float(normal_result.total_force))
 
     if overlay_flags.get("shear", False):
-        overlays.append(AnalysisTrace("Shear L/R [V]", x, np.asarray(shear_lr, dtype=np.float64), "overlay"))
-        overlays.append(AnalysisTrace("Shear T/B [V]", x, np.asarray(shear_tb, dtype=np.float64), "overlay"))
+        overlays.append(AnalysisTrace("Shear L/R [V]", x, np.asarray(shear_lr, dtype=np.float64), "derived"))
+        overlays.append(AnalysisTrace("Shear T/B [V]", x, np.asarray(shear_tb, dtype=np.float64), "derived"))
     if overlay_flags.get("normal", False):
-        overlays.append(AnalysisTrace("Normal Pressure [V]", x, np.asarray(normal, dtype=np.float64), "overlay"))
-    if overlay_flags.get("integration", False):
-        for position in SHEAR_SENSOR_POSITIONS:
-            overlays.append(
-                AnalysisTrace(
-                    f"Integrated {position} [V samples]",
-                    x,
-                    np.asarray(integrated[position], dtype=np.float64),
-                    "overlay",
-                )
-            )
+        overlays.append(AnalysisTrace("Normal Pressure [V]", x, np.asarray(normal, dtype=np.float64), "derived"))
     return overlays
+
+
+def build_integration_traces(
+    snapshot: AnalysisSourceSnapshot,
+    data: np.ndarray,
+    x: np.ndarray,
+    *,
+    visible_labels: Iterable[str],
+    vref_voltage: float,
+    integration_window_samples: int,
+    hpf_cutoff_hz: float,
+) -> list[AnalysisTrace]:
+    visible_set = set(visible_labels)
+    voltage_by_label = {
+        label: _signal_display_values(label, data[:, column], vref_voltage)
+        for label, column in iter_analysis_signal_columns(snapshot)
+        if label in visible_set and column < data.shape[1] and not _is_resistance_like_label(label)
+    }
+    if not voltage_by_label:
+        return []
+
+    integrated = integrate_voltage_series(
+        voltage_by_label,
+        sample_rate_hz=_overlay_sample_rate_hz(snapshot),
+        integration_window_samples=integration_window_samples,
+        hpf_cutoff_hz=hpf_cutoff_hz,
+        channel_map=list(voltage_by_label),
+    )
+    return [
+        AnalysisTrace(
+            f"Integrated {label} [V samples]",
+            x,
+            np.asarray(integrated[label], dtype=np.float64),
+            "integration",
+        )
+        for label in voltage_by_label
+        if label in integrated
+    ]
+
+
+def integrate_voltage_series(
+    voltage_by_key: Mapping,
+    *,
+    sample_rate_hz: float,
+    integration_window_samples: int,
+    hpf_cutoff_hz: float,
+    channel_map,
+) -> dict:
+    keys = list(voltage_by_key)
+    integrator = SignalIntegrator(
+        channel_count=len(keys),
+        hpf_cutoff_hz=float(hpf_cutoff_hz),
+        integration_window_samples=int(integration_window_samples),
+        sample_rate_hz=sample_rate_hz if sample_rate_hz > 0 else None,
+        channel_map=channel_map,
+    )
+    try:
+        return integrator.process(
+            [voltage_by_key[key] for key in keys],
+            sample_rate_hz=sample_rate_hz if sample_rate_hz > 0 else None,
+        )
+    except Exception:
+        return _fallback_integrated(voltage_by_key, int(integration_window_samples))
 
 
 def counts_to_volts(values, vref_voltage: float) -> np.ndarray:
@@ -558,13 +638,13 @@ def iter_analysis_signal_columns(snapshot: AnalysisSourceSnapshot):
         yield label, int(column)
 
 
-def _position_column_map(snapshot: AnalysisSourceSnapshot) -> dict[str, int]:
-    result: dict[str, int] = {}
+def _position_channel_map(snapshot: AnalysisSourceSnapshot) -> dict[str, tuple[int, str]]:
+    result: dict[str, tuple[int, str]] = {}
     for label, column in iter_analysis_signal_columns(snapshot):
         normalized = str(label).strip().upper().replace(" ", "_")
         for position in SHEAR_SENSOR_POSITIONS:
             if normalized == position or normalized.endswith(f"_{position}") or normalized.endswith(f"-{position}"):
-                result[position] = int(column)
+                result[position] = (int(column), label)
     return result
 
 
@@ -754,6 +834,21 @@ def _force_values(owner, axis: str) -> np.ndarray:
 
 def _column_key(name: str) -> str:
     return str(name).strip().lower()
+
+
+def _analysis_signal_columns_from_csv(columns: list[str]) -> list[str]:
+    has_named_signal = any(not _is_legacy_placeholder_column(column) for column in columns)
+    if not has_named_signal:
+        return list(columns)
+    return [
+        column for column in columns
+        if not _is_legacy_placeholder_column(column)
+    ]
+
+
+def _is_legacy_placeholder_column(name: str) -> bool:
+    normalized = str(name).strip().lower()
+    return normalized.startswith("col") and normalized[3:].isdigit()
 
 
 def _force_column_newtons(rows: list[dict[str, str]], *, axis: str) -> np.ndarray:

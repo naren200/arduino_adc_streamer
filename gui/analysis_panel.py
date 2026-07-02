@@ -34,8 +34,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from pyqtgraph.exporters import ImageExporter
 
-from constants.plotting import PLOT_COLORS
+from constants.plotting import PLOT_COLORS, PLOT_EXPORT_WIDTH
 from constants.pzt_force import PZT_FORCE_CAPACITANCE_UNITS, PZT_FORCE_DEFAULT_SETTINGS
 from data_processing.analysis_workbench import (
     AnalysisPreparedData,
@@ -75,6 +76,9 @@ class AnalysisPanelMixin:
         self.analysis_signal_curves = {}
         self.analysis_force_curves = {}
         self.analysis_overlay_curves = {}
+        self.analysis_integration_curves = {}
+        self.analysis_derived_curves = {}
+        self.analysis_trace_colors = {}
         self.analysis_force_checks: dict[str, QCheckBox] = {}
         self._analysis_marker_timer = QTimer()
         self._analysis_marker_timer.setSingleShot(True)
@@ -284,6 +288,25 @@ class AnalysisPanelMixin:
         self.analysis_pzt_baseline_results.setMaximumHeight(160)
         pzt_force_layout.addWidget(self.analysis_pzt_baseline_results, 3, 0, 1, 4)
         settings_root.addWidget(pzt_force_group)
+
+        image_export_group = QGroupBox("Analysis Image Export")
+        image_export_layout = QGridLayout(image_export_group)
+        self.analysis_save_raw_image_check = QCheckBox("Raw signals")
+        self.analysis_save_raw_image_check.setChecked(True)
+        image_export_layout.addWidget(self.analysis_save_raw_image_check, 0, 0)
+        self.analysis_save_integration_image_check = QCheckBox("Integrated signals")
+        self.analysis_save_integration_image_check.setChecked(True)
+        image_export_layout.addWidget(self.analysis_save_integration_image_check, 0, 1)
+        self.analysis_save_derived_image_check = QCheckBox("Shear / Normal")
+        self.analysis_save_derived_image_check.setChecked(True)
+        image_export_layout.addWidget(self.analysis_save_derived_image_check, 0, 2)
+        self.analysis_save_force_image_check = QCheckBox("Force")
+        self.analysis_save_force_image_check.setChecked(True)
+        image_export_layout.addWidget(self.analysis_save_force_image_check, 0, 3)
+        self.analysis_save_images_btn = QPushButton("Save Selected Images")
+        self.analysis_save_images_btn.clicked.connect(self.save_analysis_plot_images)
+        image_export_layout.addWidget(self.analysis_save_images_btn, 0, 4)
+        display_root.addWidget(image_export_group)
         settings_root.addStretch()
 
         channel_group = QGroupBox("Display Channels")
@@ -324,18 +347,34 @@ class AnalysisPanelMixin:
         self.analysis_signal_plot.setBackground("w")
         self.analysis_signal_plot.showGrid(x=True, y=True, alpha=0.3)
         self.analysis_signal_plot.addLegend(offset=(10, 10))
+        self.analysis_integration_plot = pg.PlotWidget()
+        self.analysis_integration_plot.setBackground("w")
+        self.analysis_integration_plot.showGrid(x=True, y=True, alpha=0.3)
+        self.analysis_integration_plot.addLegend(offset=(10, 10))
+        self.analysis_derived_plot = pg.PlotWidget()
+        self.analysis_derived_plot.setBackground("w")
+        self.analysis_derived_plot.showGrid(x=True, y=True, alpha=0.3)
+        self.analysis_derived_plot.addLegend(offset=(10, 10))
         self.analysis_force_plot = pg.PlotWidget()
         self.analysis_force_plot.setBackground("w")
         self.analysis_signal_plot.setMinimumHeight(360)
+        self.analysis_integration_plot.setMinimumHeight(260)
+        self.analysis_derived_plot.setMinimumHeight(240)
         self.analysis_force_plot.setMinimumHeight(300)
         self.analysis_force_plot.showGrid(x=True, y=True, alpha=0.3)
         self.analysis_force_plot.addLegend(offset=(10, 10))
+        self.analysis_integration_plot.setXLink(self.analysis_signal_plot)
+        self.analysis_derived_plot.setXLink(self.analysis_signal_plot)
         self.analysis_force_plot.setXLink(self.analysis_signal_plot)
         splitter.addWidget(self.analysis_signal_plot)
+        splitter.addWidget(self.analysis_integration_plot)
+        splitter.addWidget(self.analysis_derived_plot)
         splitter.addWidget(self.analysis_force_plot)
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 2)
-        splitter.setMinimumHeight(720)
+        splitter.setStretchFactor(2, 1)
+        splitter.setStretchFactor(3, 2)
+        splitter.setMinimumHeight(1160)
         display_root.addWidget(splitter)
 
         self.analysis_marker_vline = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#444444", width=1))
@@ -407,7 +446,12 @@ class AnalysisPanelMixin:
         self.save_last_analysis_settings()
 
     def on_analysis_browse_csv(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open Analysis CSV", "", "CSV Files (*.csv);;All Files (*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Analysis CSV",
+            self._analysis_file_dialog_start_dir("csv"),
+            "CSV Files (*.csv);;All Files (*)",
+        )
         if not path:
             return
         self.analysis_csv_path_edit.setText(path)
@@ -417,10 +461,48 @@ class AnalysisPanelMixin:
         self._load_analysis_file_source_when_ready()
 
     def on_analysis_browse_metadata(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open Analysis Metadata", "", "JSON Files (*.json);;All Files (*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Analysis Metadata",
+            self._analysis_file_dialog_start_dir("metadata"),
+            "JSON Files (*.json);;All Files (*)",
+        )
         if path:
             self.analysis_metadata_path_edit.setText(path)
             self._load_analysis_file_source_when_ready()
+
+    def _analysis_file_dialog_start_dir(self, kind: str) -> str:
+        if kind == "metadata":
+            candidates = (
+                self.analysis_metadata_path_edit.text().strip(),
+                str(self.analysis_state.get("metadata_path", "")),
+                self.analysis_csv_path_edit.text().strip(),
+                str(self.analysis_state.get("csv_path", "")),
+            )
+        else:
+            candidates = (
+                self.analysis_csv_path_edit.text().strip(),
+                str(self.analysis_state.get("csv_path", "")),
+                self.analysis_metadata_path_edit.text().strip(),
+                str(self.analysis_state.get("metadata_path", "")),
+            )
+        for candidate in candidates:
+            if not candidate:
+                continue
+            candidate_path = Path(candidate).expanduser()
+            if candidate_path.is_file():
+                return str(candidate_path.parent)
+            if candidate_path.is_dir():
+                return str(candidate_path)
+
+        export_dir = getattr(self, "dir_input", None)
+        if export_dir is not None:
+            export_text = export_dir.text().strip()
+            if export_text:
+                export_path = Path(export_text).expanduser()
+                if export_path.is_dir():
+                    return str(export_path)
+        return str(Path.cwd())
 
     def _load_analysis_file_source_when_ready(self):
         csv_path = Path(self.analysis_csv_path_edit.text().strip())
@@ -530,7 +612,7 @@ class AnalysisPanelMixin:
         visible_labels = [
             label for label, check in self.analysis_channel_checks.items()
             if check.isChecked()
-        ] or list(snapshot.channel_labels)
+        ]
         filter_settings = self.get_filter_settings_from_ui() if hasattr(self, "get_filter_settings_from_ui") else {}
         try:
             estimates = estimate_analysis_pzt_force_calibration(
@@ -582,6 +664,8 @@ class AnalysisPanelMixin:
         mouse_y = mode in ("y", "xy")
         if hasattr(self, "analysis_signal_plot"):
             self.analysis_signal_plot.setMouseEnabled(x=mouse_x, y=mouse_y)
+            self.analysis_integration_plot.setMouseEnabled(x=mouse_x, y=mouse_y)
+            self.analysis_derived_plot.setMouseEnabled(x=mouse_x, y=mouse_y)
             self.analysis_force_plot.setMouseEnabled(x=mouse_x, y=mouse_y)
         self.save_last_analysis_settings()
 
@@ -599,7 +683,7 @@ class AnalysisPanelMixin:
         visible_labels = [
             label for label, check in self.analysis_channel_checks.items()
             if check.isChecked()
-        ] or list(snapshot.channel_labels)
+        ]
         filter_settings = self.get_filter_settings_from_ui() if hasattr(self, "get_filter_settings_from_ui") else {}
         self.analysis_prepared = prepare_analysis_data(
             snapshot,
@@ -621,19 +705,55 @@ class AnalysisPanelMixin:
         if prepared is None:
             return
         desired_signal = set()
+        desired_integration = set()
+        desired_derived = set()
         desired_force = set()
-        for index, trace in enumerate(prepared.traces + prepared.overlay_traces):
+        self.analysis_trace_colors = {}
+        for index, trace in enumerate(prepared.traces):
             key = trace.label
             desired_signal.add(key)
+            color = PLOT_COLORS[index % len(PLOT_COLORS)]
+            self.analysis_trace_colors[key] = color
             curve = self.analysis_signal_curves.get(key)
             if curve is None:
-                color = PLOT_COLORS[index % len(PLOT_COLORS)] if trace.group == "signal" else (70, 70, 70)
-                style = Qt.PenStyle.SolidLine if trace.group == "signal" else Qt.PenStyle.DashLine
-                curve = self.analysis_signal_plot.plot([], [], pen=pg.mkPen(color=color, width=2, style=style), name=key)
+                curve = self.analysis_signal_plot.plot([], [], pen=pg.mkPen(color=color, width=2), name=key)
                 curve.setClipToView(True)
                 curve.setDownsampling(auto=True, method="peak")
                 self.analysis_signal_curves[key] = curve
             curve.setData(trace.x, trace.y)
+            curve.setPen(pg.mkPen(color=color, width=2))
+            curve.setVisible(True)
+
+        integration_traces = [trace for trace in prepared.overlay_traces if trace.group == "integration"]
+        derived_traces = [trace for trace in prepared.overlay_traces if trace.group != "integration"]
+        for index, trace in enumerate(integration_traces):
+            key = trace.label
+            desired_integration.add(key)
+            source_label = self._analysis_integrated_source_label(key)
+            color = self.analysis_trace_colors.get(source_label, PLOT_COLORS[index % len(PLOT_COLORS)])
+            curve = self.analysis_integration_curves.get(key)
+            if curve is None:
+                curve = self.analysis_integration_plot.plot([], [], pen=pg.mkPen(color=color, width=2), name=key)
+                curve.setClipToView(True)
+                curve.setDownsampling(auto=True, method="peak")
+                self.analysis_integration_curves[key] = curve
+            curve.setData(trace.x, trace.y)
+            curve.setPen(pg.mkPen(color=color, width=2))
+            curve.setVisible(True)
+
+        for index, trace in enumerate(derived_traces):
+            key = trace.label
+            desired_derived.add(key)
+            curve = self.analysis_derived_curves.get(key)
+            if curve is None:
+                curve = self.analysis_derived_plot.plot(
+                    [], [], pen=pg.mkPen(color=PLOT_COLORS[(index + 6) % len(PLOT_COLORS)], width=2), name=key
+                )
+                curve.setClipToView(True)
+                curve.setDownsampling(auto=True, method="peak")
+                self.analysis_derived_curves[key] = curve
+            curve.setData(trace.x, trace.y)
+            curve.setPen(pg.mkPen(color=PLOT_COLORS[(index + 6) % len(PLOT_COLORS)], width=2))
             curve.setVisible(True)
 
         for index, trace in enumerate(prepared.force_traces):
@@ -654,20 +774,46 @@ class AnalysisPanelMixin:
         for key, curve in self.analysis_signal_curves.items():
             if key not in desired_signal:
                 curve.setVisible(False)
+        for key, curve in self.analysis_integration_curves.items():
+            if key not in desired_integration:
+                curve.setVisible(False)
+        for key, curve in self.analysis_derived_curves.items():
+            if key not in desired_derived:
+                curve.setVisible(False)
         for key, curve in self.analysis_force_curves.items():
             if key not in desired_force:
                 curve.setVisible(False)
 
         self.analysis_signal_plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
         self.analysis_signal_plot.setLabel("left", "Signals", units="V")
+        self.analysis_integration_plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
+        self.analysis_integration_plot.setLabel("left", "Integrated", units="V samples")
+        self.analysis_derived_plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
+        self.analysis_derived_plot.setLabel("left", "Shear / Normal", units="V")
         self.analysis_force_plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
         self.analysis_force_plot.setLabel("left", "Force", units="N")
+        if desired_integration:
+            self.analysis_integration_plot.enableAutoRange()
+        if desired_derived:
+            self.analysis_derived_plot.enableAutoRange()
+        if desired_force:
+            self.analysis_force_plot.enableAutoRange()
         self.analysis_marker_vline.setVisible(bool(self.analysis_marker_check.isChecked()))
         source = self.analysis_snapshot.source_id if self.analysis_snapshot else "-"
         self.analysis_status_label.setText(
             f"Analysis: {len(prepared.traces)} signal traces, {len(prepared.overlay_traces)} overlays, "
             f"{len(prepared.force_traces)} force traces | {source} {prepared.status}".strip()
         )
+
+    def _analysis_integrated_source_label(self, trace_label: str) -> str:
+        prefix = "Integrated "
+        suffix = " ["
+        if not trace_label.startswith(prefix):
+            return trace_label
+        body = trace_label[len(prefix):]
+        if suffix in body:
+            body = body.split(suffix, 1)[0]
+        return body
 
     def _sync_analysis_force_trace_checks(self, force_traces):
         existing = set(self.analysis_force_checks)
@@ -732,8 +878,63 @@ class AnalysisPanelMixin:
             QMessageBox.warning(self, "Analysis Export Failed", str(exc))
             self.analysis_status_label.setText(f"Analysis export failed: {exc}")
 
+    def save_analysis_plot_images(self):
+        if self.analysis_prepared is None:
+            QMessageBox.warning(self, "Analysis Images", "No Analysis plots to save.")
+            return
+        selected = [
+            ("raw", self.analysis_signal_plot, self.analysis_save_raw_image_check.isChecked()),
+            ("integrated", self.analysis_integration_plot, self.analysis_save_integration_image_check.isChecked()),
+            ("shear_normal", self.analysis_derived_plot, self.analysis_save_derived_image_check.isChecked()),
+            ("force", self.analysis_force_plot, self.analysis_save_force_image_check.isChecked()),
+        ]
+        selected = [(suffix, plot) for suffix, plot, checked in selected if checked]
+        if not selected:
+            QMessageBox.warning(self, "Analysis Images", "Choose at least one plot image to save.")
+            return
+
+        default_dir = Path(self.analysis_state.get("csv_path") or ".").parent
+        if not default_dir.exists() and hasattr(self, "dir_input"):
+            export_dir = Path(self.dir_input.text().strip())
+            if export_dir.exists():
+                default_dir = export_dir
+        default_name = f"analysis_plot_{datetime.now().strftime('%Y%m%d_%H%M')}.png"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Analysis Plot Image",
+            str(default_dir / default_name),
+            "PNG Files (*.png);;All Files (*)",
+        )
+        if not file_path:
+            return
+
+        try:
+            base_path = Path(file_path)
+            base_path.parent.mkdir(parents=True, exist_ok=True)
+            saved_paths = []
+            for suffix, plot in selected:
+                output_path = base_path if len(selected) == 1 else base_path.with_name(f"{base_path.stem}_{suffix}.png")
+                exporter = ImageExporter(plot.plotItem)
+                exporter.parameters()["width"] = PLOT_EXPORT_WIDTH
+                exporter.export(str(output_path))
+                saved_paths.append(output_path)
+            message = "Analysis plot image saved:" if len(saved_paths) == 1 else "Analysis plot images saved:"
+            self.analysis_status_label.setText(f"{message} {', '.join(str(path) for path in saved_paths)}")
+            if hasattr(self, "log_status"):
+                for path in saved_paths:
+                    self.log_status(f"Analysis plot image saved to {path}")
+            QMessageBox.information(self, "Analysis Images", message + "\n" + "\n".join(str(path) for path in saved_paths))
+        except Exception as exc:
+            QMessageBox.warning(self, "Analysis Image Export Failed", str(exc))
+            self.analysis_status_label.setText(f"Analysis image export failed: {exc}")
+
     def reset_analysis_view(self):
-        for plot in (self.analysis_signal_plot, self.analysis_force_plot):
+        for plot in (
+            self.analysis_signal_plot,
+            self.analysis_integration_plot,
+            self.analysis_derived_plot,
+            self.analysis_force_plot,
+        ):
             plot.enableAutoRange()
 
     def _on_analysis_mouse_moved(self, evt):
@@ -794,6 +995,11 @@ class AnalysisPanelMixin:
             self.analysis_marker_check,
             self.analysis_reset_view_btn,
             self.analysis_export_csv_btn,
+            self.analysis_save_raw_image_check,
+            self.analysis_save_integration_image_check,
+            self.analysis_save_derived_image_check,
+            self.analysis_save_force_image_check,
+            self.analysis_save_images_btn,
             self.analysis_select_all_btn,
             self.analysis_select_none_btn,
         ):

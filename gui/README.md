@@ -1,12 +1,12 @@
 # GUI
 
-Tab construction and UI panels for the Arduino ADC streamer desktop application. Each file is a PyQt6 mixin (combined into the main GUI window class) or a standalone custom widget, together building the application's tabs: Time Series, Rosette (RS), Pressure Map, Heatmap, Force Calibration, Spectrum, and Sensor, plus shared file/status/control panels and small utility widgets.
+Tab construction and UI panels for the Arduino ADC streamer desktop application. Each file is a PyQt6 mixin (combined into the main GUI window class) or a standalone custom widget, together building the application's tabs: Time Series, Rosette (RS), Pressure Map, Heatmap, Force Calibration, Spectrum, Analysis, and Sensor, plus shared file/status/control panels and small utility widgets.
 
 ## Files
 
 ### `__init__.py`
 
-Package init that re-exports all GUI mixins/widgets used by the main window (`ControlPanelsMixin`, `DisplayPanelsMixin`, `FilePanelsMixin`, `ForceCalibrationPanelMixin`, `HeatmapPanelMixin`, `PressureMapPanelMixin`, `PressureMapWidget`, `SensorPanelMixin`, `SignalIntegrationPanelMixin`, `SpectrumPanelMixin`, `StatusLoggingMixin`).
+Package init that re-exports all GUI mixins/widgets used by the main window (`ControlPanelsMixin`, `DisplayPanelsMixin`, `FilePanelsMixin`, `ForceCalibrationPanelMixin`, `HeatmapPanelMixin`, `AnalysisPanelMixin`, `PressureMapPanelMixin`, `PressureMapWidget`, `SensorPanelMixin`, `SignalIntegrationPanelMixin`, `SpectrumPanelMixin`, `StatusLoggingMixin`).
 
 - No functions/classes of its own — only imports and `__all__`.
 
@@ -96,6 +96,19 @@ Mixin for the Force Calibration tab: lets the user select a sensor family/number
   - `_on_force_calib_save_clicked()` / `_on_force_calib_load_clicked()` — save/load calibration data via file dialogs.
   - `save_force_calibration_to_path(file_path, log_message=True)` / `load_force_calibration_from_path(file_path, log_message=True)` — serialize/deserialize all sensor families' calibration rows to/from JSON.
   - `save_force_calibration_last_state()` / `load_last_force_calibration_state()` — autosave/restore the "last used" calibration file.
+
+### `analysis_panel.py`
+
+Mixin for the **Analysis** tab: offline, read-only inspection of the latest in-memory capture or an exported CSV plus metadata JSON pair. The tab has Display and Settings sub-tabs, synchronized raw/integrated/shear-normal/force plots, channel and force-trace checklists, zoom and marker controls, selected-plot PNG export, and persistent Analysis settings.
+
+- `AnalysisPanelMixin`
+  - `create_analysis_tab()` — builds the nested Display/Settings UI, source controls, plot export controls, channel/force trace lists, four synchronized plot widgets, PZT force settings, and status labels.
+  - `init_analysis_state()` / `load_last_analysis_settings()` / `save_last_analysis_settings()` — initialize and persist source mode, axis/zoom modes, overlay toggles, marker state, channel visibility, file paths, plot image selections, and PZT force settings/calibration.
+  - `on_analysis_source_changed(...)`, `browse_analysis_csv()`, `browse_analysis_metadata_json()`, `load_latest_analysis_capture()`, `load_analysis_csv_json()` — source/file event handlers.
+  - `refresh_analysis_display()` / `_render_analysis_prepared(...)` — prepare data via `data_processing.analysis_workbench`, update channel/force trace controls, and render raw, integrated, shear/normal, and force plots with synchronized X ranges.
+  - `calculate_analysis_pzt_baseline()` — estimates per-channel Vmid/noise from the configured quiet window and shows rounded calibration text.
+  - `save_analysis_plot_images()` — exports the selected Analysis plot widgets as PNG files, suffixing filenames when multiple plots are selected.
+  - `update_analysis_availability(...)`, `reset_analysis_view()`, `on_analysis_zoom_changed(...)`, marker/mouse helpers — keep the offline tab disabled during live capture, reset plot state, apply zoom modes, and report nearest visible trace values.
 
 ### `signal_integration_panel.py`
 

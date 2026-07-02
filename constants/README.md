@@ -125,6 +125,12 @@ legacy archive unit labels (`deciohm`, `centiohm`).
 - `get_pzt_rs_ohms_per_wire_unit(units_label=None)` — return ohms-per-wire-unit for the current
   scale, or look up the scale for an archived unit label; returns None if unrecognized.
 
+### pzt_force.py
+
+Defaults and unit constants for calculated PZT force reconstruction in the Analysis tab and any future reusable processing path.
+
+- Data only: `PZT_FORCE_DEFAULT_SETTINGS` (enabled flag, capacitance default `150 pF`, leak resistance default `1000000 ohm`, `d33`, fallback noise threshold, quiet-window duration, noise multiplier, and per-channel calibration map), `PZT_FORCE_CAPACITANCE_UNITS`, `PZT_FORCE_PIC_COULOMB_TO_COULOMB`, `PZT_FORCE_MAD_TO_SIGMA`, and `PZT_FORCE_NOISE_PERCENTILE`.
+
 ### runtime.py
 
 Two memory/rolling-window constants shared across the app.
