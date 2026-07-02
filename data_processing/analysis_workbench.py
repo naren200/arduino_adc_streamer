@@ -23,6 +23,10 @@ from constants.pressure_map import DEFAULT_HPF_CUTOFF_HZ, DEFAULT_INTEGRATION_WI
 from constants.shear import SHEAR_SENSOR_POSITIONS
 from data_processing.adc_filter_engine import ADCFilterEngine
 from data_processing.normal_force_calculator import NormalForceCalculator
+from data_processing.pzt_force_calculation import (
+    calculate_pzt_force_from_settings,
+    estimate_pzt_quiet_baseline,
+)
 from data_processing.shear_detector import ShearDetector
 from data_processing.signal_integrator import SignalIntegrator
 
@@ -38,6 +42,7 @@ class AnalysisSourceSnapshot:
     data: np.ndarray
     timestamps_s: np.ndarray
     channel_labels: list[str]
+    channel_indices: list[int] | None = None
     metadata: dict = field(default_factory=dict)
     force_timestamps_s: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
     force_x_n: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
@@ -125,7 +130,7 @@ def build_in_memory_snapshot(owner) -> AnalysisSourceSnapshot:
     if data.size == 0:
         raise ValueError("No in-memory capture is available yet.")
 
-    channel_labels = _build_in_memory_channel_labels(
+    channel_labels, channel_indices = _build_in_memory_channel_labels(
         owner,
         data.shape[1],
         fallback_channels=_config_get(owner_config, "channels", []),
@@ -139,6 +144,7 @@ def build_in_memory_snapshot(owner) -> AnalysisSourceSnapshot:
         data=data,
         timestamps_s=_normalize_timestamps(timestamps, data.shape[0]),
         channel_labels=channel_labels,
+        channel_indices=channel_indices,
         metadata=metadata,
         force_timestamps_s=_force_times(owner),
         force_x_n=_force_values(owner, "x"),
@@ -214,6 +220,7 @@ def load_exported_csv_snapshot(csv_path, metadata_path) -> AnalysisSourceSnapsho
         data=data,
         timestamps_s=timestamps,
         channel_labels=list(data_columns),
+        channel_indices=list(range(len(data_columns))),
         metadata=metadata,
         force_timestamps_s=timestamps.copy() if (force_x.size or force_z.size) else np.empty(0, dtype=np.float64),
         force_x_n=force_x,
@@ -234,6 +241,7 @@ def prepare_analysis_data(
     vref_voltage: float = 3.3,
     integration_window_samples: int = DEFAULT_INTEGRATION_WINDOW_SAMPLES,
     hpf_cutoff_hz: float = DEFAULT_HPF_CUTOFF_HZ,
+    pzt_force_settings: Mapping[str, object] | None = None,
 ) -> AnalysisPreparedData:
     """Build display traces for the Analysis tab."""
     if snapshot.data.size == 0:
@@ -249,14 +257,29 @@ def prepare_analysis_data(
 
     visible_set = set(visible_labels or snapshot.channel_labels)
     x_base, x_label, x_units = build_trace_x_axis(snapshot, axis_mode)
+    time_base_s = build_trace_time_axis_seconds(snapshot)
     traces = []
-    for column, label in enumerate(snapshot.channel_labels):
+    voltage_by_label: dict[str, np.ndarray] = {}
+    for label, column in iter_analysis_signal_columns(snapshot):
         if label not in visible_set or column >= data.shape[1]:
             continue
         y_values = _signal_display_values(label, data[:, column], vref_voltage)
+        voltage_by_label[label] = y_values
         traces.append(AnalysisTrace(label=label, x=x_base[:, column], y=y_values, group="signal"))
 
     force_traces = build_force_traces(snapshot, axis_mode)
+    try:
+        force_traces.extend(
+            build_calculated_pzt_force_traces(
+                snapshot,
+                x_base,
+                time_base_s,
+                voltage_by_label,
+                pzt_force_settings or {},
+            )
+        )
+    except Exception as exc:
+        status_parts.append(f"PZT force skipped: {exc}")
     overlays = build_overlay_traces(
         snapshot,
         data,
@@ -267,6 +290,88 @@ def prepare_analysis_data(
         hpf_cutoff_hz=hpf_cutoff_hz,
     )
     return AnalysisPreparedData(traces, force_traces, overlays, x_label, x_units, " | ".join(status_parts))
+
+
+def build_calculated_pzt_force_traces(
+    snapshot: AnalysisSourceSnapshot,
+    x_base,
+    time_base_s,
+    voltage_by_label: Mapping[str, np.ndarray],
+    settings: Mapping[str, object],
+) -> list[AnalysisTrace]:
+    if not bool(settings.get("enabled", False)):
+        return []
+
+    channel_calibration = settings.get("channel_calibration", {})
+    if not isinstance(channel_calibration, Mapping):
+        channel_calibration = {}
+
+    traces: list[AnalysisTrace] = []
+    for label, column in iter_analysis_signal_columns(snapshot):
+        if label not in voltage_by_label:
+            continue
+        if _is_resistance_like_label(label):
+            continue
+        if column >= snapshot.samples_per_sweep:
+            continue
+
+        x_values = np.asarray(x_base[:, column], dtype=np.float64)
+        time_s = np.asarray(time_base_s[:, column], dtype=np.float64)
+        calibration = channel_calibration.get(label, {})
+        if not isinstance(calibration, Mapping):
+            calibration = {}
+        force_n = calculate_pzt_force_from_settings(
+            voltage_by_label[label],
+            time_s,
+            settings,
+            vmid_v=_optional_float(calibration.get("vmid_v")),
+            noise_threshold_v=_optional_float(calibration.get("noise_threshold_v")),
+        )
+        traces.append(AnalysisTrace(f"Calculated Force - {label} [N]", x_values, force_n, "force"))
+    return traces
+
+
+def estimate_analysis_pzt_force_calibration(
+    snapshot: AnalysisSourceSnapshot,
+    *,
+    visible_labels: Iterable[str] | None = None,
+    filter_enabled: bool = False,
+    filter_settings: dict | None = None,
+    vref_voltage: float = 3.3,
+    quiet_duration_s: float = 2.0,
+    noise_sigma_multiplier: float = 5.0,
+) -> dict[str, dict[str, float | int]]:
+    """Estimate per-channel Vmid/noise settings from the initial quiet window."""
+    if snapshot.data.size == 0:
+        raise ValueError("No source data loaded.")
+
+    data = np.asarray(snapshot.data, dtype=np.float32)
+    if filter_enabled and filter_settings and bool(filter_settings.get("enabled", True)):
+        data = filter_offline_data(snapshot, filter_settings)
+
+    visible_set = set(visible_labels or snapshot.channel_labels)
+    time_base_s = build_trace_time_axis_seconds(snapshot)
+    estimates: dict[str, dict[str, float | int]] = {}
+    for label, column in iter_analysis_signal_columns(snapshot):
+        if label not in visible_set or column >= data.shape[1]:
+            continue
+        if _is_resistance_like_label(label):
+            continue
+        voltage_v = _signal_display_values(label, data[:, column], vref_voltage)
+        estimate = estimate_pzt_quiet_baseline(
+            voltage_v,
+            time_base_s[:, column],
+            quiet_duration_s=quiet_duration_s,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+        )
+        estimates[label] = {
+            "vmid_v": float(estimate.vmid_v),
+            "noise_threshold_v": float(estimate.noise_threshold_v),
+            "mad_v": float(estimate.mad_v),
+            "sigma_v": float(estimate.sigma_v),
+            "sample_count": int(estimate.sample_count),
+        }
+    return estimates
 
 
 def build_trace_x_axis(snapshot: AnalysisSourceSnapshot, axis_mode: str) -> tuple[np.ndarray, str, str]:
@@ -283,6 +388,12 @@ def build_trace_x_axis(snapshot: AnalysisSourceSnapshot, axis_mode: str) -> tupl
     offsets = _sample_offsets_s(snapshot)
     x = (timestamps.reshape(-1, 1) + offsets.reshape(1, -1)) * 1000.0
     return x, "Time", "ms"
+
+
+def build_trace_time_axis_seconds(snapshot: AnalysisSourceSnapshot) -> np.ndarray:
+    timestamps = _normalize_timestamps(snapshot.timestamps_s, snapshot.sweep_count)
+    offsets = _sample_offsets_s(snapshot)
+    return timestamps.reshape(-1, 1) + offsets.reshape(1, -1)
 
 
 def build_force_traces(snapshot: AnalysisSourceSnapshot, axis_mode: str) -> list[AnalysisTrace]:
@@ -354,7 +465,7 @@ def build_overlay_traces(
     if not any(bool(overlay_flags.get(key, False)) for key in ("shear", "normal", "integration")):
         return []
 
-    position_columns = _position_column_map(snapshot.channel_labels)
+    position_columns = _position_column_map(snapshot)
     if not all(position in position_columns for position in SHEAR_SENSOR_POSITIONS):
         if snapshot.samples_per_sweep < len(SHEAR_SENSOR_POSITIONS):
             return []
@@ -438,13 +549,21 @@ def _is_resistance_like_label(label: str) -> bool:
     return "_RS" in normalized or normalized.startswith("RS_") or normalized.startswith("RS ")
 
 
-def _position_column_map(labels: list[str]) -> dict[str, int]:
+def iter_analysis_signal_columns(snapshot: AnalysisSourceSnapshot):
+    indices = snapshot.channel_indices
+    if indices is None:
+        indices = list(range(len(snapshot.channel_labels)))
+    for label, column in zip(snapshot.channel_labels, indices):
+        yield label, int(column)
+
+
+def _position_column_map(snapshot: AnalysisSourceSnapshot) -> dict[str, int]:
     result: dict[str, int] = {}
-    for index, label in enumerate(labels):
+    for label, column in iter_analysis_signal_columns(snapshot):
         normalized = str(label).strip().upper().replace(" ", "_")
         for position in SHEAR_SENSOR_POSITIONS:
             if normalized == position or normalized.endswith(f"_{position}") or normalized.endswith(f"-{position}"):
-                result[position] = index
+                result[position] = int(column)
     return result
 
 
@@ -472,8 +591,8 @@ def _default_channel_labels(channels: list, repeat: int, column_count: int) -> l
     return labels
 
 
-def _build_in_memory_channel_labels(owner, column_count: int, *, fallback_channels: list, fallback_repeat: int) -> list[str]:
-    labels = [None] * int(column_count)
+def _build_in_memory_channel_labels(owner, column_count: int, *, fallback_channels: list, fallback_repeat: int) -> tuple[list[str], list[int]]:
+    labels_by_column = [None] * int(column_count)
     specs = []
     if hasattr(owner, "get_display_channel_specs"):
         try:
@@ -498,13 +617,18 @@ def _build_in_memory_channel_labels(owner, column_count: int, *, fallback_channe
                 continue
             if column < 0 or column >= column_count:
                 continue
-            labels[column] = label if len(sample_indices) == 1 else f"{label}.{offset + 1}"
+            labels_by_column[column] = label if len(sample_indices) == 1 else f"{label}.{offset + 1}"
+
+    labeled_columns = [
+        (label, index)
+        for index, label in enumerate(labels_by_column)
+        if label is not None
+    ]
+    if labeled_columns:
+        return [label for label, _index in labeled_columns], [index for _label, index in labeled_columns]
 
     fallback = _default_channel_labels(fallback_channels, fallback_repeat, column_count)
-    return [
-        label if label is not None else fallback[index]
-        for index, label in enumerate(labels)
-    ]
+    return fallback, list(range(column_count))
 
 
 def _config_get(config, key: str, default=None):
@@ -639,3 +763,12 @@ def _force_values(owner, axis: str) -> np.ndarray:
 
 def _column_key(name: str) -> str:
     return str(name).strip().lower()
+
+
+def _optional_float(value) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
