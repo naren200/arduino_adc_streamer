@@ -2,7 +2,7 @@
 
 Owner: Host application GUI/data-processing stack  
 Status: Implemented  
-Date: 2026-07-02
+Date: 2026-07-07
 
 ## Purpose
 
@@ -33,7 +33,9 @@ Analysis is disabled while runtime acquisition is active and re-enabled after ca
 - Optional processing/display toggles: Spectrum-compatible filter, shear, normal pressure, integration, calculated PZT force, and marker.
 - PZT force settings: capacitance, leak resistance, d33, fallback noise threshold, quiet-window duration, noise multiplier, and a Calculate Vmid + Noise action.
 - Analysis image export controls: select Raw signals, Integrated signals, Shear / Normal, and/or Force plots and save them as PNG images.
-- Marker: mouse readout reports nearest displayed values for visible signal, integration, derived, and force traces.
+- Calculated-force traces use the same plot color as their source raw signal trace. For example, if `PZT3_L` is green in Raw signals, `Calculated Force - PZT3_L [N]` is also green in Force.
+- Display controls, channel checklists, force-trace checklists, and image-export controls are width-stable and must remain visible inside the Analysis scroll area. Long calculated-force labels are displayed in a compact force-trace list instead of forcing horizontal overflow.
+- Marker: mouse readout reports nearest displayed values for visible signal, integration, derived, and force traces. Marker readout text is elided to the visible status-label width and keeps the full text in a tooltip, so moving the marker cannot resize or horizontally shift the Analysis layout.
 
 ## Data Pipeline
 
@@ -83,11 +85,13 @@ The tab persists UI preferences under `~/.adc_streamer/analysis/last_used_analys
 - Integration is plotted separately from raw signals, and each integrated trace uses the same color as its source raw trace.
 - Shear and normal pressure are plotted together on their own derived plot.
 - Hiding a raw signal channel also hides that channel's integrated and calculated-force traces.
+- Calculated PZT force traces use the same color as their corresponding raw signal traces.
 - Measured load-cell force is displayed in Newtons.
 - Calculated PZT force can use per-channel quiet-window Vmid/noise calibration, and below-threshold voltage does not contribute to force integration.
 - Raw, integrated, shear/normal, and force plots share X range and support X-only, Y-only, and X+Y zoom modes.
 - User can export selected Analysis plots to PNG images.
-- Marker readout reports nearest values for visible traces.
+- Marker readout reports nearest values for visible traces without changing the page width or causing horizontal jiggle while the cursor moves.
+- Analysis controls and dynamic channel/force-trace lists remain inside the visible scroll area when calculated PZT force is enabled.
 - Capture start disables Analysis controls; capture finish re-enables them.
 
 ## Out Of Scope
