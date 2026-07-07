@@ -38,7 +38,11 @@ from PyQt6.QtWidgets import (
 from pyqtgraph.exporters import ImageExporter
 
 from constants.plotting import PLOT_COLORS, PLOT_EXPORT_WIDTH
-from constants.pzt_force import PZT_FORCE_CAPACITANCE_UNITS, PZT_FORCE_DEFAULT_SETTINGS
+from constants.pzt_force import (
+    PZT_FORCE_CAPACITANCE_UNITS,
+    PZT_FORCE_DEFAULT_SETTINGS,
+    PZT_FORCE_MUX_TIMING_MODES,
+)
 from data_processing.analysis_workbench import (
     AnalysisPreparedData,
     AnalysisSourceSnapshot,
@@ -298,13 +302,46 @@ class AnalysisPanelMixin:
         self.analysis_pzt_calculate_baseline_btn.clicked.connect(self.calculate_analysis_pzt_baseline)
         pzt_force_layout.addWidget(self.analysis_pzt_calculate_baseline_btn, 2, 4)
 
+        pzt_force_layout.addWidget(QLabel("MUX timing:"), 3, 0)
+        self.analysis_pzt_mux_timing_combo = QComboBox()
+        self.analysis_pzt_mux_timing_combo.addItems(list(PZT_FORCE_MUX_TIMING_MODES))
+        self.analysis_pzt_mux_timing_combo.currentIndexChanged.connect(self.on_analysis_pzt_mux_timing_changed)
+        pzt_force_layout.addWidget(self.analysis_pzt_mux_timing_combo, 3, 1)
+
+        pzt_force_layout.addWidget(QLabel("Connected:"), 3, 2)
+        self.analysis_pzt_mux_connected_ms_spin = QDoubleSpinBox()
+        self.analysis_pzt_mux_connected_ms_spin.setRange(0.001, 1e9)
+        self.analysis_pzt_mux_connected_ms_spin.setDecimals(3)
+        self.analysis_pzt_mux_connected_ms_spin.setSuffix(" ms")
+        self.analysis_pzt_mux_connected_ms_spin.setValue(
+            float(PZT_FORCE_DEFAULT_SETTINGS["mux_connected_time_s"]) * 1000.0
+        )
+        self.analysis_pzt_mux_connected_ms_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_pzt_mux_connected_ms_spin, 3, 3)
+
+        self.analysis_pzt_off_mux_leak_check = QCheckBox("Off-MUX leak")
+        self.analysis_pzt_off_mux_leak_check.stateChanged.connect(self.on_analysis_pzt_mux_timing_changed)
+        pzt_force_layout.addWidget(self.analysis_pzt_off_mux_leak_check, 4, 0)
+
+        self.analysis_pzt_off_mux_rleak_spin = QDoubleSpinBox()
+        self.analysis_pzt_off_mux_rleak_spin.setRange(1e-9, 1e18)
+        self.analysis_pzt_off_mux_rleak_spin.setDecimals(3)
+        self.analysis_pzt_off_mux_rleak_spin.setSuffix(" ohm")
+        self.analysis_pzt_off_mux_rleak_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"]))
+        self.analysis_pzt_off_mux_rleak_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_pzt_off_mux_rleak_spin, 4, 1)
+
+        self.analysis_pzt_mux_timing_status = QLabel("")
+        self.analysis_pzt_mux_timing_status.setStyleSheet("QLabel { color: #555555; }")
+        pzt_force_layout.addWidget(self.analysis_pzt_mux_timing_status, 4, 2, 1, 3)
+
         self.analysis_export_csv_btn = QPushButton("Export Analysis CSV")
         self.analysis_export_csv_btn.clicked.connect(self.export_analysis_csv)
-        pzt_force_layout.addWidget(self.analysis_export_csv_btn, 3, 4)
+        pzt_force_layout.addWidget(self.analysis_export_csv_btn, 5, 4)
         self.analysis_pzt_baseline_results = QPlainTextEdit()
         self.analysis_pzt_baseline_results.setReadOnly(True)
         self.analysis_pzt_baseline_results.setMaximumHeight(160)
-        pzt_force_layout.addWidget(self.analysis_pzt_baseline_results, 3, 0, 1, 4)
+        pzt_force_layout.addWidget(self.analysis_pzt_baseline_results, 5, 0, 1, 4)
         settings_root.addWidget(pzt_force_group)
 
         image_export_group = QGroupBox("Analysis Image Export")
@@ -439,6 +476,15 @@ class AnalysisPanelMixin:
         self.analysis_pzt_noise_spin.setValue(float(pzt_force.get("noise_threshold_v", PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"])))
         self.analysis_pzt_quiet_duration_spin.setValue(float(pzt_force.get("quiet_duration_s", PZT_FORCE_DEFAULT_SETTINGS["quiet_duration_s"])))
         self.analysis_pzt_noise_k_spin.setValue(float(pzt_force.get("noise_sigma_multiplier", PZT_FORCE_DEFAULT_SETTINGS["noise_sigma_multiplier"])))
+        self._set_analysis_pzt_mux_timing_mode(str(pzt_force.get("mux_timing_mode", PZT_FORCE_DEFAULT_SETTINGS["mux_timing_mode"])))
+        self.analysis_pzt_mux_connected_ms_spin.setValue(
+            float(pzt_force.get("mux_connected_time_s", PZT_FORCE_DEFAULT_SETTINGS["mux_connected_time_s"])) * 1000.0
+        )
+        self.analysis_pzt_off_mux_leak_check.setChecked(bool(pzt_force.get("off_mux_leak_enabled", False)))
+        off_mux_rleak = pzt_force.get("off_mux_rleak_ohm", PZT_FORCE_DEFAULT_SETTINGS["off_mux_rleak_ohm"])
+        if off_mux_rleak not in (None, ""):
+            self.analysis_pzt_off_mux_rleak_spin.setValue(float(off_mux_rleak))
+        self._update_analysis_pzt_mux_timing_controls()
         self._update_analysis_pzt_baseline_results()
         self.analysis_csv_path_edit.setText(str(state.get("csv_path", "")))
         self.analysis_metadata_path_edit.setText(str(state.get("metadata_path", "")))
@@ -465,6 +511,52 @@ class AnalysisPanelMixin:
             and not bool(getattr(self, "is_capturing", False))
         )
         self.save_last_analysis_settings()
+
+    def on_analysis_pzt_mux_timing_changed(self, *_args):
+        self._update_analysis_pzt_mux_timing_controls()
+        self.on_analysis_settings_changed()
+
+    def _set_analysis_pzt_mux_timing_mode(self, mode: str):
+        normalized = str(mode or "auto").strip().lower().replace("-", "_").replace(" ", "_")
+        label_by_mode = {
+            "auto": "Auto",
+            "manual": "Manual",
+            "infer": "Infer from total sample rate",
+            "infer_from_rate": "Infer from total sample rate",
+            "infer_from_sample_rate": "Infer from total sample rate",
+            "infer_from_total_sample_rate": "Infer from total sample rate",
+            "continuous": "Continuous",
+            "continuous_leak": "Continuous",
+        }
+        self.analysis_pzt_mux_timing_combo.setCurrentText(label_by_mode.get(normalized, "Auto"))
+
+    def _analysis_pzt_mux_timing_mode(self) -> str:
+        text = str(self.analysis_pzt_mux_timing_combo.currentText()).strip().lower()
+        if text.startswith("manual"):
+            return "manual"
+        if text.startswith("infer"):
+            return "infer_from_total_sample_rate"
+        if text.startswith("continuous"):
+            return "continuous"
+        return "auto"
+
+    def _update_analysis_pzt_mux_timing_controls(self):
+        if not hasattr(self, "analysis_pzt_mux_connected_ms_spin"):
+            return
+        mode = self._analysis_pzt_mux_timing_mode()
+        manual = mode == "manual"
+        off_mux_enabled = bool(self.analysis_pzt_off_mux_leak_check.isChecked())
+        self.analysis_pzt_mux_connected_ms_spin.setVisible(manual)
+        self.analysis_pzt_off_mux_rleak_spin.setEnabled(off_mux_enabled)
+        if mode == "continuous":
+            text = "Continuous leak uses full sample-to-sample dt."
+        elif mode == "manual":
+            text = f"Manual leak exposure {self.analysis_pzt_mux_connected_ms_spin.value():.3f} ms."
+        elif mode == "infer_from_total_sample_rate":
+            text = "Infers leak exposure as 1 / total sample rate."
+        else:
+            text = "Auto uses live timing, sidecar avg_dt_us, or metadata timing."
+        self.analysis_pzt_mux_timing_status.setText(text)
 
     def on_analysis_browse_csv(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -616,6 +708,15 @@ class AnalysisPanelMixin:
             "noise_threshold_v": float(self.analysis_pzt_noise_spin.value()),
             "quiet_duration_s": float(self.analysis_pzt_quiet_duration_spin.value()),
             "noise_sigma_multiplier": float(self.analysis_pzt_noise_k_spin.value()),
+            "mux_timing_mode": self._analysis_pzt_mux_timing_mode(),
+            "mux_connected_time_s": float(self.analysis_pzt_mux_connected_ms_spin.value()) / 1000.0,
+            "mux_connected_time_source": str(self.analysis_pzt_mux_timing_status.text()),
+            "off_mux_leak_enabled": bool(self.analysis_pzt_off_mux_leak_check.isChecked()),
+            "off_mux_rleak_ohm": (
+                float(self.analysis_pzt_off_mux_rleak_spin.value())
+                if self.analysis_pzt_off_mux_leak_check.isChecked()
+                else None
+            ),
             "channel_calibration": dict(self.analysis_state.get("pzt_force", {}).get("channel_calibration", {})),
         }
         self.analysis_state["visible_labels"] = {
@@ -831,6 +932,19 @@ class AnalysisPanelMixin:
             f"Analysis: {len(prepared.traces)} signal traces, {len(prepared.overlay_traces)} overlays, "
             f"{len(prepared.force_traces)} force traces | {source} {prepared.status}".strip()
         )
+        self._update_analysis_pzt_mux_timing_status_from_prepared(prepared.status)
+
+    def _update_analysis_pzt_mux_timing_status_from_prepared(self, status: str):
+        if not hasattr(self, "analysis_pzt_mux_timing_status"):
+            return
+        for part in str(status or "").split("|"):
+            text = part.strip()
+            if text.startswith("PZT MUX timing:"):
+                self.analysis_pzt_mux_timing_status.setText(text.removeprefix("PZT MUX timing:").strip())
+                return
+            if text.startswith("PZT force skipped:"):
+                self.analysis_pzt_mux_timing_status.setText(text)
+                return
 
     def _analysis_integrated_source_label(self, trace_label: str) -> str:
         prefix = "Integrated "
@@ -1051,6 +1165,10 @@ class AnalysisPanelMixin:
             self.analysis_pzt_noise_spin,
             self.analysis_pzt_quiet_duration_spin,
             self.analysis_pzt_noise_k_spin,
+            self.analysis_pzt_mux_timing_combo,
+            self.analysis_pzt_mux_connected_ms_spin,
+            self.analysis_pzt_off_mux_leak_check,
+            self.analysis_pzt_off_mux_rleak_spin,
             self.analysis_pzt_calculate_baseline_btn,
             self.analysis_marker_check,
             self.analysis_reset_view_btn,
@@ -1064,6 +1182,8 @@ class AnalysisPanelMixin:
             self.analysis_select_none_btn,
         ):
             widget.setEnabled(not capturing)
+        if not capturing:
+            self._update_analysis_pzt_mux_timing_controls()
         for check in self.analysis_channel_checks.values():
             check.setEnabled(not capturing)
         for check in self.analysis_force_checks.values():

@@ -140,6 +140,7 @@ def build_in_memory_snapshot(owner) -> AnalysisSourceSnapshot:
     metadata = {
         "configuration": _config_to_dict(owner_config),
         "source": "in_memory",
+        "timing": _owner_analysis_timing_metadata(owner),
     }
     return AnalysisSourceSnapshot(
         data=data,
@@ -280,6 +281,10 @@ def prepare_analysis_data(
 
     force_traces = build_force_traces(snapshot, axis_mode)
     try:
+        pzt_leak_dt_s, pzt_timing_status = resolve_analysis_pzt_mux_leak_dt_s(
+            snapshot,
+            pzt_force_settings or {},
+        )
         force_traces.extend(
             build_calculated_pzt_force_traces(
                 snapshot,
@@ -287,8 +292,11 @@ def prepare_analysis_data(
                 time_base_s,
                 voltage_by_label,
                 pzt_force_settings or {},
+                leak_dt_s=pzt_leak_dt_s,
             )
         )
+        if pzt_timing_status:
+            status_parts.append(pzt_timing_status)
     except Exception as exc:
         status_parts.append(f"PZT force skipped: {exc}")
     overlays = build_overlay_traces(
@@ -310,6 +318,8 @@ def build_calculated_pzt_force_traces(
     time_base_s,
     voltage_by_label: Mapping[str, np.ndarray],
     settings: Mapping[str, object],
+    *,
+    leak_dt_s=None,
 ) -> list[AnalysisTrace]:
     if not bool(settings.get("enabled", False)):
         return []
@@ -338,9 +348,41 @@ def build_calculated_pzt_force_traces(
             settings,
             vmid_v=_optional_float(calibration.get("vmid_v")),
             noise_threshold_v=_optional_float(calibration.get("noise_threshold_v")),
+            leak_dt_s=leak_dt_s,
         )
         traces.append(AnalysisTrace(f"Calculated Force - {label} [N]", x_values, force_n, "force"))
     return traces
+
+
+def resolve_analysis_pzt_mux_leak_dt_s(
+    snapshot: AnalysisSourceSnapshot,
+    settings: Mapping[str, object],
+) -> tuple[float | None, str]:
+    """Resolve MUX-connected leak exposure for calculated Analysis PZT force."""
+    if not bool(settings.get("enabled", False)):
+        return None, ""
+
+    mode = _normalize_pzt_mux_timing_mode(settings.get("mux_timing_mode", "auto"))
+    if mode == "continuous":
+        return None, "PZT MUX timing: Continuous leak uses full trace dt."
+
+    if mode == "manual":
+        value = _optional_float(settings.get("mux_connected_time_s"))
+        if value is None or value <= 0.0:
+            raise ValueError("manual PZT MUX connected time must be greater than zero")
+        return float(value), f"PZT MUX timing: Manual {float(value) * 1000.0:.3f} ms."
+
+    if mode == "infer_from_total_sample_rate":
+        fs = float(snapshot.sample_rate_hz or _metadata_sample_rate_hz(snapshot.metadata, snapshot.data, snapshot.timestamps_s))
+        if fs <= 0.0:
+            raise ValueError("sample rate unavailable for inferred PZT MUX connected time")
+        value = 1.0 / fs
+        return value, f"PZT MUX timing: Inferred {value * 1000.0:.3f} ms from total sample rate."
+
+    value, source = _auto_pzt_mux_connected_time_s(snapshot)
+    if value is None or value <= 0.0:
+        raise ValueError("PZT MUX connected time unavailable; choose Manual or Infer from total sample rate")
+    return value, f"PZT MUX timing: Auto {value * 1000.0:.3f} ms from {source}."
 
 
 def estimate_analysis_pzt_force_calibration(
@@ -808,6 +850,30 @@ def _owner_sample_rate_hz(owner, data: np.ndarray, timestamps: np.ndarray) -> fl
     return _metadata_sample_rate_hz({}, data, timestamps)
 
 
+def _owner_analysis_timing_metadata(owner) -> dict:
+    timing_state = getattr(owner, "timing_state", None)
+    timing_data = getattr(timing_state, "timing_data", {}) if timing_state is not None else {}
+    result = dict(timing_data) if isinstance(timing_data, dict) else {}
+
+    cached_sample_time = _optional_float(getattr(owner, "_cached_avg_sample_time_sec", None))
+    if cached_sample_time is not None and cached_sample_time > 0.0:
+        result["pzt_mux_connected_time_s"] = cached_sample_time
+        result["pzt_mux_connected_time_source"] = "_cached_avg_sample_time_sec"
+
+    sample_times = getattr(timing_state, "arduino_sample_times", []) if timing_state is not None else []
+    if sample_times:
+        latest_us = _optional_float(sample_times[-1])
+        if latest_us is not None and latest_us > 0.0:
+            result.setdefault("arduino_sample_time_us", latest_us)
+            result.setdefault("pzt_mux_connected_time_s", latest_us / 1_000_000.0)
+            result.setdefault("pzt_mux_connected_time_source", "timing_state.arduino_sample_times")
+
+    block_timing_path = getattr(owner, "_block_timing_path", None)
+    if block_timing_path:
+        result["block_timing_csv"] = str(block_timing_path)
+    return result
+
+
 def _overlay_sample_rate_hz(snapshot: AnalysisSourceSnapshot) -> float:
     if snapshot.timestamps_s.size > 1:
         diffs = np.diff(snapshot.timestamps_s)
@@ -815,6 +881,86 @@ def _overlay_sample_rate_hz(snapshot: AnalysisSourceSnapshot) -> float:
         if diffs.size:
             return float(1.0 / np.median(diffs))
     return 0.0
+
+
+def _normalize_pzt_mux_timing_mode(value) -> str:
+    normalized = str(value or "auto").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "infer": "infer_from_total_sample_rate",
+        "infer_from_rate": "infer_from_total_sample_rate",
+        "infer_from_sample_rate": "infer_from_total_sample_rate",
+        "total_sample_rate": "infer_from_total_sample_rate",
+        "continuous_leak": "continuous",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in {"auto", "manual", "infer_from_total_sample_rate", "continuous"}:
+        return "auto"
+    return normalized
+
+
+def _auto_pzt_mux_connected_time_s(snapshot: AnalysisSourceSnapshot) -> tuple[float | None, str]:
+    timing = snapshot.metadata.get("timing", {}) if isinstance(snapshot.metadata, dict) else {}
+    if isinstance(timing, Mapping):
+        value = _optional_float(timing.get("pzt_mux_connected_time_s"))
+        if value is not None and value > 0.0:
+            return value, str(timing.get("pzt_mux_connected_time_source") or "metadata timing")
+
+    sidecar_value = _pzt_mux_connected_time_from_block_timing(snapshot)
+    if sidecar_value is not None and sidecar_value > 0.0:
+        return sidecar_value, "block_timing_csv avg_dt_us"
+
+    if isinstance(timing, Mapping):
+        value_us = _optional_float(timing.get("arduino_sample_time_us"))
+        if value_us is not None and value_us > 0.0:
+            return value_us / 1_000_000.0, "metadata timing.arduino_sample_time_us"
+    return None, ""
+
+
+def _pzt_mux_connected_time_from_block_timing(snapshot: AnalysisSourceSnapshot) -> float | None:
+    if not isinstance(snapshot.metadata, dict):
+        return None
+    candidate = snapshot.metadata.get("block_timing_csv")
+    timing = snapshot.metadata.get("timing", {})
+    if not candidate and isinstance(timing, Mapping):
+        candidate = timing.get("block_timing_csv")
+    if not candidate:
+        return None
+
+    sidecar_path = Path(str(candidate)).expanduser()
+    if not sidecar_path.is_absolute() and snapshot.source_id.startswith("csv:"):
+        try:
+            csv_part = snapshot.source_id.split("|", 1)[0]
+            csv_path = Path(csv_part.removeprefix("csv:"))
+            sidecar_path = csv_path.parent / sidecar_path
+        except Exception:
+            pass
+    if not sidecar_path.exists():
+        return None
+
+    values_us: list[float] = []
+    try:
+        with sidecar_path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames and "avg_dt_us" in reader.fieldnames:
+                for row in reader:
+                    value = _optional_float(row.get("avg_dt_us"))
+                    if value is not None and value > 0.0:
+                        values_us.append(value)
+            else:
+                handle.seek(0)
+                positional = csv.reader(handle)
+                next(positional, None)
+                for row in positional:
+                    if len(row) > 3:
+                        value = _optional_float(row[3])
+                        if value is not None and value > 0.0:
+                            values_us.append(value)
+    except Exception:
+        return None
+
+    if not values_us:
+        return None
+    return float(np.median(np.asarray(values_us, dtype=np.float64))) / 1_000_000.0
 
 
 def _force_times(owner) -> np.ndarray:

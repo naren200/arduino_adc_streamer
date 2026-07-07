@@ -613,6 +613,19 @@ class DataExporterMixin:
             capture_duration_s = None
             if self.timing_state.capture_start_time and self.timing_state.capture_end_time:
                 capture_duration_s = self.timing_state.capture_end_time - self.timing_state.capture_start_time
+
+            pzt_mux_connected_time_us = None
+            pzt_mux_connected_time_source = None
+            cached_sample_time_s = float(getattr(self, "_cached_avg_sample_time_sec", 0.0) or 0.0)
+            if cached_sample_time_s > 0.0:
+                pzt_mux_connected_time_us = cached_sample_time_s * 1_000_000.0
+                pzt_mux_connected_time_source = "_cached_avg_sample_time_sec"
+            else:
+                arduino_sample_times = getattr(self.timing_state, "arduino_sample_times", [])
+                latest_sample_time_us = float(arduino_sample_times[-1] or 0.0) if arduino_sample_times else 0.0
+                if latest_sample_time_us > 0.0:
+                    pzt_mux_connected_time_us = latest_sample_time_us
+                    pzt_mux_connected_time_source = "timing_state.arduino_sample_times"
             
             metadata = {
                 "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -641,7 +654,9 @@ class DataExporterMixin:
                     "total_rate_hz": self.timing_state.timing_data.get('total_rate_hz'),
                     "arduino_sample_time_us": self.timing_state.timing_data.get('arduino_sample_time_us'),
                     "arduino_sample_rate_hz": self.timing_state.timing_data.get('arduino_sample_rate_hz'),
-                    "buffer_gap_time_ms": self.timing_state.timing_data.get('buffer_gap_time_ms')
+                    "buffer_gap_time_ms": self.timing_state.timing_data.get('buffer_gap_time_ms'),
+                    "pzt_mux_connected_time_us": pzt_mux_connected_time_us,
+                    "pzt_mux_connected_time_source": pzt_mux_connected_time_source,
                 },
                 "force_data": {
                     "available": len(force_state.data) > 0,

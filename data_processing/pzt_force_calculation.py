@@ -66,6 +66,7 @@ def calculate_pzt_force_from_settings(
     *,
     vmid_v: float | None = None,
     noise_threshold_v: float | None = None,
+    leak_dt_s=None,
 ) -> np.ndarray:
     """Calculate PZT force from voltage using persisted/UI-style settings.
 
@@ -108,6 +109,10 @@ def calculate_pzt_force_from_settings(
         d33_c_per_n=d33_c_per_n,
         noise_threshold_v=float(noise_threshold_v if noise_threshold_v is not None else resolved["noise_threshold_v"]),
         vmid_v=vmid_v,
+        leak_dt_s=leak_dt_s,
+        off_mux_rleak_ohm=_optional_positive_float(resolved.get("off_mux_rleak_ohm"))
+        if bool(resolved.get("off_mux_leak_enabled", False))
+        else None,
     )
 
 
@@ -210,6 +215,8 @@ def calculate_pzt_force_from_voltage(
     d33_c_per_n: float,
     noise_threshold_v: float,
     vmid_v: float | None = None,
+    leak_dt_s=None,
+    off_mux_rleak_ohm: float | None = None,
 ) -> np.ndarray:
     """Reconstruct force from centered PZT voltage dynamics.
 
@@ -238,6 +245,11 @@ def calculate_pzt_force_from_voltage(
         Piezoelectric charge constant in coulombs per newton.
     noise_threshold_v:
         Centered voltage threshold in volts. The absolute value is used.
+    leak_dt_s:
+        Optional MUX-connected leak exposure in seconds. If omitted, leakage is
+        modeled continuously over the elapsed timestamp delta for backward
+        compatibility. A scalar applies to every interval; an array may either
+        match ``time_s`` length or the interval count ``len(time_s) - 1``.
 
     Returns
     -------
@@ -260,12 +272,19 @@ def calculate_pzt_force_from_voltage(
         raise ValueError("PZT force timestamps must match voltage samples")
     if voltage.size > 1 and not np.all(np.diff(times) > 0.0):
         raise ValueError("PZT force timestamps must be strictly increasing")
+    leak_intervals = _normalize_leak_intervals(leak_dt_s, voltage.size)
 
     v_mid = float(np.median(voltage) if vmid_v is None else vmid_v)
     active_centered = voltage - v_mid
     threshold = abs(float(noise_threshold_v))
     active_centered[np.abs(active_centered) < threshold] = 0.0
     tau = float(rleak_ohm) * float(capacitance_f)
+    tau_off = None
+    if off_mux_rleak_ohm is not None:
+        off_mux_rleak = float(off_mux_rleak_ohm)
+        if off_mux_rleak <= 0.0:
+            raise ValueError("off-MUX leak resistance must be greater than zero")
+        tau_off = off_mux_rleak * float(capacitance_f)
     scale = float(capacitance_f) / float(d33_c_per_n)
     force = np.zeros_like(active_centered, dtype=np.float64)
     accumulator = 0.0
@@ -281,7 +300,12 @@ def calculate_pzt_force_from_voltage(
         dt = float(times[index] - times[index - 1])
         if dt <= 0.0:
             raise ValueError("PZT force timestamps must be strictly increasing")
-        alpha = float(np.exp(-dt / tau))
+        leak_dt = dt if leak_intervals is None else float(leak_intervals[index - 1])
+        leak_dt = min(max(leak_dt, 0.0), dt)
+        decay_exponent = leak_dt / tau
+        if tau_off is not None:
+            decay_exponent += max(dt - leak_dt, 0.0) / tau_off
+        alpha = float(np.exp(-decay_exponent))
         current_v = float(active_centered[index])
         accumulator += scale * (current_v - (alpha * previous_v))
 
@@ -308,3 +332,31 @@ def _polarity(value: float, threshold: float) -> int:
     if value < -threshold:
         return -1
     return 0
+
+
+def _normalize_leak_intervals(leak_dt_s, sample_count: int) -> np.ndarray | None:
+    """Return per-interval MUX leak exposure or ``None`` for continuous leak."""
+    if leak_dt_s is None:
+        return None
+    interval_count = max(0, int(sample_count) - 1)
+    if interval_count == 0:
+        return np.empty(0, dtype=np.float64)
+
+    values = np.asarray(leak_dt_s, dtype=np.float64).reshape(-1)
+    if values.size == 1:
+        return np.full(interval_count, float(values[0]), dtype=np.float64)
+    if values.size == interval_count:
+        return values.astype(np.float64, copy=True)
+    if values.size == sample_count:
+        return values[1:].astype(np.float64, copy=True)
+    raise ValueError("PZT force leak_dt_s must be scalar, match timestamps, or match timestamp intervals")
+
+
+def _optional_positive_float(value) -> float | None:
+    try:
+        if value in (None, ""):
+            return None
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0.0 else None

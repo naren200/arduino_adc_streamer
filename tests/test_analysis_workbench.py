@@ -18,6 +18,7 @@ from data_processing.analysis_workbench import (
     load_exported_csv_snapshot,
     prepare_analysis_data,
     reorder_circular_capture,
+    resolve_analysis_pzt_mux_leak_dt_s,
 )
 from data_processing.pzt_force_calculation import (
     calculate_pzt_force_from_settings,
@@ -157,6 +158,21 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         expected_second = (1e-9 / 600e-12) * (centered[1] - (np.exp(-0.001 / 1.0) * centered[0]))
         np.testing.assert_allclose(force, [0.0, expected_second])
 
+    def test_calculate_pzt_force_uses_mux_leak_exposure_when_supplied(self):
+        force = calculate_pzt_force_from_voltage(
+            np.asarray([1.0, 1.5], dtype=np.float64),
+            np.asarray([0.0, 0.320], dtype=np.float64),
+            capacitance_f=1e-9,
+            rleak_ohm=1e9,
+            d33_c_per_n=600e-12,
+            noise_threshold_v=0.1,
+            leak_dt_s=0.030,
+        )
+
+        centered = np.asarray([-0.25, 0.25], dtype=np.float64)
+        expected_second = (1e-9 / 600e-12) * (centered[1] - (np.exp(-0.030 / 1.0) * centered[0]))
+        np.testing.assert_allclose(force, [0.0, expected_second])
+
     def test_calculated_pzt_force_zeroes_after_bipolar_event(self):
         force = calculate_pzt_force_from_voltage(
             np.asarray([0.0, 1.0, -1.0, 0.0], dtype=np.float64),
@@ -265,11 +281,88 @@ class AnalysisWorkbenchTests(unittest.TestCase):
                 "rleak_ohm": 1e9,
                 "d33_pc_per_n": 600.0,
                 "noise_threshold_v": 0.01,
+                "mux_timing_mode": "manual",
+                "mux_connected_time_s": 0.001,
             },
         )
 
         self.assertEqual([trace.label for trace in prepared.force_traces], ["Calculated Force - PZT6_C [N]"])
         self.assertEqual(len(prepared.force_traces[0].y), 3)
+
+    def test_prepare_analysis_data_skips_pzt_force_when_auto_mux_timing_unavailable(self):
+        snapshot = AnalysisSourceSnapshot(
+            data=np.asarray([[1000], [1200]], dtype=np.float32),
+            timestamps_s=np.asarray([0.0, 0.01], dtype=np.float64),
+            channel_labels=["PZT6_C"],
+            metadata={"configuration": {"channels": [1], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=200.0,
+        )
+
+        prepared = prepare_analysis_data(
+            snapshot,
+            visible_labels=["PZT6_C"],
+            vref_voltage=3.3,
+            pzt_force_settings={
+                "enabled": True,
+                "capacitance_value": 1.0,
+                "capacitance_unit": "nF",
+                "rleak_ohm": 1e9,
+                "d33_pc_per_n": 600.0,
+                "noise_threshold_v": 0.01,
+                "mux_timing_mode": "auto",
+            },
+        )
+
+        self.assertEqual(prepared.force_traces, [])
+        self.assertIn("PZT force skipped", prepared.status)
+
+    def test_resolve_analysis_pzt_mux_leak_dt_prefers_metadata_timing(self):
+        snapshot = AnalysisSourceSnapshot(
+            data=np.asarray([[1], [2]], dtype=np.float32),
+            timestamps_s=np.asarray([0.0, 0.1], dtype=np.float64),
+            channel_labels=["PZT6_C"],
+            metadata={
+                "configuration": {"channels": [1], "repeat_count": 1},
+                "timing": {"arduino_sample_time_us": 30000.0},
+            },
+            source_id="unit",
+            sample_rate_hz=10.0,
+        )
+
+        leak_dt, status = resolve_analysis_pzt_mux_leak_dt_s(snapshot, {"enabled": True, "mux_timing_mode": "auto"})
+
+        self.assertAlmostEqual(leak_dt, 0.030)
+        self.assertIn("arduino_sample_time_us", status)
+
+    def test_resolve_analysis_pzt_mux_leak_dt_reads_block_timing_sidecar(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            csv_path = temp_path / "capture.csv"
+            sidecar_path = temp_path / "timing.csv"
+            csv_path.write_text("", encoding="utf-8")
+            sidecar_path.write_text(
+                "sample_count,samples_per_sweep,sweeps_in_block,avg_dt_us,block_start_us,block_end_us,mcu_gap_us\n"
+                "10,5,2,30000,0,100000,200000\n"
+                "10,5,2,31000,100000,200000,200000\n",
+                encoding="utf-8",
+            )
+            snapshot = AnalysisSourceSnapshot(
+                data=np.asarray([[1], [2]], dtype=np.float32),
+                timestamps_s=np.asarray([0.0, 0.1], dtype=np.float64),
+                channel_labels=["PZT6_C"],
+                metadata={
+                    "configuration": {"channels": [1], "repeat_count": 1},
+                    "block_timing_csv": str(sidecar_path),
+                },
+                source_id=f"csv:{csv_path.resolve()}|json:{(temp_path / 'capture_metadata.json').resolve()}",
+                sample_rate_hz=10.0,
+            )
+
+            leak_dt, status = resolve_analysis_pzt_mux_leak_dt_s(snapshot, {"enabled": True, "mux_timing_mode": "auto"})
+
+        self.assertAlmostEqual(leak_dt, 0.0305)
+        self.assertIn("block_timing_csv", status)
 
     def test_pzt_capacitance_units_convert_to_farads(self):
         self.assertAlmostEqual(pzt_capacitance_to_farads(10.0, "pF"), 10e-12)
@@ -280,6 +373,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"], 150.0)
         self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"], "pF")
         self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"], 1_000_000.0)
+        self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["mux_timing_mode"], "auto")
         force = calculate_pzt_force_from_settings(
             np.asarray([1.0, 1.2], dtype=np.float64),
             np.asarray([0.0, 0.001], dtype=np.float64),
