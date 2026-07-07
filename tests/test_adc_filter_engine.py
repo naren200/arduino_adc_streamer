@@ -61,6 +61,85 @@ class ADCFilterEngineTests(unittest.TestCase):
         self.assertEqual(set(rates.keys()), {0, 1, 2, 3, 4})
         self.assertAlmostEqual(rates[0], sweep_rate_hz, delta=5.0)
 
+    def test_channel_grouping_merges_reused_pins(self):
+        # Documents the pre-fix defect: array-PZT sweeps reuse physical pins for
+        # different sensors, so grouping by channel number collapses distinct signals.
+        engine = ADCFilterEngine()
+        index_map = engine.build_channel_index_map([5, 6, 5], repeat_count=1)
+
+        self.assertEqual(set(index_map.keys()), {5, 6})
+        np.testing.assert_array_equal(index_map[5], np.array([0, 2]))
+
+    def test_estimate_channel_sample_rates_with_stream_index_map_is_uniform(self):
+        engine = ADCFilterEngine()
+        total_fs_hz = 1500.0
+        samples_per_sweep = 3
+        sweep_rate_hz = total_fs_hz / samples_per_sweep
+        sweep_timestamps = np.arange(20, dtype=np.float64) / sweep_rate_hz
+
+        # Three named signals, one column each: every signal is sampled once per sweep,
+        # so all three must report the same (sweep) rate regardless of their column.
+        index_map = {
+            "PZT3_B": np.array([0], dtype=np.int32),
+            "PZT6_B": np.array([1], dtype=np.int32),
+            "PZT3_T": np.array([2], dtype=np.int32),
+        }
+        rates = engine.estimate_channel_sample_rates(
+            total_fs_hz,
+            channels=[],
+            repeat_count=1,
+            sweep_timestamps_sec=sweep_timestamps,
+            index_map=index_map,
+        )
+
+        self.assertEqual(set(rates.keys()), {"PZT3_B", "PZT6_B", "PZT3_T"})
+        for rate in rates.values():
+            self.assertAlmostEqual(rate, sweep_rate_hz, delta=5.0)
+
+    def test_estimate_channel_sample_rates_stream_map_fallback_without_timestamps(self):
+        engine = ADCFilterEngine()
+        index_map = {
+            "PZT3_B": np.array([0], dtype=np.int32),
+            "PZT6_B": np.array([1], dtype=np.int32),
+            "PZT3_T": np.array([2], dtype=np.int32),
+        }
+        rates = engine.estimate_channel_sample_rates(
+            total_fs_hz=1500.0,
+            channels=[],
+            repeat_count=1,
+            sweep_timestamps_sec=None,
+            index_map=index_map,
+        )
+
+        # Fallback splits total rate across the three streams evenly (1500 / 3).
+        self.assertEqual(set(rates.keys()), {"PZT3_B", "PZT6_B", "PZT3_T"})
+        for rate in rates.values():
+            self.assertAlmostEqual(rate, 500.0, delta=1e-6)
+
+    @unittest.skipUnless(SCIPY_FILTERS_AVAILABLE, "SciPy not available")
+    def test_build_runtime_plan_uses_supplied_index_map(self):
+        engine = ADCFilterEngine()
+        settings = build_default_filter_settings()
+        settings["main_type"] = "none"
+        settings["notches"] = []
+
+        index_map = {
+            "A": np.array([0], dtype=np.int32),
+            "B": np.array([2], dtype=np.int32),
+        }
+        plan = engine.build_runtime_plan(
+            settings,
+            total_fs_hz=1500.0,
+            channels=[],
+            repeat_count=1,
+            sweep_timestamps_sec=np.arange(10, dtype=np.float64) / 500.0,
+            index_map=index_map,
+        )
+
+        self.assertEqual(set(plan.keys()), {"A", "B"})
+        np.testing.assert_array_equal(plan["A"].indices, np.array([0]))
+        np.testing.assert_array_equal(plan["B"].indices, np.array([2]))
+
     @unittest.skipUnless(SCIPY_FILTERS_AVAILABLE, "SciPy not available")
     def test_filter_signal_preserves_constant_level_without_zero_drop(self):
         engine = ADCFilterEngine()

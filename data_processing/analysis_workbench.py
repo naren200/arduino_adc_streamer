@@ -474,6 +474,25 @@ def build_force_traces(snapshot: AnalysisSourceSnapshot, axis_mode: str) -> list
     return traces
 
 
+def _build_offline_stream_index_map(config: dict, samples_per_sweep: int):
+    """Group exported columns into filter streams keyed by their signal name.
+
+    Returns an ordered ``{name: np.ndarray[column indices]}`` map when metadata carries
+    ``exported_signal_columns`` matching the data width, otherwise None so the engine
+    falls back to grouping by physical channel number.
+    """
+    names = list(config.get("exported_signal_columns", []) or []) if isinstance(config, dict) else []
+    if len(names) != int(samples_per_sweep):
+        return None
+
+    stream_map: dict = {}
+    for col_idx, name in enumerate(names):
+        stream_map.setdefault(str(name), []).append(col_idx)
+    if not stream_map:
+        return None
+    return {name: np.asarray(cols, dtype=np.int32) for name, cols in stream_map.items()}
+
+
 def filter_offline_data(snapshot: AnalysisSourceSnapshot, filter_settings: dict) -> np.ndarray:
     settings = {**filter_settings, "notches": [dict(n) for n in filter_settings.get("notches", [])]}
     total_fs_hz = float(snapshot.sample_rate_hz or _metadata_sample_rate_hz(snapshot.metadata, snapshot.data, snapshot.timestamps_s))
@@ -487,12 +506,19 @@ def filter_offline_data(snapshot: AnalysisSourceSnapshot, filter_settings: dict)
         channels = list(range(snapshot.samples_per_sweep))
         repeat = 1
 
+    # Each exported column is one signal. Group columns by their exported name so that
+    # array-PZT signals that reuse a physical channel number (e.g. PZT3_B vs PZT6_B)
+    # stay independent, while genuine non-array oversampling (repeated identical names)
+    # is still grouped into one stream.
+    index_map = _build_offline_stream_index_map(config, snapshot.samples_per_sweep)
+
     engine = ADCFilterEngine()
     channel_rates = engine.estimate_channel_sample_rates(
         total_fs_hz,
         channels,
         repeat,
         sweep_timestamps_sec=snapshot.timestamps_s,
+        index_map=index_map,
     )
     runtime = engine.build_runtime_plan(
         settings,
@@ -501,6 +527,7 @@ def filter_offline_data(snapshot: AnalysisSourceSnapshot, filter_settings: dict)
         repeat,
         sweep_timestamps_sec=snapshot.timestamps_s,
         channel_fs_by_channel=channel_rates,
+        index_map=index_map,
     )
     engine.reset_runtime_states(runtime)
     return engine.filter_block(runtime, np.asarray(snapshot.data, dtype=np.float32).copy())

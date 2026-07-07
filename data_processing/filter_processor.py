@@ -114,8 +114,8 @@ class FilterProcessorMixin:
         if supported_mode and total_fs_hz > 0:
             try:
                 per_channel_rates = {
-                    str(int(channel)): float(fs_hz)
-                    for channel, fs_hz in self._estimate_filter_channel_rates(
+                    str(stream_id): float(fs_hz)
+                    for stream_id, fs_hz in self._estimate_filter_channel_rates(
                         total_fs_hz,
                         sweep_timestamps_sec=sweep_timestamps_sec,
                     ).items()
@@ -153,9 +153,11 @@ class FilterProcessorMixin:
 
         channels = list(self.config.get('channels', []))
         repeat_count = max(1, int(self.config.get('repeat', 1)))
+        index_map = self._build_filter_stream_map()
         channel_rates = self._estimate_filter_channel_rates(
             total_fs_hz,
             sweep_timestamps_sec=timestamps_array,
+            index_map=index_map,
         )
         runtime = self.adc_filter_engine.build_runtime_plan(
             self.filter_settings,
@@ -164,6 +166,7 @@ class FilterProcessorMixin:
             repeat_count,
             sweep_timestamps_sec=timestamps_array,
             channel_fs_by_channel=channel_rates,
+            index_map=index_map,
         )
         self.adc_filter_engine.reset_runtime_states(runtime)
         return self.adc_filter_engine.filter_block(runtime, dataset.astype(np.float32, copy=True))
@@ -352,24 +355,66 @@ class FilterProcessorMixin:
                 self.sweep_timestamps_buffer[:write_pos],
             ])
 
-    def _estimate_filter_channel_rates(self, total_fs_hz: float, sweep_timestamps_sec=None):
+    def _build_filter_stream_map(self):
+        """Return {signal_name: sweep positions} for array-PZT modes, else None.
+
+        In array-PZT modes two MUXes reuse the same physical channel numbers for
+        different sensors, so grouping filter streams by channel number merges distinct
+        signals. Display specs already map each named signal (e.g. ``PZT3_B``) to its
+        exact sweep column positions, which is the correct per-signal stream identity.
+        Non-array modes return None so the engine keeps its channel-number grouping.
+        """
+        is_array = False
+        try:
+            is_array = bool(self.is_array_pzt1_mode()) or bool(self.is_array_pzt_rs_mode())
+        except Exception:
+            is_array = False
+        if not is_array:
+            return None
+
+        specs = list(self.get_display_channel_specs())
+        if hasattr(self, 'get_rosette_display_channel_specs'):
+            try:
+                specs.extend(self.get_rosette_display_channel_specs())
+            except Exception:
+                pass
+
+        stream_map = {}
+        for spec in specs:
+            sample_indices = spec.get('sample_indices') or []
+            if not sample_indices:
+                continue
+            label = str(spec.get('label', ''))
+            if not label or label in stream_map:
+                continue
+            stream_map[label] = np.asarray(sample_indices, dtype=np.int32)
+
+        return stream_map or None
+
+    def _estimate_filter_channel_rates(self, total_fs_hz: float, sweep_timestamps_sec=None, index_map=None):
         channels = list(self.config.get('channels', []))
         repeat_count = max(1, int(self.config.get('repeat', 1)))
         if sweep_timestamps_sec is None:
             sweep_timestamps_sec = self._get_ordered_filter_sweep_timestamps()
+        if index_map is None:
+            index_map = self._build_filter_stream_map()
         return self.adc_filter_engine.estimate_channel_sample_rates(
             total_fs_hz,
             channels,
             repeat_count,
             sweep_timestamps_sec=sweep_timestamps_sec,
+            index_map=index_map,
         )
 
     def _ensure_filter_runtime(self, total_fs_hz: float, sweep_timestamps_sec=None):
         channels = self.config.get('channels', [])
         repeat_count = max(1, int(self.config.get('repeat', 1)))
-        channel_rates = self._estimate_filter_channel_rates(total_fs_hz, sweep_timestamps_sec=sweep_timestamps_sec)
+        index_map = self._build_filter_stream_map()
+        channel_rates = self._estimate_filter_channel_rates(
+            total_fs_hz, sweep_timestamps_sec=sweep_timestamps_sec, index_map=index_map,
+        )
         rates_signature = tuple(
-            sorted((int(channel), int(round(float(fs_hz) * 1000.0))) for channel, fs_hz in channel_rates.items())
+            sorted((str(stream_id), int(round(float(fs_hz) * 1000.0))) for stream_id, fs_hz in channel_rates.items())
         )
         signature = (tuple(channels), repeat_count, rates_signature)
 
@@ -387,6 +432,7 @@ class FilterProcessorMixin:
             repeat_count,
             sweep_timestamps_sec=sweep_timestamps_sec,
             channel_fs_by_channel=channel_rates,
+            index_map=index_map,
         )
         self._filter_total_fs_hz = float(total_fs_hz)
         self._filter_channels_signature = signature
@@ -427,8 +473,8 @@ class FilterProcessorMixin:
                     self.reset_filter_states()
                     if hasattr(self, 'log_status'):
                         channel_rates = ", ".join(
-                            f"Ch {channel}: {float(fs_hz):.2f} Hz"
-                            for channel, fs_hz in self._estimate_filter_channel_rates(
+                            f"{stream_id if isinstance(stream_id, str) else f'Ch {stream_id}'}: {float(fs_hz):.2f} Hz"
+                            for stream_id, fs_hz in self._estimate_filter_channel_rates(
                                 total_fs_hz,
                                 sweep_timestamps_sec=sweep_timestamps_sec,
                             ).items()
@@ -469,7 +515,7 @@ class FilterProcessorMixin:
         )
         fs_signature = tuple(
             sorted(
-                (int(channel), int(round(float(fs_hz) * 1000.0)))
+                (str(channel), int(round(float(fs_hz) * 1000.0)))
                 for channel, fs_hz in (channel_fs_by_channel or {}).items()
             )
         )
@@ -518,9 +564,11 @@ class FilterProcessorMixin:
 
         channels = list(self.config.get('channels', []))
         repeat_count = max(1, int(self.config.get('repeat', 1)))
+        index_map = self._build_filter_stream_map()
         channel_fs_by_channel = self._estimate_filter_channel_rates(
             total_fs_hz,
             sweep_timestamps_sec=sweep_timestamps_sec,
+            index_map=index_map,
         )
         settings = {
             **self.filter_settings,
@@ -532,6 +580,7 @@ class FilterProcessorMixin:
             'total_fs_hz': float(total_fs_hz),
             'channels': channels,
             'repeat_count': repeat_count,
+            'index_map': index_map,
             'signature': self._build_live_filter_signature(
                 settings,
                 total_fs_hz,
@@ -540,7 +589,7 @@ class FilterProcessorMixin:
                 channel_fs_by_channel=channel_fs_by_channel,
             ),
             'channel_fs_by_channel': {
-                int(channel): float(fs_hz) for channel, fs_hz in channel_fs_by_channel.items()
+                channel: float(fs_hz) for channel, fs_hz in channel_fs_by_channel.items()
             },
             'generation': int(self._live_filter_generation),
             'snapshot_key': snapshot_key,
@@ -569,7 +618,8 @@ class FilterProcessorMixin:
 
         channels = list(self.config.get('channels', []))
         repeat_count = max(1, int(self.config.get('repeat', 1)))
-        channel_fs_by_channel = self._estimate_filter_channel_rates(total_fs_hz)
+        index_map = self._build_filter_stream_map()
+        channel_fs_by_channel = self._estimate_filter_channel_rates(total_fs_hz, index_map=index_map)
         settings = {
             **self.filter_settings,
             'notches': [dict(notch) for notch in self.filter_settings.get('notches', [])],
@@ -580,6 +630,7 @@ class FilterProcessorMixin:
             'total_fs_hz': float(total_fs_hz),
             'channels': channels,
             'repeat_count': repeat_count,
+            'index_map': index_map,
             'signature': self._build_live_filter_signature(
                 settings,
                 total_fs_hz,
@@ -588,7 +639,7 @@ class FilterProcessorMixin:
                 channel_fs_by_channel=channel_fs_by_channel,
             ),
             'channel_fs_by_channel': {
-                int(channel): float(fs_hz) for channel, fs_hz in channel_fs_by_channel.items()
+                channel: float(fs_hz) for channel, fs_hz in channel_fs_by_channel.items()
             },
             'generation': int(self._live_filter_generation),
             'block_data': block_data.astype(np.float32, copy=True),

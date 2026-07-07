@@ -193,6 +193,38 @@ class ArrayExportHarness(ExportHarness):
         return 10
 
 
+class ArrayFilterMetadataTests(unittest.TestCase):
+    def test_per_channel_rates_keyed_by_signal_name_and_uniform(self):
+        with workspace_tempdir("array_filter_meta") as tmpdir:
+            harness = ArrayExportHarness(tmpdir)
+            harness.filtering_enabled = True
+
+            metadata = harness.build_filter_metadata()
+            rates = metadata["per_channel_sample_rates_hz"]
+
+            # One entry per named signal (not per reused physical channel), all equal.
+            self.assertEqual(
+                set(rates.keys()),
+                {"PZT3_B", "PZT3_L", "PZT3_C", "PZT3_R", "PZT3_T"},
+            )
+            values = list(rates.values())
+            self.assertTrue(all(abs(v - values[0]) < 1e-6 for v in values))
+
+    def test_stream_map_keeps_reused_pins_separate(self):
+        with workspace_tempdir("array_filter_streams") as tmpdir:
+            harness = ArrayExportHarness(tmpdir)
+
+            stream_map = harness._build_filter_stream_map()
+
+            self.assertEqual(
+                set(stream_map.keys()),
+                {"PZT3_B", "PZT3_L", "PZT3_C", "PZT3_R", "PZT3_T"},
+            )
+            # Each signal maps to its own distinct sweep column.
+            all_positions = [int(v[0]) for v in stream_map.values()]
+            self.assertEqual(sorted(all_positions), [0, 2, 4, 6, 8])
+
+
 @unittest.skipUnless(SCIPY_FILTERS_AVAILABLE, "SciPy not available")
 class DataExporterTests(unittest.TestCase):
     def test_export_prefers_fullest_available_source_over_short_archive_cache(self):

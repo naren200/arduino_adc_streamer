@@ -12,6 +12,7 @@ from constants.force import X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
 from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS
 from data_processing.analysis_workbench import (
     AnalysisSourceSnapshot,
+    _build_offline_stream_index_map,
     build_in_memory_snapshot,
     build_overlay_traces,
     estimate_analysis_pzt_force_calibration,
@@ -26,6 +27,33 @@ from data_processing.pzt_force_calculation import (
     estimate_pzt_quiet_baseline,
     pzt_capacitance_to_farads,
 )
+
+
+class OfflineStreamIndexMapTests(unittest.TestCase):
+    def test_distinct_signal_names_stay_independent(self):
+        # Array-PZT exports reuse physical channel numbers, so column identity must come
+        # from the exported signal name, not the channel list.
+        config = {"exported_signal_columns": ["PZT3_B", "PZT6_B", "PZT3_T"]}
+        index_map = _build_offline_stream_index_map(config, samples_per_sweep=3)
+
+        self.assertEqual(set(index_map.keys()), {"PZT3_B", "PZT6_B", "PZT3_T"})
+        np.testing.assert_array_equal(index_map["PZT3_B"], np.array([0]))
+        np.testing.assert_array_equal(index_map["PZT6_B"], np.array([1]))
+        np.testing.assert_array_equal(index_map["PZT3_T"], np.array([2]))
+
+    def test_repeated_names_group_together(self):
+        # Non-array oversampling produces repeated column names that should share a stream.
+        config = {"exported_signal_columns": ["CH5", "CH5", "CH6"]}
+        index_map = _build_offline_stream_index_map(config, samples_per_sweep=3)
+
+        np.testing.assert_array_equal(index_map["CH5"], np.array([0, 1]))
+        np.testing.assert_array_equal(index_map["CH6"], np.array([2]))
+
+    def test_returns_none_when_names_missing_or_mismatched(self):
+        self.assertIsNone(_build_offline_stream_index_map({}, samples_per_sweep=3))
+        self.assertIsNone(
+            _build_offline_stream_index_map({"exported_signal_columns": ["A", "B"]}, samples_per_sweep=3)
+        )
 
 
 class AnalysisWorkbenchTests(unittest.TestCase):

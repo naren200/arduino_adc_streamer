@@ -300,9 +300,11 @@ class DataExporterMixin:
                 if filter_runtime is None:
                     channels = list(self.config.get('channels', []))
                     repeat_count = max(1, int(self.config.get('repeat', 1)))
+                    filter_index_map = self._build_filter_stream_map()
                     channel_rates = self._estimate_filter_channel_rates(
                         total_fs_hz,
                         sweep_timestamps_sec=timestamp_array,
+                        index_map=filter_index_map,
                     )
                     filter_runtime = self.adc_filter_engine.build_runtime_plan(
                         self._copy_filter_settings_snapshot(),
@@ -311,6 +313,7 @@ class DataExporterMixin:
                         repeat_count,
                         sweep_timestamps_sec=timestamp_array,
                         channel_fs_by_channel=channel_rates,
+                        index_map=filter_index_map,
                     )
                     self.adc_filter_engine.reset_runtime_states(filter_runtime)
 

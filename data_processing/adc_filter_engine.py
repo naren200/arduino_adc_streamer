@@ -85,16 +85,21 @@ class ADCFilterEngine:
         repeat_count: int,
         sweep_timestamps_sec: np.ndarray | None = None,
         previous_last_sample_times: Dict[int, float] | None = None,
-    ) -> Dict[int, float]:
-        index_map = self.build_channel_index_map(channels, repeat_count)
+        index_map: Dict | None = None,
+    ) -> Dict:
+        if index_map is None:
+            index_map = self.build_channel_index_map(channels, repeat_count)
         if not index_map:
             return {}
 
-        sequence_len = max(1, len(channels))
-        counts = {channel: channels.count(channel) for channel in index_map}
+        # Positions per sweep = total sampled slots across all streams. For the default
+        # channel map this equals len(channels) * repeat_count; for an externally supplied
+        # stream map (array-PZT signal columns) it is the sum of each stream's slot count.
+        sequence_len = max(1, sum(len(np.asarray(indices).reshape(-1)) for indices in index_map.values()))
+        counts = {key: len(np.asarray(indices).reshape(-1)) for key, indices in index_map.items()}
         fallback_rates = {
-            channel: float(total_fs_hz) * (counts[channel] / sequence_len)
-            for channel in index_map
+            key: float(total_fs_hz) * (counts[key] / sequence_len)
+            for key in index_map
         }
 
         if sweep_timestamps_sec is None or len(sweep_timestamps_sec) <= 0 or total_fs_hz <= 0:
@@ -206,9 +211,11 @@ class ADCFilterEngine:
         repeat_count: int,
         sweep_timestamps_sec: np.ndarray | None = None,
         previous_last_sample_times: Dict[int, float] | None = None,
-        channel_fs_by_channel: Dict[int, float] | None = None,
+        channel_fs_by_channel: Dict | None = None,
+        index_map: Dict | None = None,
     ) -> Dict[int, ChannelFilterRuntime]:
-        index_map = self.build_channel_index_map(channels, repeat_count)
+        if index_map is None:
+            index_map = self.build_channel_index_map(channels, repeat_count)
         if channel_fs_by_channel is None:
             channel_fs_by_channel = self.estimate_channel_sample_rates(
                 total_fs_hz,
@@ -216,6 +223,7 @@ class ADCFilterEngine:
                 repeat_count,
                 sweep_timestamps_sec=sweep_timestamps_sec,
                 previous_last_sample_times=previous_last_sample_times,
+                index_map=index_map,
             )
 
         plan: Dict[int, ChannelFilterRuntime] = {}

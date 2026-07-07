@@ -541,11 +541,15 @@ class DisplayPanelsMixin:
         group = QGroupBox("Sampling Rate")
         layout = QHBoxLayout()
 
-        # Keep rate labels for internal timing updates but hide them from the GUI
+        # Per-channel sampling rate (one figure for all channels)
+        layout.addWidget(QLabel("Per-Channel Rate:"))
         self.per_channel_rate_label = QLabel("- Hz")
         self.per_channel_rate_label.setStyleSheet("QLabel { font-weight: bold; color: #2196F3; }")
-        self.per_channel_rate_label.setVisible(False)
+        layout.addWidget(self.per_channel_rate_label)
 
+        layout.addWidget(QLabel("  |  "))
+
+        # Keep total-rate label for internal timing updates but hide it from the GUI
         self.total_rate_label = QLabel("- Hz")
         self.total_rate_label.setStyleSheet("QLabel { font-weight: bold; color: #FF9800; }")
         self.total_rate_label.setVisible(False)
@@ -555,6 +559,14 @@ class DisplayPanelsMixin:
         self.between_samples_label = QLabel("- µs")
         self.between_samples_label.setStyleSheet("QLabel { font-weight: bold; }")
         layout.addWidget(self.between_samples_label)
+
+        layout.addWidget(QLabel("  |  "))
+
+        # Total per-sweep overhead (block gap + mux/settle/transfer), measured
+        layout.addWidget(QLabel("Total Overhead:"))
+        self.sweep_overhead_label = QLabel("- ms")
+        self.sweep_overhead_label.setStyleSheet("QLabel { font-weight: bold; color: #E91E63; }")
+        layout.addWidget(self.sweep_overhead_label)
 
         layout.addWidget(QLabel("  |  "))
 

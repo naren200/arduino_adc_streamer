@@ -68,6 +68,8 @@ class TimingDisplayMixin:
     def _build_empty_timing_data(self):
         return {
             'per_channel_rate_hz': None,
+            'actual_per_channel_rate_hz': None,
+            'sweep_overhead_us': None,
             'total_rate_hz': None,
             'between_samples_us': None,
             'arduino_sample_time_us': None,
@@ -115,9 +117,28 @@ class TimingDisplayMixin:
             elif timing.buffer_gap_times:
                 buffer_gap_time_ms = sum(timing.buffer_gap_times) / len(timing.buffer_gap_times)
 
+            # Actual (measured) per-channel rate and total per-sweep overhead, derived from
+            # real sweep timestamps rather than the theoretical conversion time. Each signal
+            # is sampled once per sweep, so its true rate equals the measured sweep rate; the
+            # overhead is the wall-clock sweep period minus the pure ADC conversion time,
+            # capturing block gap plus mux/settle/transfer costs the 47 µs figure omits.
+            actual_per_channel_rate_hz = 0
+            sweep_overhead_us = 0
+            elapsed_s = self._current_elapsed_since_first_sweep_seconds()
+            measured_sweeps = int(getattr(self, 'sweep_count', 0) or 0)
+            physical_samples_per_sweep = int(getattr(self, 'samples_per_sweep', 0) or 0)
+            if measured_sweeps > 1 and elapsed_s > 0:
+                actual_sweep_period_us = (elapsed_s / (measured_sweeps - 1)) * 1_000_000.0
+                if actual_sweep_period_us > 0:
+                    actual_per_channel_rate_hz = 1_000_000.0 / actual_sweep_period_us
+                    ideal_sampling_us = physical_samples_per_sweep * arduino_avg_sample_time_us
+                    sweep_overhead_us = max(0.0, actual_sweep_period_us - ideal_sampling_us)
+
             timing_data['arduino_sample_time_us'] = arduino_avg_sample_time_us
             timing_data['arduino_sample_rate_hz'] = arduino_sample_rate_hz
             timing_data['per_channel_rate_hz'] = arduino_per_channel_rate_hz
+            timing_data['actual_per_channel_rate_hz'] = actual_per_channel_rate_hz
+            timing_data['sweep_overhead_us'] = sweep_overhead_us
             timing_data['total_rate_hz'] = arduino_sample_rate_hz
             timing_data['buffer_gap_time_ms'] = buffer_gap_time_ms
 
@@ -128,13 +149,22 @@ class TimingDisplayMixin:
                     timing_data['mcu_block_gap_us'] = timing.mcu_block_gap_us[-1]
 
             if arduino_avg_sample_time_us > 0:
-                self.per_channel_rate_label.setText(f"{arduino_per_channel_rate_hz:.2f} Hz")
                 self.total_rate_label.setText(f"{arduino_sample_rate_hz:.2f} Hz")
                 self.between_samples_label.setText(f"{arduino_avg_sample_time_us:.2f} µs")
             else:
-                self.per_channel_rate_label.setText("- Hz")
                 self.total_rate_label.setText("- Hz")
                 self.between_samples_label.setText("- µs")
+
+            if actual_per_channel_rate_hz > 0:
+                self.per_channel_rate_label.setText(f"{actual_per_channel_rate_hz:.2f} Hz")
+            else:
+                self.per_channel_rate_label.setText("- Hz")
+
+            if hasattr(self, 'sweep_overhead_label'):
+                if sweep_overhead_us > 0:
+                    self.sweep_overhead_label.setText(f"{(sweep_overhead_us / 1000.0):.2f} ms")
+                else:
+                    self.sweep_overhead_label.setText("- ms")
 
             if buffer_gap_time_ms > 0:
                 self.block_gap_label.setText(f"{buffer_gap_time_ms:.2f} ms")

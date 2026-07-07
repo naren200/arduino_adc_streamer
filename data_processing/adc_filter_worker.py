@@ -67,6 +67,7 @@ class ADCFilterWorkerThread(QThread):
                         payload["repeat_count"],
                         sweep_timestamps_sec=payload.get("sweep_timestamps_sec"),
                         channel_fs_by_channel=channel_rates,
+                        index_map=payload.get("index_map"),
                     )
                     self._last_signature = signature
 
