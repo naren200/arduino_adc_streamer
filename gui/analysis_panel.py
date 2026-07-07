@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -47,6 +48,10 @@ from data_processing.analysis_workbench import (
     prepare_analysis_data,
 )
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
+
+
+ANALYSIS_CHANNEL_CHECK_COLUMNS = 2
+ANALYSIS_FORCE_CHECK_COLUMNS = 1
 
 
 class AnalysisPanelMixin:
@@ -156,65 +161,78 @@ class AnalysisPanelMixin:
         self.analysis_source_combo = QComboBox()
         self.analysis_source_combo.addItems(["In-memory cache", "CSV plus JSON"])
         self.analysis_source_combo.currentIndexChanged.connect(self.on_analysis_source_changed)
-        controls_layout.addWidget(self.analysis_source_combo, 0, 1)
+        self.analysis_source_combo.setMaximumWidth(190)
+        controls_layout.addWidget(self.analysis_source_combo, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
 
         self.analysis_load_memory_btn = QPushButton("Load Latest")
         self.analysis_load_memory_btn.clicked.connect(self.load_analysis_source)
-        controls_layout.addWidget(self.analysis_load_memory_btn, 0, 2)
+        self.analysis_load_memory_btn.setMaximumWidth(170)
+        controls_layout.addWidget(self.analysis_load_memory_btn, 0, 2, alignment=Qt.AlignmentFlag.AlignLeft)
 
         controls_layout.addWidget(QLabel("X Axis:"), 0, 3)
         self.analysis_axis_combo = QComboBox()
         self.analysis_axis_combo.addItems(["Time ms", "Sample index"])
         self.analysis_axis_combo.currentIndexChanged.connect(self.on_analysis_settings_changed)
-        controls_layout.addWidget(self.analysis_axis_combo, 0, 4)
+        self.analysis_axis_combo.setMaximumWidth(180)
+        controls_layout.addWidget(self.analysis_axis_combo, 0, 4, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        controls_layout.addWidget(QLabel("Zoom:"), 0, 5)
+        controls_layout.addWidget(QLabel("Zoom:"), 1, 0)
         self.analysis_zoom_combo = QComboBox()
         self.analysis_zoom_combo.addItems(["X only", "Y only", "X and Y"])
         self.analysis_zoom_combo.currentIndexChanged.connect(self.on_analysis_zoom_changed)
-        controls_layout.addWidget(self.analysis_zoom_combo, 0, 6)
-
-        self.analysis_csv_path_edit = QLineEdit()
-        self.analysis_csv_path_edit.setPlaceholderText("CSV file")
-        controls_layout.addWidget(self.analysis_csv_path_edit, 1, 0, 1, 3)
-        self.analysis_browse_csv_btn = QPushButton("Browse CSV")
-        self.analysis_browse_csv_btn.clicked.connect(self.on_analysis_browse_csv)
-        controls_layout.addWidget(self.analysis_browse_csv_btn, 1, 3)
-
-        self.analysis_metadata_path_edit = QLineEdit()
-        self.analysis_metadata_path_edit.setPlaceholderText("Metadata JSON file")
-        controls_layout.addWidget(self.analysis_metadata_path_edit, 1, 4)
-        self.analysis_browse_metadata_btn = QPushButton("Browse JSON")
-        self.analysis_browse_metadata_btn.clicked.connect(self.on_analysis_browse_metadata)
-        controls_layout.addWidget(self.analysis_browse_metadata_btn, 1, 5)
-        self.analysis_load_file_btn = QPushButton("Load CSV + JSON")
-        self.analysis_load_file_btn.setToolTip("Reload the selected CSV and metadata JSON files")
-        self.analysis_load_file_btn.clicked.connect(self.load_analysis_source)
-        controls_layout.addWidget(self.analysis_load_file_btn, 1, 6)
-
-        self.analysis_filter_check = QCheckBox("Spectrum filter")
-        self.analysis_filter_check.stateChanged.connect(self.on_analysis_settings_changed)
-        controls_layout.addWidget(self.analysis_filter_check, 2, 0)
-        self.analysis_shear_check = QCheckBox("Shear")
-        self.analysis_shear_check.stateChanged.connect(self.on_analysis_settings_changed)
-        controls_layout.addWidget(self.analysis_shear_check, 2, 1)
-        self.analysis_normal_check = QCheckBox("Normal pressure")
-        self.analysis_normal_check.stateChanged.connect(self.on_analysis_settings_changed)
-        controls_layout.addWidget(self.analysis_normal_check, 2, 2)
-        self.analysis_integration_check = QCheckBox("Integration")
-        self.analysis_integration_check.stateChanged.connect(self.on_analysis_settings_changed)
-        controls_layout.addWidget(self.analysis_integration_check, 2, 3)
-        self.analysis_pzt_force_check = QCheckBox("Calculate PZT Force")
-        self.analysis_pzt_force_check.stateChanged.connect(self.on_analysis_settings_changed)
-        controls_layout.addWidget(self.analysis_pzt_force_check, 2, 4)
-        self.analysis_marker_check = QCheckBox("Marker")
-        self.analysis_marker_check.setChecked(True)
-        self.analysis_marker_check.stateChanged.connect(self.on_analysis_marker_toggled)
-        controls_layout.addWidget(self.analysis_marker_check, 2, 5)
+        self.analysis_zoom_combo.setMaximumWidth(180)
+        controls_layout.addWidget(self.analysis_zoom_combo, 1, 1, alignment=Qt.AlignmentFlag.AlignLeft)
 
         self.analysis_reset_view_btn = QPushButton("Reset View")
         self.analysis_reset_view_btn.clicked.connect(self.reset_analysis_view)
-        controls_layout.addWidget(self.analysis_reset_view_btn, 2, 6)
+        self.analysis_reset_view_btn.setMaximumWidth(170)
+        controls_layout.addWidget(self.analysis_reset_view_btn, 1, 2, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        self.analysis_csv_path_edit = QLineEdit()
+        self.analysis_csv_path_edit.setPlaceholderText("CSV file")
+        self.analysis_csv_path_edit.setMinimumWidth(120)
+        self.analysis_csv_path_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        controls_layout.addWidget(self.analysis_csv_path_edit, 2, 0, 1, 5)
+        self.analysis_browse_csv_btn = QPushButton("Browse CSV")
+        self.analysis_browse_csv_btn.clicked.connect(self.on_analysis_browse_csv)
+        self.analysis_browse_csv_btn.setMaximumWidth(150)
+        controls_layout.addWidget(self.analysis_browse_csv_btn, 2, 5, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        self.analysis_metadata_path_edit = QLineEdit()
+        self.analysis_metadata_path_edit.setPlaceholderText("Metadata JSON file")
+        self.analysis_metadata_path_edit.setMinimumWidth(120)
+        self.analysis_metadata_path_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        controls_layout.addWidget(self.analysis_metadata_path_edit, 3, 0, 1, 5)
+        self.analysis_browse_metadata_btn = QPushButton("Browse JSON")
+        self.analysis_browse_metadata_btn.clicked.connect(self.on_analysis_browse_metadata)
+        self.analysis_browse_metadata_btn.setMaximumWidth(150)
+        controls_layout.addWidget(self.analysis_browse_metadata_btn, 3, 5, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.analysis_load_file_btn = QPushButton("Load CSV + JSON")
+        self.analysis_load_file_btn.setToolTip("Reload the selected CSV and metadata JSON files")
+        self.analysis_load_file_btn.clicked.connect(self.load_analysis_source)
+        self.analysis_load_file_btn.setMaximumWidth(170)
+        controls_layout.addWidget(self.analysis_load_file_btn, 3, 6, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        self.analysis_filter_check = QCheckBox("Spectrum filter")
+        self.analysis_filter_check.stateChanged.connect(self.on_analysis_settings_changed)
+        controls_layout.addWidget(self.analysis_filter_check, 4, 0)
+        self.analysis_shear_check = QCheckBox("Shear")
+        self.analysis_shear_check.stateChanged.connect(self.on_analysis_settings_changed)
+        controls_layout.addWidget(self.analysis_shear_check, 4, 1)
+        self.analysis_normal_check = QCheckBox("Normal pressure")
+        self.analysis_normal_check.stateChanged.connect(self.on_analysis_settings_changed)
+        controls_layout.addWidget(self.analysis_normal_check, 4, 2)
+        self.analysis_integration_check = QCheckBox("Integration")
+        self.analysis_integration_check.stateChanged.connect(self.on_analysis_settings_changed)
+        controls_layout.addWidget(self.analysis_integration_check, 4, 3)
+        self.analysis_pzt_force_check = QCheckBox("Calculate PZT Force")
+        self.analysis_pzt_force_check.stateChanged.connect(self.on_analysis_settings_changed)
+        controls_layout.addWidget(self.analysis_pzt_force_check, 4, 4)
+        self.analysis_marker_check = QCheckBox("Marker")
+        self.analysis_marker_check.setChecked(True)
+        self.analysis_marker_check.stateChanged.connect(self.on_analysis_marker_toggled)
+        controls_layout.addWidget(self.analysis_marker_check, 4, 5)
+        controls_layout.setColumnStretch(4, 1)
         display_root.addWidget(controls)
 
         pzt_force_group = QGroupBox("PZT Force Settings")
@@ -305,7 +323,7 @@ class AnalysisPanelMixin:
         image_export_layout.addWidget(self.analysis_save_force_image_check, 0, 3)
         self.analysis_save_images_btn = QPushButton("Save Selected Images")
         self.analysis_save_images_btn.clicked.connect(self.save_analysis_plot_images)
-        image_export_layout.addWidget(self.analysis_save_images_btn, 0, 4)
+        image_export_layout.addWidget(self.analysis_save_images_btn, 1, 0, 1, 4)
         display_root.addWidget(image_export_group)
         settings_root.addStretch()
 
@@ -389,6 +407,9 @@ class AnalysisPanelMixin:
 
         self.analysis_status_label = QLabel("Analysis: no source loaded")
         self.analysis_status_label.setStyleSheet("font-family: monospace;")
+        self.analysis_status_label.setMinimumWidth(0)
+        self.analysis_status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.analysis_status_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         display_root.addWidget(self.analysis_status_label)
 
         self._apply_analysis_settings_to_widgets()
@@ -508,10 +529,10 @@ class AnalysisPanelMixin:
         csv_path = Path(self.analysis_csv_path_edit.text().strip())
         metadata_path = Path(self.analysis_metadata_path_edit.text().strip())
         if not csv_path.exists():
-            self.analysis_status_label.setText("Analysis: choose a CSV file to load.")
+            self._set_analysis_status_text("Analysis: choose a CSV file to load.")
             return
         if not metadata_path.exists():
-            self.analysis_status_label.setText("Analysis: choose the matching metadata JSON file.")
+            self._set_analysis_status_text("Analysis: choose the matching metadata JSON file.")
             return
         self.analysis_source_combo.setCurrentIndex(1)
         self.load_analysis_source()
@@ -532,7 +553,7 @@ class AnalysisPanelMixin:
                 self.analysis_snapshot = build_in_memory_snapshot(self)
             self._rebuild_analysis_channel_checks()
             self.refresh_analysis_plot()
-            self.analysis_status_label.setText(
+            self._set_analysis_status_text(
                 f"Analysis loaded: {self.analysis_snapshot.sweep_count} sweeps, "
                 f"{self.analysis_snapshot.samples_per_sweep} signal columns"
             )
@@ -543,7 +564,7 @@ class AnalysisPanelMixin:
                 )
             self.save_last_analysis_settings()
         except Exception as exc:
-            self.analysis_status_label.setText(f"Analysis load failed: {exc}")
+            self._set_analysis_status_text(f"Analysis load failed: {exc}")
             if hasattr(self, "log_status"):
                 self.log_status(f"Analysis load failed: {exc}")
             QMessageBox.warning(self, "Analysis Load Failed", str(exc))
@@ -564,7 +585,11 @@ class AnalysisPanelMixin:
             check.setChecked(bool(saved_visibility.get(label, True)))
             check.stateChanged.connect(self.on_analysis_settings_changed)
             self.analysis_channel_checks[label] = check
-            self.analysis_channel_layout.addWidget(check, index // 6, index % 6)
+            self.analysis_channel_layout.addWidget(
+                check,
+                index // ANALYSIS_CHANNEL_CHECK_COLUMNS,
+                index % ANALYSIS_CHANNEL_CHECK_COLUMNS,
+            )
 
     def set_all_analysis_channels(self, checked: bool):
         for check in self.analysis_channel_checks.values():
@@ -632,10 +657,10 @@ class AnalysisPanelMixin:
             self._update_analysis_pzt_baseline_results()
             self.refresh_analysis_plot()
             self.save_last_analysis_settings()
-            self.analysis_status_label.setText(f"PZT baseline calculated for {len(estimates)} channels.")
+            self._set_analysis_status_text(f"PZT baseline calculated for {len(estimates)} channels.")
         except Exception as exc:
             QMessageBox.warning(self, "PZT Baseline Failed", str(exc))
-            self.analysis_status_label.setText(f"PZT baseline failed: {exc}")
+            self._set_analysis_status_text(f"PZT baseline failed: {exc}")
 
     def _update_analysis_pzt_baseline_results(self):
         if not hasattr(self, "analysis_pzt_baseline_results"):
@@ -759,15 +784,17 @@ class AnalysisPanelMixin:
         for index, trace in enumerate(prepared.force_traces):
             key = trace.label
             desired_force.add(key)
+            color = self._analysis_force_trace_color(key, index)
             curve = self.analysis_force_curves.get(key)
             if curve is None:
                 curve = self.analysis_force_plot.plot(
-                    [], [], pen=pg.mkPen(color=PLOT_COLORS[(index + 2) % len(PLOT_COLORS)], width=2), name=key
+                    [], [], pen=pg.mkPen(color=color, width=2), name=key
                 )
                 curve.setClipToView(True)
                 curve.setDownsampling(auto=True, method="peak")
                 self.analysis_force_curves[key] = curve
             curve.setData(trace.x, trace.y)
+            curve.setPen(pg.mkPen(color=color, width=2))
             visible = bool(self.analysis_force_checks.get(key).isChecked()) if key in self.analysis_force_checks else True
             curve.setVisible(visible)
 
@@ -800,7 +827,7 @@ class AnalysisPanelMixin:
             self.analysis_force_plot.enableAutoRange()
         self.analysis_marker_vline.setVisible(bool(self.analysis_marker_check.isChecked()))
         source = self.analysis_snapshot.source_id if self.analysis_snapshot else "-"
-        self.analysis_status_label.setText(
+        self._set_analysis_status_text(
             f"Analysis: {len(prepared.traces)} signal traces, {len(prepared.overlay_traces)} overlays, "
             f"{len(prepared.force_traces)} force traces | {source} {prepared.status}".strip()
         )
@@ -814,6 +841,22 @@ class AnalysisPanelMixin:
         if suffix in body:
             body = body.split(suffix, 1)[0]
         return body
+
+    def _analysis_force_trace_color(self, trace_label: str, index: int):
+        source_label = self._analysis_calculated_force_source_label(trace_label)
+        if source_label:
+            return self.analysis_trace_colors.get(source_label, PLOT_COLORS[index % len(PLOT_COLORS)])
+        return PLOT_COLORS[(index + 2) % len(PLOT_COLORS)]
+
+    def _analysis_calculated_force_source_label(self, trace_label: str) -> str | None:
+        prefix = "Calculated Force - "
+        suffix = " ["
+        if not trace_label.startswith(prefix):
+            return None
+        body = trace_label[len(prefix):]
+        if suffix in body:
+            body = body.split(suffix, 1)[0]
+        return body or None
 
     def _sync_analysis_force_trace_checks(self, force_traces):
         existing = set(self.analysis_force_checks)
@@ -832,7 +875,11 @@ class AnalysisPanelMixin:
             check.setChecked(bool(saved_visibility.get(label, True)))
             check.stateChanged.connect(self.on_analysis_settings_changed)
             self.analysis_force_checks[label] = check
-            self.analysis_force_layout.addWidget(check, index // 4, index % 4)
+            self.analysis_force_layout.addWidget(
+                check,
+                index // ANALYSIS_FORCE_CHECK_COLUMNS,
+                index % ANALYSIS_FORCE_CHECK_COLUMNS,
+            )
 
     def export_analysis_csv(self):
         if self.analysis_prepared is None:
@@ -871,12 +918,12 @@ class AnalysisPanelMixin:
                     for trace in traces:
                         row.append(float(trace.y[row_index]) if row_index < len(trace.y) else "")
                     writer.writerow(row)
-            self.analysis_status_label.setText(f"Analysis CSV exported: {path}")
+            self._set_analysis_status_text(f"Analysis CSV exported: {path}")
             if hasattr(self, "log_status"):
                 self.log_status(f"Analysis CSV exported: {path}")
         except Exception as exc:
             QMessageBox.warning(self, "Analysis Export Failed", str(exc))
-            self.analysis_status_label.setText(f"Analysis export failed: {exc}")
+            self._set_analysis_status_text(f"Analysis export failed: {exc}")
 
     def save_analysis_plot_images(self):
         if self.analysis_prepared is None:
@@ -919,14 +966,14 @@ class AnalysisPanelMixin:
                 exporter.export(str(output_path))
                 saved_paths.append(output_path)
             message = "Analysis plot image saved:" if len(saved_paths) == 1 else "Analysis plot images saved:"
-            self.analysis_status_label.setText(f"{message} {', '.join(str(path) for path in saved_paths)}")
+            self._set_analysis_status_text(f"{message} {', '.join(str(path) for path in saved_paths)}")
             if hasattr(self, "log_status"):
                 for path in saved_paths:
                     self.log_status(f"Analysis plot image saved to {path}")
             QMessageBox.information(self, "Analysis Images", message + "\n" + "\n".join(str(path) for path in saved_paths))
         except Exception as exc:
             QMessageBox.warning(self, "Analysis Image Export Failed", str(exc))
-            self.analysis_status_label.setText(f"Analysis image export failed: {exc}")
+            self._set_analysis_status_text(f"Analysis image export failed: {exc}")
 
     def reset_analysis_view(self):
         for plot in (
@@ -936,6 +983,19 @@ class AnalysisPanelMixin:
             self.analysis_force_plot,
         ):
             plot.enableAutoRange()
+
+    def _set_analysis_status_text(self, text: str):
+        if not hasattr(self, "analysis_status_label"):
+            return
+        full_text = str(text)
+        available_width = max(80, int(self.analysis_status_label.width()) - 8)
+        elided = self.analysis_status_label.fontMetrics().elidedText(
+            full_text,
+            Qt.TextElideMode.ElideRight,
+            available_width,
+        )
+        self.analysis_status_label.setText(elided)
+        self.analysis_status_label.setToolTip(full_text)
 
     def _on_analysis_mouse_moved(self, evt):
         if not bool(self.analysis_marker_check.isChecked()) or self.analysis_prepared is None:
@@ -961,7 +1021,7 @@ class AnalysisPanelMixin:
             idx = int(np.argmin(np.abs(trace.x - float(x))))
             if idx < trace.y.size:
                 values.append(f"{trace.label}={float(trace.y[idx]):.4g}")
-        self.analysis_status_label.setText(f"Marker x={float(x):.3f}: " + " | ".join(values[:12]))
+        self._set_analysis_status_text(f"Marker x={float(x):.3f}: " + " | ".join(values[:12]))
 
     def update_analysis_availability(self):
         if not hasattr(self, "analysis_disabled_label"):
