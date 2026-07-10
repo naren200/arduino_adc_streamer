@@ -1085,16 +1085,24 @@ class PressureMapPanelMixin:
         min_intensity, max_intensity, unit = self._get_pressure_map_color_scale_limits()
         range_count = max(2, self._spin_int("pressure_map_color_range_count_spin", 10))
         step = (max_intensity - min_intensity) / range_count
-        ranges = [f"≥ {max_intensity:.4g} {unit}"]
+        ranges = [f"≥ {self._format_pressure_map_legend_value(max_intensity)} {unit}"]
         ranges.extend(
-            f"{min_intensity + step * index:.4g}–{min_intensity + step * (index + 1):.4g} {unit}"
+            f"{self._format_pressure_map_legend_value(min_intensity + step * index)}–"
+            f"{self._format_pressure_map_legend_value(min_intensity + step * (index + 1))} {unit}"
             for index in range(range_count - 1, 0, -1)
         )
-        ranges.append(f"≤ {min_intensity:.4g} {unit}")
+        ranges.append(f"≤ {self._format_pressure_map_legend_value(min_intensity)} {unit}")
         self.pressure_map_color_scale_ranges_label.setText("\n".join(ranges))
         self.pressure_map_color_scale_bar.setFixedHeight(
             self.pressure_map_color_scale_ranges_label.sizeHint().height()
         )
+
+    def _format_pressure_map_legend_value(self, value: float) -> str:
+        """Format legend values with at most two fractional digits."""
+        numeric_value = float(value)
+        if numeric_value != 0.0 and abs(numeric_value) < 0.01:
+            return f"{numeric_value:.2e}"
+        return f"{numeric_value:.2f}"
 
     def _get_pressure_map_color_scale_limits(self) -> tuple[float, float, str]:
         """Return active scale values, using custom endpoints only with a unit override."""
