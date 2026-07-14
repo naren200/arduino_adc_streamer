@@ -399,7 +399,7 @@ class AnalysisPanelMixin:
         force_layout.addWidget(force_scroll)
         display_root.addWidget(force_group)
 
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        self.analysis_plot_splitter = QSplitter(Qt.Orientation.Vertical)
         self.analysis_signal_plot = pg.PlotWidget()
         self.analysis_signal_plot.setBackground("w")
         self.analysis_signal_plot.showGrid(x=True, y=True, alpha=0.3)
@@ -423,16 +423,21 @@ class AnalysisPanelMixin:
         self.analysis_integration_plot.setXLink(self.analysis_signal_plot)
         self.analysis_derived_plot.setXLink(self.analysis_signal_plot)
         self.analysis_force_plot.setXLink(self.analysis_signal_plot)
-        splitter.addWidget(self.analysis_signal_plot)
-        splitter.addWidget(self.analysis_integration_plot)
-        splitter.addWidget(self.analysis_derived_plot)
-        splitter.addWidget(self.analysis_force_plot)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 2)
-        splitter.setStretchFactor(2, 1)
-        splitter.setStretchFactor(3, 2)
-        splitter.setMinimumHeight(1160)
-        display_root.addWidget(splitter)
+        self.analysis_plot_splitter.addWidget(self.analysis_signal_plot)
+        self.analysis_plot_splitter.addWidget(self.analysis_integration_plot)
+        self.analysis_plot_splitter.addWidget(self.analysis_derived_plot)
+        self.analysis_plot_splitter.addWidget(self.analysis_force_plot)
+        self.analysis_plot_splitter.setStretchFactor(0, 2)
+        self.analysis_plot_splitter.setStretchFactor(1, 2)
+        self.analysis_plot_splitter.setStretchFactor(2, 1)
+        self.analysis_plot_splitter.setStretchFactor(3, 2)
+        display_root.addWidget(self.analysis_plot_splitter)
+        self._update_analysis_plot_visibility(
+            show_signal=False,
+            show_integration=False,
+            show_derived=False,
+            show_force=False,
+        )
 
         self.analysis_marker_vline = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#444444", width=1))
         self.analysis_signal_plot.addItem(self.analysis_marker_vline)
@@ -914,6 +919,18 @@ class AnalysisPanelMixin:
             if key not in desired_force:
                 curve.setVisible(False)
 
+        visible_force = any(
+            self.analysis_force_checks.get(trace.label).isChecked()
+            for trace in prepared.force_traces
+            if trace.label in self.analysis_force_checks
+        )
+        self._update_analysis_plot_visibility(
+            show_signal=bool(desired_signal),
+            show_integration=bool(desired_integration),
+            show_derived=bool(desired_derived),
+            show_force=visible_force,
+        )
+
         self.analysis_signal_plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
         self.analysis_signal_plot.setLabel("left", "Signals", units="V")
         self.analysis_integration_plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
@@ -935,6 +952,32 @@ class AnalysisPanelMixin:
             f"{len(prepared.force_traces)} force traces | {source} {prepared.status}".strip()
         )
         self._update_analysis_pzt_mux_timing_status_from_prepared(prepared.status)
+
+    def _update_analysis_plot_visibility(
+        self,
+        *,
+        show_signal: bool,
+        show_integration: bool,
+        show_derived: bool,
+        show_force: bool,
+    ):
+        """Show only Analysis plots that have requested, available traces."""
+        plot_states = (
+            (self.analysis_signal_plot, bool(show_signal), 360),
+            (self.analysis_integration_plot, bool(show_integration), 260),
+            (self.analysis_derived_plot, bool(show_derived), 240),
+            (self.analysis_force_plot, bool(show_force), 300),
+        )
+        for plot, visible, _minimum_height in plot_states:
+            plot.setVisible(visible)
+
+        if hasattr(self, "analysis_plot_splitter"):
+            self.analysis_plot_splitter.setMinimumHeight(
+                sum(minimum_height for _plot, visible, minimum_height in plot_states if visible)
+            )
+            self.analysis_plot_splitter.setSizes(
+                [minimum_height if visible else 0 for _plot, visible, minimum_height in plot_states]
+            )
 
     def _update_analysis_pzt_mux_timing_status_from_prepared(self, status: str):
         if not hasattr(self, "analysis_pzt_mux_timing_status"):
