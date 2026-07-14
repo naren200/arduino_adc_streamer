@@ -13,6 +13,7 @@ import numpy as np
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
 from data_processing.filter_processor import FilterProcessorMixin
 from file_operations.data_exporter import DataExporterMixin
+from file_operations.export_metadata import build_analysis_export_metadata
 
 
 @contextmanager
@@ -137,6 +138,8 @@ class ExportHarness(DataExporterMixin, FilterProcessorMixin):
         self.save_notice_shown = 0
         self.save_notice_hidden = 0
         self.save_notice_updates = []
+        self.analysis_state = {"pzt_force": {"channel_calibration": {}}}
+        self.analysis_snapshot = None
 
     def is_array_pzt1_mode(self):
         return False
@@ -225,6 +228,55 @@ class ArrayFilterMetadataTests(unittest.TestCase):
             self.assertEqual(sorted(all_positions), [0, 2, 4, 6, 8])
 
 
+class AnalysisExportMetadataTests(unittest.TestCase):
+    def test_analysis_export_preserves_loaded_metadata_and_records_settings(self):
+        source_metadata = {
+            "configuration": {"channels": [0], "repeat_count": 1},
+            "mcu_type": "ADC",
+            "timing": {"arduino_sample_rate_hz": 100.0},
+        }
+        analysis_state = {
+            "axis_mode": "time_ms",
+            "pzt_force": {
+                "quiet_duration_s": 2.0,
+                "channel_calibration": {
+                    "CH0": {
+                        "vmid_v": 1.23456,
+                        "noise_threshold_v": 0.0456789,
+                        "sigma_v": 0.0123456,
+                        "mad_v": 0.0098765,
+                    }
+                },
+            },
+        }
+
+        metadata = build_analysis_export_metadata(
+            source_metadata,
+            analysis_state,
+            source_id="csv:C:/captures/source.csv|json:C:/captures/source_metadata.json",
+            csv_path="C:/captures/analysis.csv",
+            x_axis_label="Time",
+            x_axis_units="ms",
+            exported_traces=["CH0", "Calculated Force - CH0 [N]"],
+        )
+
+        self.assertEqual(metadata["configuration"], source_metadata["configuration"])
+        self.assertEqual(metadata["mcu_type"], "ADC")
+        self.assertEqual(
+            metadata["analysis_export"]["settings"]["pzt_force"]["channel_calibration"],
+            {
+                "CH0": {
+                    "vmid_v": 1.235,
+                    "noise_threshold_v": 0.04568,
+                    "sigma_v": 0.01235,
+                    "mad_v": 0.0098765,
+                }
+            },
+        )
+        self.assertNotIn("calculated_vmid_noise", metadata["analysis_export"])
+        self.assertEqual(metadata["analysis_export"]["csv"]["exported_traces"], ["CH0", "Calculated Force - CH0 [N]"])
+
+
 @unittest.skipUnless(SCIPY_FILTERS_AVAILABLE, "SciPy not available")
 class DataExporterTests(unittest.TestCase):
     def test_export_prefers_fullest_available_source_over_short_archive_cache(self):
@@ -280,6 +332,30 @@ class DataExporterTests(unittest.TestCase):
             self.assertEqual(metadata["row_timestamp"]["column_name"], "Timestamp")
             self.assertEqual(metadata["row_timestamp"]["format"], "HH:MM:SS.ffffff")
             self.assertTrue(metadata["row_timestamp"]["absolute_time_available"])
+            self.assertEqual(
+                metadata["pzt_vmid_noise"],
+                {"CH0": {"vmid_v": "No Data", "noise_threshold_v": "No Data"}},
+            )
+
+    def test_save_data_includes_in_memory_analysis_vmid_and_noise(self):
+        with workspace_tempdir("data_exporter_vmid_noise") as tmpdir:
+            harness = ExportHarness(tmpdir)
+            harness.analysis_snapshot = type("Snapshot", (), {"source_id": "in_memory"})()
+            harness.analysis_state["pzt_force"]["channel_calibration"] = {
+                "CH0": {"vmid_v": 1.23456, "noise_threshold_v": 0.0456789}
+            }
+
+            with patch("file_operations.data_exporter.QMessageBox.information"), patch(
+                "file_operations.data_exporter.QMessageBox.warning"
+            ), patch("file_operations.data_exporter.QMessageBox.critical"):
+                harness.save_data()
+
+            metadata_path = next(tmpdir.glob("capture_*_metadata.json"))
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                metadata["pzt_vmid_noise"],
+                {"CH0": {"vmid_v": 1.235, "noise_threshold_v": 0.04568}},
+            )
 
     def test_save_data_shows_and_hides_progress_notice(self):
         with workspace_tempdir("data_exporter_notice") as tmpdir:

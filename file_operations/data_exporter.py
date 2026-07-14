@@ -22,6 +22,7 @@ from file_operations.force_export_alignment import (
     get_nearest_force_values,
     resolve_export_start_datetime,
 )
+from file_operations.export_metadata import build_vmid_noise_metadata
 
 
 class DataExporterMixin:
@@ -693,6 +694,13 @@ class DataExporterMixin:
                     ),
                 },
                 "export_source": export_source,
+                "pzt_vmid_noise": build_vmid_noise_metadata(
+                    signal_header,
+                    getattr(self, "analysis_state", None),
+                    measured_from_in_memory_capture=(
+                        getattr(getattr(self, "analysis_snapshot", None), "source_id", None) == "in_memory"
+                    ),
+                ),
             }
 
             if hasattr(self, 'build_filter_metadata'):

@@ -9,6 +9,7 @@ and renders them on stacked, X-linked plots.
 from __future__ import annotations
 
 import csv
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -51,6 +52,7 @@ from data_processing.analysis_workbench import (
     load_exported_csv_snapshot,
     prepare_analysis_data,
 )
+from file_operations.export_metadata import build_analysis_export_metadata
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 
 
@@ -1012,6 +1014,7 @@ class AnalysisPanelMixin:
         try:
             path = Path(file_path)
             path.parent.mkdir(parents=True, exist_ok=True)
+            metadata_path = path.with_name(f"{path.stem}_metadata.json")
             traces = (
                 list(self.analysis_prepared.traces)
                 + list(self.analysis_prepared.overlay_traces)
@@ -1032,9 +1035,22 @@ class AnalysisPanelMixin:
                     for trace in traces:
                         row.append(float(trace.y[row_index]) if row_index < len(trace.y) else "")
                     writer.writerow(row)
-            self._set_analysis_status_text(f"Analysis CSV exported: {path}")
+            snapshot = self.analysis_snapshot
+            metadata = build_analysis_export_metadata(
+                snapshot.metadata if snapshot is not None else {},
+                self.analysis_state,
+                source_id=snapshot.source_id if snapshot is not None else "unknown",
+                csv_path=path,
+                x_axis_label=self.analysis_prepared.x_label,
+                x_axis_units=self.analysis_prepared.x_units,
+                exported_traces=[trace.label for trace in traces],
+            )
+            with metadata_path.open("w", encoding="utf-8") as handle:
+                json.dump(metadata, handle, indent=2)
+            self._set_analysis_status_text(f"Analysis CSV and metadata exported: {path}, {metadata_path}")
             if hasattr(self, "log_status"):
                 self.log_status(f"Analysis CSV exported: {path}")
+                self.log_status(f"Analysis metadata exported: {metadata_path}")
         except Exception as exc:
             QMessageBox.warning(self, "Analysis Export Failed", str(exc))
             self._set_analysis_status_text(f"Analysis export failed: {exc}")
