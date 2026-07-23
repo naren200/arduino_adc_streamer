@@ -51,3 +51,5 @@ Thumbs.db
 # *.csv
 # *.png
 # *_metadata.txt
+token_dont_read_ai
+.claude/
