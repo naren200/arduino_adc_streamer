@@ -16,7 +16,9 @@ from pathlib import Path
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QEvent, Qt, QTimer
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -47,6 +49,14 @@ from constants.pzt_force import (
 )
 from constants.ui import AnalysisLoadState
 from data_processing.analysis_compute_worker import AnalysisComputeWorker
+from data_processing.analysis_labels import (
+    abbreviate_class_names,
+    assign_segment,
+    label_sidecar_path,
+    load_labels,
+    remove_range,
+    save_labels,
+)
 from data_processing.analysis_workbench import (
     AnalysisPreparedData,
     AnalysisSourceSnapshot,
@@ -58,9 +68,11 @@ from data_processing.analysis_workbench import (
 )
 from file_operations.export_metadata import build_analysis_export_metadata
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
+from inference.config import InferenceConfig
 
 
 ANALYSIS_CHECKBOX_MIN_COLUMN_WIDTH = 130
+ANALYSIS_LABEL_UNDO_DEPTH = 20
 
 
 class AnalysisPanelMixin:
@@ -83,6 +95,7 @@ class AnalysisPanelMixin:
             "visible_force_labels": {},
             "csv_path": "",
             "metadata_path": "",
+            "labeling_enabled": False,
         }
         self._analysis_settings_loading = False
         self.analysis_snapshot: AnalysisSourceSnapshot | None = None
@@ -90,6 +103,14 @@ class AnalysisPanelMixin:
         self._analysis_load_state = AnalysisLoadState.IDLE
         self._analysis_generation = 0
         self._analysis_loaded_status = ""
+        self.analysis_label_class_names = list(InferenceConfig().class_names)
+        self.analysis_label_segments: list[dict] = []
+        self._analysis_label_dirty = False
+        self._analysis_label_undo_stack: list[list[dict]] = []
+        self._analysis_label_region_items: list[pg.LinearRegionItem] = []
+        self._analysis_label_text_items: list[pg.TextItem] = []
+        self._analysis_label_items: list[dict] = []
+        self.analysis_predicted_labels: list[dict] = []
         self.analysis_compute_worker = AnalysisComputeWorker()
         self.analysis_compute_worker.result_ready.connect(self._on_analysis_compute_result)
         self.analysis_compute_worker.error_occurred.connect(self._on_analysis_compute_error)
@@ -290,6 +311,78 @@ class AnalysisPanelMixin:
         controls_root.addLayout(channel_row)
 
         display_root.addWidget(controls)
+
+        self.analysis_labels_group = QGroupBox("Labels")
+        labels_row = QHBoxLayout(self.analysis_labels_group)
+        labels_row.addWidget(QLabel("Class:"))
+        self.analysis_label_class_combo = QComboBox()
+        self.analysis_label_class_combo.addItems(self.analysis_label_class_names)
+        self.analysis_label_class_combo.setMaximumWidth(140)
+        labels_row.addWidget(self.analysis_label_class_combo)
+
+        self._analysis_label_shortcut_hints: list[QLabel] = []
+
+        self.analysis_label_apply_all_btn = QPushButton("Apply to All")
+        self.analysis_label_apply_all_btn.setToolTip("Label the entire loaded trace as the selected class")
+        self.analysis_label_apply_all_btn.clicked.connect(self.on_analysis_label_apply_all)
+        labels_row.addWidget(self.analysis_label_apply_all_btn)
+
+        self.analysis_label_assign_btn = self._add_analysis_label_button(
+            labels_row, "Assign Selection",
+            "Label the dragged region on the signal plot as the selected class",
+            self.on_analysis_label_assign_selection, "Ctrl+Enter",
+        )
+        self.analysis_label_delete_btn = self._add_analysis_label_button(
+            labels_row, "Delete Selection",
+            "Unlabel the dragged region on the signal plot (removes that segment)",
+            self.on_analysis_label_delete_selection, "Del",
+        )
+        self.analysis_label_clear_selection_btn = self._add_analysis_label_button(
+            labels_row, "Clear Selection",
+            "Hide the yellow range without changing any labels, so you can pick a new range",
+            self.on_analysis_label_clear_selection, "Esc",
+        )
+        self.analysis_label_undo_btn = self._add_analysis_label_button(
+            labels_row, "Undo", "Undo the last label assignment",
+            self.on_analysis_label_undo, "Ctrl+Z",
+        )
+        self.analysis_label_clear_all_btn = self._add_analysis_label_button(
+            labels_row, "Clear All Labels", "Remove every labeled segment",
+            self.on_analysis_label_clear_all, "Ctrl+Shift+Del",
+        )
+        self.analysis_label_save_btn = self._add_analysis_label_button(
+            labels_row, "Save Labels", "Write the current segments to the *_labels.json sidecar",
+            self.on_analysis_label_save, "Ctrl+S",
+        )
+        self.analysis_label_load_btn = self._add_analysis_label_button(
+            labels_row, "Load Labels",
+            "Reload segments from the *_labels.json sidecar, discarding unsaved edits",
+            self.on_analysis_label_load, "Ctrl+Shift+L",
+        )
+
+        self._create_analysis_label_shortcuts(tab)
+
+        self.analysis_label_status = QLabel("0 segments")
+        self.analysis_label_status.setStyleSheet("color: #555555;")
+        labels_row.addWidget(self.analysis_label_status)
+        labels_row.addStretch()
+
+        self.analysis_labels_group.setVisible(False)
+        display_root.addWidget(self.analysis_labels_group)
+
+        self.analysis_predicted_legend_group = QGroupBox("Predicted Label Legend")
+        legend_layout = QHBoxLayout(self.analysis_predicted_legend_group)
+        class_codes = abbreviate_class_names(self.analysis_label_class_names)
+        for class_name in self.analysis_label_class_names:
+            color = pg.mkColor(self._analysis_predicted_label_color(class_name))
+            swatch = QLabel()
+            swatch.setFixedSize(14, 14)
+            swatch.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #333333;")
+            legend_layout.addWidget(swatch)
+            legend_layout.addWidget(QLabel(f"{class_codes[class_name]} = {class_name}"))
+        legend_layout.addStretch()
+        self.analysis_predicted_legend_group.setVisible(False)
+        display_root.addWidget(self.analysis_predicted_legend_group)
 
         pzt_force_group = QGroupBox("PZT Force Settings")
         pzt_force_layout = QGridLayout(pzt_force_group)
@@ -516,6 +609,27 @@ class AnalysisPanelMixin:
         zoom_layout.addStretch()
         settings_root.addWidget(zoom_group)
 
+        labeling_group = QGroupBox("Labeling")
+        labeling_layout = QHBoxLayout(labeling_group)
+        self.analysis_labeling_enabled_check = QCheckBox("Enable Labeling")
+        self.analysis_labeling_enabled_check.setToolTip(
+            "Show the texture-labeling toolbar on the Display tab, for labeling "
+            "segments of the loaded trace to build a training dataset."
+        )
+        self.analysis_labeling_enabled_check.stateChanged.connect(self.on_analysis_labeling_enabled_toggled)
+        labeling_layout.addWidget(self.analysis_labeling_enabled_check)
+
+        self.analysis_show_predicted_labels_check = QCheckBox("Show Predicted Labels")
+        self.analysis_show_predicted_labels_check.setToolTip(
+            "Overlay per-window class predictions from the TouchID tab's "
+            "'Run on Analysis Source' action, in a distinct color from manual labels."
+        )
+        self.analysis_show_predicted_labels_check.stateChanged.connect(self.on_analysis_show_predicted_labels_toggled)
+        labeling_layout.addWidget(self.analysis_show_predicted_labels_check)
+
+        labeling_layout.addStretch()
+        settings_root.addWidget(labeling_group)
+
         image_export_group = QGroupBox("Analysis Image Export")
         image_export_layout = QGridLayout(image_export_group)
         self.analysis_save_raw_image_check = QCheckBox("Raw signals")
@@ -579,11 +693,34 @@ class AnalysisPanelMixin:
         self.analysis_marker_vline = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#444444", width=1))
         self.analysis_signal_plot.addItem(self.analysis_marker_vline)
         self.analysis_marker_vline.setVisible(False)
+
+        self.analysis_label_selection_region = pg.LinearRegionItem(
+            values=(0, 0), brush=pg.mkBrush(255, 255, 0, 60), movable=True,
+        )
+        self.analysis_label_selection_region.setZValue(50)
+        self.analysis_signal_plot.addItem(self.analysis_label_selection_region)
+        self.analysis_label_selection_region.setVisible(False)
+        self.analysis_label_selection_region.sigRegionChanged.connect(self._sync_analysis_label_selection_mirrors)
+
+        self._analysis_label_selection_mirrors = []
+        for plot in (self.analysis_integration_plot, self.analysis_derived_plot, self.analysis_force_plot):
+            mirror = pg.LinearRegionItem(values=(0, 0), brush=pg.mkBrush(255, 255, 0, 60), movable=False)
+            mirror.setZValue(50)
+            plot.addItem(mirror)
+            mirror.setVisible(False)
+            self._analysis_label_selection_mirrors.append(mirror)
+
+        self._analysis_label_pending_start_s = None
+
+        for plot in self._analysis_label_plots():
+            plot.getViewBox().sigRangeChanged.connect(self._reposition_analysis_label_texts)
+
         self.analysis_mouse_proxy = pg.SignalProxy(
             self.analysis_signal_plot.scene().sigMouseMoved,
             rateLimit=30,
             slot=self._on_analysis_mouse_moved,
         )
+        self.analysis_signal_plot.scene().sigMouseClicked.connect(self._on_analysis_label_plot_clicked)
         self._analysis_marker_timer.timeout.connect(self._flush_analysis_marker_readout)
 
         self.analysis_status_label = QLabel("Analysis: no source loaded")
@@ -662,6 +799,8 @@ class AnalysisPanelMixin:
             self._update_analysis_pzt_mux_timing_controls()
             self._update_analysis_pzt_baseline_results()
             self.analysis_csv_path_edit.setText(str(state.get("csv_path", "")))
+            self.analysis_labeling_enabled_check.setChecked(bool(state.get("labeling_enabled", False)))
+            self._apply_analysis_labeling_visibility()
             self.on_analysis_zoom_changed()
         finally:
             self._analysis_settings_loading = False
@@ -773,6 +912,15 @@ class AnalysisPanelMixin:
         if getattr(self, "is_capturing", False):
             self.update_analysis_availability()
             return
+        if getattr(self, "_analysis_label_dirty", False):
+            reply = QMessageBox.question(
+                self, "Unsaved Labels",
+                "You have unsaved label changes for the current trace. Loading a new "
+                "source will discard them unless you Save Labels first. Continue anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
         try:
             if self.analysis_source_combo.currentIndex() == 1:
                 csv_path = self.analysis_csv_path_edit.text().strip()
@@ -799,6 +947,7 @@ class AnalysisPanelMixin:
                 else:
                     self.analysis_snapshot = build_in_memory_snapshot(self)
             self._rebuild_analysis_channel_checks()
+            self._load_labels_for_current_source()
             self._analysis_pending_auto_range = True
             self._analysis_loaded_status = (
                 f"Analysis loaded: {self.analysis_snapshot.sweep_count} sweeps, "
@@ -851,7 +1000,30 @@ class AnalysisPanelMixin:
         )
         if is_checkbox_resize:
             self._relayout_analysis_checkboxes()
+
+        event_type = event.type()
+        if event_type in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease) and \
+                event.key() == Qt.Key.Key_Control and not event.isAutoRepeat():
+            self._set_analysis_label_shortcut_hints_visible(event_type == QEvent.Type.KeyPress)
+
         return False
+
+    def _set_analysis_label_shortcut_hints_visible(self, visible: bool) -> None:
+        """Show/hide the Labels toolbar's shortcut key-cap hints while Ctrl is
+        held. Only shows them when the toolbar is actually usable (labeling
+        enabled), so holding Ctrl elsewhere in the app doesn't pop up hints
+        for a hidden/irrelevant toolbar."""
+        hints = getattr(self, "_analysis_label_shortcut_hints", None)
+        if not hints:
+            return
+        if visible and not (
+            getattr(self, "analysis_labeling_enabled_check", None) is not None
+            and self.analysis_labeling_enabled_check.isChecked()
+            and self.analysis_labels_group.isVisible()
+        ):
+            return
+        for hint in hints:
+            hint.setVisible(visible)
 
     def set_all_analysis_channels(self, checked: bool):
         for check in self.analysis_channel_checks.values():
@@ -1216,6 +1388,7 @@ class AnalysisPanelMixin:
                     plot.setXRange(*x_range, padding=0)
                     plot.setYRange(*y_range, padding=0)
         self.analysis_marker_vline.setVisible(bool(self.analysis_marker_check.isChecked()))
+        self._render_label_regions()
         source = self.analysis_snapshot.source_id if self.analysis_snapshot else "-"
         self._set_analysis_status_text(
             f"Analysis: {len(prepared.traces)} signal traces, {len(prepared.overlay_traces)} overlays, "
@@ -1435,6 +1608,449 @@ class AnalysisPanelMixin:
         ):
             plot.enableAutoRange()
 
+    def _apply_analysis_labeling_visibility(self):
+        enabled = bool(self.analysis_labeling_enabled_check.isChecked())
+        if hasattr(self, "analysis_labels_group"):
+            self.analysis_labels_group.setVisible(enabled)
+        if hasattr(self, "analysis_label_selection_region"):
+            self.analysis_label_selection_region.setVisible(False)
+        for mirror in getattr(self, "_analysis_label_selection_mirrors", []):
+            mirror.setVisible(False)
+        self._analysis_label_pending_start_s = None
+        self._render_label_regions()
+
+    def _sync_analysis_label_selection_mirrors(self, *_args):
+        region = self.analysis_label_selection_region.getRegion()
+        for mirror in getattr(self, "_analysis_label_selection_mirrors", []):
+            mirror.blockSignals(True)
+            mirror.setRegion(region)
+            mirror.blockSignals(False)
+
+    def _set_analysis_label_selection_range(self, start_x: float, end_x: float):
+        self.analysis_label_selection_region.setRegion((start_x, end_x))
+        self.analysis_label_selection_region.setVisible(True)
+        for mirror in self._analysis_label_selection_mirrors:
+            mirror.setRegion((start_x, end_x))
+            mirror.setVisible(True)
+
+    def on_analysis_labeling_enabled_toggled(self, *_args):
+        self.analysis_state["labeling_enabled"] = bool(self.analysis_labeling_enabled_check.isChecked())
+        self._apply_analysis_labeling_visibility()
+        self.save_last_analysis_settings()
+
+    def on_analysis_show_predicted_labels_toggled(self, *_args):
+        if hasattr(self, 'analysis_predicted_legend_group'):
+            self.analysis_predicted_legend_group.setVisible(
+                bool(self.analysis_show_predicted_labels_check.isChecked())
+            )
+        self._render_label_regions()
+
+    def _analysis_label_x_to_seconds(self, x_value: float) -> float:
+        prepared = self.analysis_prepared
+        if prepared is not None and prepared.x_units == "samples":
+            snapshot = self.analysis_snapshot
+            fs = float(snapshot.sample_rate_hz) if snapshot is not None else 0.0
+            if fs > 0:
+                return float(x_value) / fs
+        return float(x_value)
+
+    def _analysis_label_seconds_to_x(self, seconds: float) -> float:
+        prepared = self.analysis_prepared
+        if prepared is not None and prepared.x_units == "samples":
+            snapshot = self.analysis_snapshot
+            fs = float(snapshot.sample_rate_hz) if snapshot is not None else 0.0
+            if fs > 0:
+                return float(seconds) * fs
+        return float(seconds)
+
+    def _analysis_label_trace_duration_s(self) -> float:
+        prepared = self.analysis_prepared
+        if prepared is None:
+            return 0.0
+        max_x = 0.0
+        for trace in prepared.traces:
+            if trace.x.size:
+                max_x = max(max_x, float(np.max(trace.x)))
+        return self._analysis_label_x_to_seconds(max_x)
+
+    def _analysis_label_csv_path(self) -> str:
+        return str(self.analysis_state.get("csv_path", "")).strip()
+
+    def _load_labels_for_current_source(self):
+        csv_path = self._analysis_label_csv_path()
+        self.analysis_label_segments = load_labels(csv_path) if csv_path else []
+        self._analysis_label_undo_stack = []
+        self._analysis_label_dirty = False
+        self.analysis_predicted_labels = []
+        self._update_analysis_label_status()
+
+    def _push_analysis_label_undo(self):
+        self._analysis_label_undo_stack.append([dict(seg) for seg in self.analysis_label_segments])
+        del self._analysis_label_undo_stack[:-ANALYSIS_LABEL_UNDO_DEPTH]
+
+    def _mark_analysis_labels_dirty(self):
+        self._analysis_label_dirty = True
+
+    def _add_analysis_label_button(self, layout, text, tooltip, handler, shortcut_text) -> QPushButton:
+        """Add a Labels-toolbar button plus a small key-cap hint label stacked
+        under it. The hint stays hidden until Ctrl is held (see eventFilter /
+        _create_analysis_label_shortcuts), so the shortcut is discoverable
+        without permanently cluttering the toolbar."""
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(1)
+
+        btn = QPushButton(text)
+        btn.setToolTip(f"{tooltip} ({shortcut_text})")
+        btn.clicked.connect(handler)
+        container_layout.addWidget(btn)
+
+        hint = QLabel(shortcut_text)
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint.setStyleSheet(
+            "color: #555555; font-size: 9px; font-family: Consolas, monospace;"
+            "background: #eeeeee; border: 1px solid #bbbbbb; border-radius: 3px;"
+        )
+        hint.setVisible(False)
+        container_layout.addWidget(hint)
+        self._analysis_label_shortcut_hints.append(hint)
+
+        layout.addWidget(container)
+        return btn
+
+    def _create_analysis_label_shortcuts(self, tab: QWidget) -> None:
+        """Keyboard shortcuts mirroring the Labels toolbar buttons.
+
+        Scoped to WidgetWithChildrenShortcut on the Analysis tab itself so
+        they only fire while this tab has focus (not globally across the
+        whole window), and each guarded to a no-op via
+        _analysis_labeling_shortcuts_active when labeling isn't enabled --
+        same as the buttons, which are only visible/usable in that state,
+        but a shortcut has no "isVisible" gate of its own.
+        """
+        shortcut_actions = [
+            (QKeySequence("Ctrl+Return"), self.on_analysis_label_assign_selection),
+            (QKeySequence("Ctrl+Enter"), self.on_analysis_label_assign_selection),
+            (QKeySequence(Qt.Key.Key_Delete), self.on_analysis_label_delete_selection),
+            (QKeySequence(Qt.Key.Key_Backspace), self.on_analysis_label_delete_selection),
+            (QKeySequence(Qt.Key.Key_Escape), self.on_analysis_label_clear_selection),
+            (QKeySequence("Ctrl+Z"), self.on_analysis_label_undo),
+            (QKeySequence("Ctrl+Shift+Delete"), self.on_analysis_label_clear_all),
+            (QKeySequence("Ctrl+S"), self.on_analysis_label_save),
+            (QKeySequence("Ctrl+Shift+L"), self.on_analysis_label_load),
+        ]
+        self._analysis_label_shortcuts = []
+        for sequence, handler in shortcut_actions:
+            shortcut = QShortcut(sequence, tab)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(self._guarded_analysis_label_shortcut(handler))
+            self._analysis_label_shortcuts.append(shortcut)
+
+        # App-wide key filter so holding Ctrl reveals the toolbar's shortcut
+        # hints regardless of which widget currently has focus (a per-widget
+        # filter would miss Ctrl presses while e.g. a plot has focus).
+        # Installed once even though create_analysis_tab could in principle
+        # run again -- installEventFilter is idempotent per (app, self) pair,
+        # but the guard avoids piling up duplicate calls in the log/profiler.
+        if not getattr(self, "_analysis_ctrl_hint_filter_installed", False):
+            app = QApplication.instance()
+            if app is not None:
+                app.installEventFilter(self)
+                self._analysis_ctrl_hint_filter_installed = True
+
+    def _guarded_analysis_label_shortcut(self, handler):
+        """Wrap a Labels-toolbar handler so its shortcut is a no-op unless
+        labeling is actually enabled -- avoids stealing Ctrl+S/Del/Esc etc.
+        from the rest of the Analysis tab when the toolbar isn't in use."""
+        def run():
+            if getattr(self, "analysis_labeling_enabled_check", None) is not None and \
+                    self.analysis_labeling_enabled_check.isChecked():
+                handler()
+        return run
+
+    def on_analysis_label_save(self):
+        csv_path = self._analysis_label_csv_path()
+        if not csv_path:
+            QMessageBox.warning(
+                self, "Labeling",
+                "Labels can only be saved for a loaded CSV source (Source: CSV plus JSON).",
+            )
+            return
+        try:
+            path = save_labels(csv_path, self.analysis_label_class_names, self.analysis_label_segments)
+            self._analysis_label_dirty = False
+            self._update_analysis_label_status()
+            if hasattr(self, "log_status"):
+                self.log_status(f"Analysis labels saved: {path}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Labeling", f"Could not save labels: {exc}")
+
+    def on_analysis_label_load(self):
+        csv_path = self._analysis_label_csv_path()
+        if not csv_path:
+            QMessageBox.warning(
+                self, "Labeling",
+                "Labels can only be loaded for a loaded CSV source (Source: CSV plus JSON).",
+            )
+            return
+        self._push_analysis_label_undo()
+        self.analysis_label_segments = load_labels(csv_path)
+        self._analysis_label_dirty = False
+        self._update_analysis_label_status()
+        self._render_label_regions()
+        if hasattr(self, "log_status"):
+            self.log_status(f"Analysis labels loaded from disk: {csv_path}")
+
+    def _update_analysis_label_status(
+        self,
+        selected_segment: dict | None = None,
+        pending_start_s: float | None = None,
+        selected_range: tuple[float, float] | None = None,
+    ):
+        if not hasattr(self, "analysis_label_status"):
+            return
+        count = len(self.analysis_label_segments)
+        text = f"{count} segment{'s' if count != 1 else ''}"
+        if getattr(self, "_analysis_label_dirty", False):
+            text += " *unsaved*"
+        if selected_segment is not None:
+            text += (
+                f" | selected: {selected_segment['class']} "
+                f"[{selected_segment['start_s']:.2f}s - {selected_segment['end_s']:.2f}s]"
+            )
+        elif pending_start_s is not None:
+            text += f" | range start set at {pending_start_s:.2f}s -- click end point"
+        elif selected_range is not None:
+            text += f" | range selected [{selected_range[0]:.2f}s - {selected_range[1]:.2f}s]"
+        self.analysis_label_status.setText(text)
+
+    def on_analysis_label_apply_all(self):
+        if self.analysis_prepared is None:
+            QMessageBox.warning(self, "Labeling", "Load an Analysis source before labeling.")
+            return
+        duration_s = self._analysis_label_trace_duration_s()
+        if duration_s <= 0:
+            return
+        self._push_analysis_label_undo()
+        active_class = self.analysis_label_class_combo.currentText()
+        self.analysis_label_segments = assign_segment(
+            self.analysis_label_segments, 0.0, duration_s, active_class,
+        )
+        self._mark_analysis_labels_dirty()
+        self._update_analysis_label_status()
+        self._render_label_regions()
+
+    def on_analysis_label_assign_selection(self):
+        if self.analysis_prepared is None:
+            QMessageBox.warning(self, "Labeling", "Load an Analysis source before labeling.")
+            return
+        x0, x1 = self.analysis_label_selection_region.getRegion()
+        start_s, end_s = sorted((self._analysis_label_x_to_seconds(x0), self._analysis_label_x_to_seconds(x1)))
+        if end_s <= start_s:
+            return
+        self._push_analysis_label_undo()
+        active_class = self.analysis_label_class_combo.currentText()
+        self.analysis_label_segments = assign_segment(
+            self.analysis_label_segments, start_s, end_s, active_class,
+        )
+        self._mark_analysis_labels_dirty()
+        self._update_analysis_label_status()
+        self._render_label_regions()
+
+    def _on_analysis_label_plot_clicked(self, event):
+        """Single clicks define a range by pairs: first click sets the start,
+        second click sets the end -- for sub-selecting any range, including
+        one inside an existing labeled segment.
+
+        Double-clicking instead snaps the range to the whole labeled segment
+        under the cursor and preselects its class, as a shortcut for
+        relabeling an entire segment at once. Both are always available.
+        """
+        if not hasattr(self, "analysis_labeling_enabled_check") or not self.analysis_labeling_enabled_check.isChecked():
+            return
+        if self.analysis_prepared is None:
+            return
+        # Ignore clicks used to drag the selection region's own handles/body.
+        if self.analysis_label_selection_region.moving:
+            return
+        pos = event.scenePos()
+        if not self.analysis_signal_plot.sceneBoundingRect().contains(pos):
+            return
+        view_point = self.analysis_signal_plot.plotItem.vb.mapSceneToView(pos)
+        click_x = float(view_point.x())
+        click_s = self._analysis_label_x_to_seconds(click_x)
+
+        if event.double():
+            self._analysis_label_pending_start_s = None
+            for segment in self.analysis_label_segments:
+                if segment["start_s"] <= click_s < segment["end_s"]:
+                    x0 = self._analysis_label_seconds_to_x(segment["start_s"])
+                    x1 = self._analysis_label_seconds_to_x(segment["end_s"])
+                    self._set_analysis_label_selection_range(x0, x1)
+                    index = self.analysis_label_class_combo.findText(segment["class"])
+                    if index >= 0:
+                        self.analysis_label_class_combo.setCurrentIndex(index)
+                    self._update_analysis_label_status(selected_segment=segment)
+                    return
+            return
+
+        if self._analysis_label_pending_start_s is None:
+            self._analysis_label_pending_start_s = click_s
+            self._set_analysis_label_selection_range(click_x, click_x)
+            self._update_analysis_label_status(pending_start_s=click_s)
+        else:
+            start_s, end_s = sorted((self._analysis_label_pending_start_s, click_s))
+            self._analysis_label_pending_start_s = None
+            self._set_analysis_label_selection_range(
+                self._analysis_label_seconds_to_x(start_s), self._analysis_label_seconds_to_x(end_s),
+            )
+            self._update_analysis_label_status(selected_range=(start_s, end_s))
+
+    def on_analysis_label_clear_selection(self):
+        """Hide the yellow range and reset the two-click state, without touching any labels."""
+        self._analysis_label_pending_start_s = None
+        self.analysis_label_selection_region.setVisible(False)
+        for mirror in self._analysis_label_selection_mirrors:
+            mirror.setVisible(False)
+        self._update_analysis_label_status()
+
+    def on_analysis_label_delete_selection(self):
+        if self.analysis_prepared is None:
+            QMessageBox.warning(self, "Labeling", "Load an Analysis source before labeling.")
+            return
+        x0, x1 = self.analysis_label_selection_region.getRegion()
+        start_s, end_s = sorted((self._analysis_label_x_to_seconds(x0), self._analysis_label_x_to_seconds(x1)))
+        if end_s <= start_s:
+            return
+        self._push_analysis_label_undo()
+        self.analysis_label_segments = remove_range(self.analysis_label_segments, start_s, end_s)
+        self._mark_analysis_labels_dirty()
+        self._update_analysis_label_status()
+        self._render_label_regions()
+
+    def on_analysis_label_undo(self):
+        if not self._analysis_label_undo_stack:
+            return
+        self.analysis_label_segments = self._analysis_label_undo_stack.pop()
+        self._mark_analysis_labels_dirty()
+        self._update_analysis_label_status()
+        self._render_label_regions()
+
+    def on_analysis_label_clear_all(self):
+        if not self.analysis_label_segments:
+            return
+        reply = QMessageBox.question(
+            self, "Clear All Labels", "Remove all labeled segments for this trace?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._push_analysis_label_undo()
+        self.analysis_label_segments = []
+        self._mark_analysis_labels_dirty()
+        self._update_analysis_label_status()
+        self._render_label_regions()
+
+    def _analysis_label_color(self, class_name: str):
+        try:
+            index = self.analysis_label_class_names.index(class_name)
+        except ValueError:
+            index = 0
+        return PLOT_COLORS[index % len(PLOT_COLORS)]
+
+    def _analysis_predicted_label_color(self, class_name: str):
+        """Distinct palette from manual labels (offset into PLOT_COLORS) so
+        predicted and manual regions stay visually distinguishable when both
+        are shown at once."""
+        try:
+            index = self.analysis_label_class_names.index(class_name)
+        except ValueError:
+            index = 0
+        offset = max(1, len(PLOT_COLORS) // 2)
+        return PLOT_COLORS[(index + offset) % len(PLOT_COLORS)]
+
+    def _analysis_label_plots(self):
+        return (self.analysis_signal_plot, self.analysis_integration_plot, self.analysis_derived_plot, self.analysis_force_plot)
+
+    def _render_label_regions(self):
+        if not hasattr(self, "analysis_signal_plot"):
+            return
+        for entry in self._analysis_label_items:
+            entry["plot"].removeItem(entry["region"])
+            entry["plot"].removeItem(entry["text"])
+        self._analysis_label_items = []
+        # Legacy attrs kept for backward-compatible visibility toggling elsewhere.
+        self._analysis_label_region_items = []
+        self._analysis_label_text_items = []
+
+        enabled = bool(self.analysis_labeling_enabled_check.isChecked()) if hasattr(self, "analysis_labeling_enabled_check") else False
+        show_predicted = (
+            bool(self.analysis_show_predicted_labels_check.isChecked())
+            if hasattr(self, "analysis_show_predicted_labels_check") else False
+        )
+        if (not enabled and not show_predicted) or self.analysis_prepared is None:
+            return
+
+        for plot in self._analysis_label_plots():
+            if not plot.isVisible():
+                continue
+            if enabled:
+                for segment in self.analysis_label_segments:
+                    self._add_analysis_label_region(
+                        plot, segment, self._analysis_label_color(segment["class"]), segment["class"],
+                    )
+            if show_predicted:
+                class_codes = abbreviate_class_names(self.analysis_label_class_names)
+                for segment in self.analysis_predicted_labels:
+                    code = class_codes.get(segment["class"], segment["class"][:2].upper())
+                    self._add_analysis_label_region(
+                        plot, segment, self._analysis_predicted_label_color(segment["class"]), code,
+                    )
+
+        self._reposition_analysis_label_texts()
+
+    def _add_analysis_label_region(self, plot, segment: dict, color, text: str):
+        """Draw one label region + its text on `plot` and register it for
+        cleanup/repositioning in _analysis_label_items."""
+        x0 = self._analysis_label_seconds_to_x(segment["start_s"])
+        x1 = self._analysis_label_seconds_to_x(segment["end_s"])
+        color = pg.mkColor(color)
+        color.setAlpha(70)
+        region = pg.LinearRegionItem(values=(x0, x1), brush=pg.mkBrush(color), movable=False)
+        region.setZValue(-10)
+        for line in region.lines:
+            line.setPen(pg.mkPen(color, width=1))
+        plot.addItem(region)
+        self._analysis_label_region_items.append(region)
+
+        label = pg.TextItem(
+            text, color=(20, 20, 20), anchor=(0.5, 1),
+            fill=pg.mkBrush(255, 255, 255, 200), border=pg.mkPen(color, width=1),
+        )
+        label.setZValue(60)
+        plot.addItem(label)
+        self._analysis_label_text_items.append(label)
+
+        self._analysis_label_items.append({"plot": plot, "region": region, "text": label, "segment": segment})
+
+    def _reposition_analysis_label_texts(self, *_args):
+        """Keep each label's text pinned to the bottom-center of its segment's
+        visible span within the plot's current view, so it stays on-screen while
+        panning/zooming and never sits under the top-left legend."""
+        for entry in self._analysis_label_items:
+            plot, text, segment = entry["plot"], entry["text"], entry["segment"]
+            x_range, y_range = plot.viewRange()
+            x0 = self._analysis_label_seconds_to_x(segment["start_s"])
+            x1 = self._analysis_label_seconds_to_x(segment["end_s"])
+            visible_x0 = max(x0, x_range[0])
+            visible_x1 = min(x1, x_range[1])
+            if visible_x1 < visible_x0:
+                text.setVisible(False)
+                continue
+            text.setVisible(True)
+            text.setPos((visible_x0 + visible_x1) / 2.0, y_range[0])
+
     def _set_analysis_status_text(self, text: str):
         if not hasattr(self, "analysis_status_label"):
             return
@@ -1517,6 +2133,15 @@ class AnalysisPanelMixin:
             self.analysis_save_images_btn,
             self.analysis_select_all_btn,
             self.analysis_select_none_btn,
+            self.analysis_labeling_enabled_check,
+            self.analysis_label_class_combo,
+            self.analysis_label_apply_all_btn,
+            self.analysis_label_assign_btn,
+            self.analysis_label_delete_btn,
+            self.analysis_label_clear_selection_btn,
+            self.analysis_label_save_btn,
+            self.analysis_label_undo_btn,
+            self.analysis_label_clear_all_btn,
         ):
             widget.setEnabled(not capturing)
         if not capturing:

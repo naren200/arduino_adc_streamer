@@ -5,8 +5,10 @@ GUI components for file management and status display.
 """
 
 import os
+from pathlib import Path
+
 from PyQt6.QtWidgets import (
-    QGroupBox, QVBoxLayout, QGridLayout, QLabel, QPushButton, 
+    QGroupBox, QVBoxLayout, QGridLayout, QLabel, QPushButton,
     QLineEdit, QTextEdit, QCheckBox, QSpinBox, QFileDialog
 )
 from PyQt6.QtCore import Qt
@@ -19,6 +21,9 @@ from constants.ui import (
     SWEEP_RANGE_MAX,
     SWEEP_RANGE_MIN,
 )
+from file_operations.settings_persistence import load_settings_payload, save_settings_payload
+
+EXPORT_DIRECTORY_SETTINGS_PAYLOAD_KEY = "export_settings"
 
 
 class FilePanelsMixin:
@@ -33,7 +38,34 @@ class FilePanelsMixin:
         )
         if directory:
             self.dir_input.setText(directory)
-    
+            self.save_last_export_directory()
+
+    def _get_last_export_settings_path(self) -> Path:
+        return Path.home() / ".adc_streamer" / "file_export" / "last_used_export_settings.json"
+
+    def save_last_export_directory(self):
+        """Persist the current export directory locally (per OS user), so the
+        next launch on this machine reopens with the last-used location."""
+        try:
+            save_settings_payload(
+                self._get_last_export_settings_path(),
+                {"version": 1, EXPORT_DIRECTORY_SETTINGS_PAYLOAD_KEY: {"directory": self.dir_input.text().strip()}},
+            )
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"Warning: could not save export directory: {exc}")
+
+    def _load_last_export_directory(self) -> str | None:
+        path = self._get_last_export_settings_path()
+        if not path.exists():
+            return None
+        try:
+            _path, payload = load_settings_payload(path, payload_key=EXPORT_DIRECTORY_SETTINGS_PAYLOAD_KEY)
+        except Exception:
+            return None
+        directory = payload.get("directory") if isinstance(payload, dict) else None
+        return directory or None
+
     def create_file_management_section(self) -> QGroupBox:
         """Create file management section."""
         group = QGroupBox("Data Export")
@@ -42,8 +74,13 @@ class FilePanelsMixin:
         # Directory selection
         layout.addWidget(QLabel("Directory:"), 0, 0)
         self.dir_input = QLineEdit()
-        # Default save directory - uses current user's home directory
-        self.dir_input.setText(os.path.join(os.path.expanduser("~"), "Documents", "sensetics", "data", "adc"))
+        # Default save directory - last used location on this machine, else the
+        # current user's home directory.
+        default_directory = self._load_last_export_directory() or os.path.join(
+            os.path.expanduser("~"), "Documents", "sensetics", "data", "adc"
+        )
+        self.dir_input.setText(default_directory)
+        self.dir_input.editingFinished.connect(self.save_last_export_directory)
         layout.addWidget(self.dir_input, 0, 1)
 
         self.browse_btn = QPushButton("Browse")

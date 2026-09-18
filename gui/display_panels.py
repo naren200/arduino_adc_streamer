@@ -94,7 +94,11 @@ class DisplayPanelsMixin:
         # Create sensor tab last (from SensorPanelMixin)
         sensor_tab = self.create_sensor_tab()
         self.sensor_tab_index = self.visualization_tabs.addTab(sensor_tab, SENSOR_TAB_NAME)
-        
+
+        # Create TouchID tab (from InferencePanelMixin) — live texture classification.
+        touchid_tab = self.create_touchid_tab()
+        self.touchid_tab_index = self.visualization_tabs.addTab(touchid_tab, 'TouchID')
+
         return self.visualization_tabs
     
     def create_timeseries_tab(self) -> QWidget:

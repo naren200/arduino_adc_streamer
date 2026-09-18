@@ -93,6 +93,7 @@ from gui import (
     SpectrumPanelMixin,
     StatusLoggingMixin,
     PztDecayPanelMixin,
+    InferencePanelMixin,
 )
 from data_processing import (
     DataProcessorMixin,
@@ -122,6 +123,7 @@ class ADCStreamerGUI(
     ForceCalibrationPanelMixin, # Force Calibration tab and controls
     SpectrumPanelMixin,         # Spectrum panel UI
     PztDecayPanelMixin,         # PZT decay characterization tab
+    InferencePanelMixin,        # TouchID live texture-classification tab
     ConfigurationMixin,         # Configuration management
     DataProcessorMixin,         # Data processing
     SpectrumProcessorMixin,     # Spectrum processing
@@ -152,6 +154,7 @@ class ADCStreamerGUI(
         self._init_spectrum_state()
         self._init_analysis_state()
         self.init_pzt_decay_state()
+        self.init_touchid_state()
         self._init_timers()
 
         # Build user interface
@@ -447,6 +450,7 @@ class ADCStreamerGUI(
         self.shutdown_analysis_worker()
         self.shutdown_adc_connect_worker()
         self.shutdown_force_connect_worker()
+        self.shutdown_touchid_worker()
 
         event.accept()
     
@@ -462,6 +466,8 @@ class ADCStreamerGUI(
             self.start_spectrum_updates()
         else:
             self.stop_spectrum_updates()
+
+        self.sync_touchid_timer_state()
 
         if current_tab in (TIME_SERIES_TAB_NAME, PZT_RS_PZT_TAB_NAME, ROSETTE_TAB_NAME):
             if hasattr(self, 'spectrum_busy'):

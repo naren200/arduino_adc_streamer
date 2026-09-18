@@ -218,6 +218,12 @@ class CaptureLifecycleMixin:
         self.is_capturing = True
         if hasattr(self, "update_analysis_availability"):
             self.update_analysis_availability()
+        if hasattr(self, "sync_touchid_timer_state"):
+            # Covers the case where TouchID was already the current tab before
+            # Start Capture was clicked -- on_visualization_tab_changed's
+            # currentChanged-driven timer start never fires then, since the
+            # tab index isn't changing.
+            self.sync_touchid_timer_state()
         if self.serial_thread:
             expected_samples_per_sweep = self.get_effective_samples_per_sweep()
             self.serial_thread.set_capturing(True, expected_samples_per_sweep=expected_samples_per_sweep)

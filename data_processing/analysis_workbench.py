@@ -1014,6 +1014,19 @@ def _optional_numeric_column(rows: list[dict[str, str]], column_name: str) -> np
 
 def _metadata_sample_rate_hz(metadata: dict, data: np.ndarray, timestamps: np.ndarray) -> float:
     timing = metadata.get("timing", {}) if isinstance(metadata, dict) else {}
+    # Per-channel rate first: this is the "sweep rate" TimingDisplayMixin/the filter
+    # engine/the spectrum tab all treat as the shared per-signal frequency axis (see
+    # tests/test_sample_rate_consistency.py), and it's what a *_metadata.json-driven
+    # model's window_size_s/hop_size_s are defined against (texture_piezo's own
+    # load_calibration_csv reads this same key). The total/effective mux rate keys
+    # below are the whole-ADC-block rate across all channels (+ ground reads) --
+    # roughly n_channels x per-channel rate -- and must not be used as a per-channel
+    # rate; doing so previously made TouchID slice windows ~n_channels x too long.
+    per_channel_rates = timing.get("per_channel_sample_rates_hz")
+    if isinstance(per_channel_rates, dict) and per_channel_rates:
+        values = [float(v) for v in per_channel_rates.values() if isinstance(v, (int, float)) and float(v) > 0]
+        if values:
+            return float(np.mean(values))
     for key in ("adc_effective_total_sample_rate_hz", "arduino_sample_rate_hz", "total_rate_hz"):
         value = timing.get(key)
         if isinstance(value, (int, float)) and float(value) > 0:

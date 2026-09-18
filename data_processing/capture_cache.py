@@ -40,6 +40,11 @@ class CaptureCacheMixin:
 
             self._clear_all_plot_curves()
 
+            if hasattr(self, '_clear_touchid_stream_curves'):
+                self._clear_touchid_stream_curves()
+                self._touchid_clear_inference_regions()
+                self._touchid_reset_stream_display()
+
             self.plot_widget.removeItem(self.adc_legend)
             self.adc_legend = self.plot_widget.addLegend(offset=(10, 10))
 

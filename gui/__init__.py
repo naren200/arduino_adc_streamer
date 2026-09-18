@@ -16,8 +16,10 @@ from gui.sensor_panel import SensorPanelMixin
 from gui.spectrum_panel import SpectrumPanelMixin
 from gui.status_logging import StatusLoggingMixin
 from gui.pzt_decay_panel import PztDecayPanelMixin
+from gui.inference_panel import InferencePanelMixin
 
 __all__ = [
+    'InferencePanelMixin',
     'ControlPanelsMixin',
     'DisplayPanelsMixin',
     'FilePanelsMixin',
