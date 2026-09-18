@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -7,6 +8,7 @@ import numpy as np
 from PyQt6.QtWidgets import QApplication
 
 from gui.inference_panel import InferencePanelMixin
+from inference.mode import TouchIdMode
 from inference.segmentation import ActiveSampleQueue
 from inference.quality_gate import IdleBaseline
 
@@ -190,6 +192,59 @@ class ActiveSampleQueueSpanIdTests(unittest.TestCase):
         first_span = span_ids_seen[0]
         last_span = span_ids_seen[-1]
         self.assertNotEqual(first_span, last_span)
+
+
+class TouchIdModeGuardTests(unittest.TestCase):
+    """touchid_mode (inference/mode.py) must serialize CAPTURING_BASELINE and
+    REPLAYING -- neither may start while the other is in progress, and
+    sync_touchid_timer_state must not resume live streaming mid-replay (see
+    those methods' docstrings for why: interleaving live serial data or a
+    second concurrent activity into either's TouchIdStreamProcessor would
+    silently corrupt its causal state)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_capture_idle_refused_while_replaying(self):
+        harness = TouchIdHarness()
+        harness.is_capturing = True
+        harness.touchid_mode = TouchIdMode.REPLAYING
+        with patch('gui.inference_panel.QMessageBox.warning') as warn:
+            harness.on_touchid_capture_idle_clicked()
+        warn.assert_called_once()
+        self.assertFalse(harness.touchid_idle_capture_active)
+        self.assertEqual(harness.touchid_mode, TouchIdMode.REPLAYING)
+
+    def test_capture_idle_refused_while_already_capturing(self):
+        harness = TouchIdHarness()
+        harness.is_capturing = True
+        harness.touchid_mode = TouchIdMode.CAPTURING_BASELINE
+        with patch('gui.inference_panel.QMessageBox.warning') as warn:
+            harness.on_touchid_capture_idle_clicked()
+        warn.assert_called_once()
+
+    def test_replay_refused_while_capturing_baseline(self):
+        harness = TouchIdHarness()
+        harness.touchid_mode = TouchIdMode.CAPTURING_BASELINE
+        with patch('gui.inference_panel.QMessageBox.warning') as warn:
+            harness.on_touchid_run_on_source_clicked()
+        warn.assert_called_once()
+        self.assertEqual(harness.touchid_mode, TouchIdMode.CAPTURING_BASELINE)
+
+    def test_replay_refused_while_already_replaying(self):
+        harness = TouchIdHarness()
+        harness.touchid_mode = TouchIdMode.REPLAYING
+        with patch('gui.inference_panel.QMessageBox.warning') as warn:
+            harness.on_touchid_run_on_source_clicked()
+        warn.assert_called_once()
+
+    def test_sync_timer_state_refuses_to_start_while_replaying(self):
+        harness = TouchIdHarness()
+        harness.is_capturing = True
+        harness.touchid_mode = TouchIdMode.REPLAYING
+        harness.sync_touchid_timer_state()
+        self.assertFalse(harness.touchid_timer.isActive())
 
 
 if __name__ == '__main__':

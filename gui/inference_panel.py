@@ -6,7 +6,6 @@ texture_piezo feature pipeline + ANN v2 model on a rolling window, and
 displays smoothed class probabilities.
 """
 
-import sys
 import time
 
 import numpy as np
@@ -29,8 +28,6 @@ from PyQt6.QtWidgets import (
 
 import re
 
-from inference._paths import TEXTURE_PIEZO_SRC
-from inference.buffer import RollingBuffer
 from inference.classifier import TextureClassifier
 from inference.classify_worker import TouchIdClassifyWorker
 from inference.config import (
@@ -46,22 +43,16 @@ from inference.config import (
     set_model_version,
 )
 from inference.architectures import ARCH_REGISTRY, CHECKPOINT_DEFAULT
-from inference.offline import run_inference_on_snapshot
+from inference.mode import TouchIdMode
 from inference.quality_gate import (
     IDLE_CAPTURE_DURATION_S,
-    MAX_WINDOW_IDLE_FRACTION,
-    MICRO_CHUNK_S,
     fit_idle_baseline,
     load_idle_baseline,
     save_idle_baseline,
-    window_idle_fraction,
 )
-from inference.segmentation import ActiveSampleQueue
 from inference.smoothing import ConfidenceSmoother
+from inference.stream_processor import TouchIdStreamProcessor
 from constants.plotting import PLOT_COLORS
-
-sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
-from causal_derived_channels import CausalDerivedChannels  # noqa: E402
 
 # Display label (combo box text) -> InferenceConfig.model_type key. Built from
 # ARCH_REGISTRY so a new architecture registered there (architectures.py)
@@ -129,26 +120,6 @@ class InferencePanelMixin:
         except Exception:
             pass
 
-        self.touchid_buffer = RollingBuffer(
-            n_channels=len(self.touchid_config.pzt_columns),
-            window_size_s=self.touchid_config.window_size_s,
-            hop_size_s=self.touchid_config.hop_size_s,
-        )
-        # Persistent streaming state for the "integrated"/shear/normal
-        # derived channels -- one CausalDerivedChannels instance for the
-        # whole live session, .process()'d on each newly-pushed chunk so its
-        # bounded windowed sums and unbounded causal medians carry forward
-        # continuously instead of restarting every window (see
-        # texture_piezo/src/causal_derived_channels.py). touchid_derived_buffer
-        # is a second RollingBuffer, pushed in lockstep with touchid_buffer on
-        # the SAME hop cadence, so get_window() on both together yields
-        # perfectly aligned raw-ADC and derived-channel slices for one window.
-        self.touchid_derived_channels = CausalDerivedChannels(pzt_columns=self.touchid_config.pzt_columns)
-        self.touchid_derived_buffer = RollingBuffer(
-            n_channels=len(self.touchid_config.pzt_columns) + 3,
-            window_size_s=self.touchid_config.window_size_s,
-            hop_size_s=self.touchid_config.hop_size_s,
-        )
         self.touchid_smoother = ConfidenceSmoother(
             class_names=self.touchid_config.class_names,
             alpha=self.touchid_config.smoothing_alpha,
@@ -192,20 +163,31 @@ class InferencePanelMixin:
         self.touchid_idle_capture_samples: list[np.ndarray] = []
         self.touchid_idle_capture_n_samples = 0
 
-        # Sample-accurate segmentation (inference/segmentation.py), used only
-        # once an idle baseline is available -- with no baseline, the
-        # touchid_buffer/touchid_derived_buffer RollingBuffer path below is
-        # used unchanged (classify every fixed hop-grid window, matching
-        # is_window_quality's old no-op-without-a-baseline behavior). Built
-        # lazily (touchid_active_queue stays None) since it needs a measured
-        # fs, which isn't known until streaming has started.
-        self._touchid_store_reset()
+        # Which non-default activity (if any) the TouchID tab is doing right
+        # now -- see inference/mode.py's module docstring for why this does
+        # NOT also encode "is live streaming happening" (that's is_capturing's
+        # job, consulted separately by should_update_touchid_display()).
+        self.touchid_mode = TouchIdMode.NORMAL
+        # Populated only while touchid_mode is REPLAYING -- see
+        # on_touchid_run_on_source_clicked.
+        self.touchid_replay_results: list[dict] = []
+
+        # Owns buffering/derivation/segmentation (inference/stream_processor.py)
+        # -- the single source of truth shared by live streaming and offline
+        # replay. Rebuilt (not reset in place) on a window/hop resize, a PZT
+        # sensor switch (discontinuous input stream), or a new idle baseline
+        # (see _touchid_new_processor).
+        self.touchid_processor = self._touchid_new_processor()
+        # A fresh processor means span_ids restart from 0 -- reset the color
+        # cycle state too so a stale span_id from before the reset can't
+        # coincidentally collide with a new span's id.
+        self._touchid_reset_region_coloring()
 
         # Rolling history feeding the Signal Stream plot -- separate from
-        # touchid_buffer (which only holds one inference window's worth and
-        # is consumed/advanced by RollingBuffer.get_window). Keeps the last
-        # _TOUCHID_STREAM_HISTORY_S seconds of real elapsed capture time so
-        # the plot scrolls forward instead of resetting its x-axis every hop.
+        # touchid_processor's own buffering (which only holds one inference
+        # window's worth at a time). Keeps the last _TOUCHID_STREAM_HISTORY_S
+        # seconds of real elapsed capture time so the plot scrolls forward
+        # instead of resetting its x-axis every hop.
         self._touchid_reset_stream_display()
 
         self.touchid_timer = QTimer()
@@ -241,10 +223,20 @@ class InferencePanelMixin:
         second call site the timer would never start and the tab would sit
         silently frozen (empty plot, rate label stuck on '-') even though
         should_update_touchid_display() would otherwise happily return True.
+
+        Refuses to (re)start the timer while a replay is in progress
+        (touchid_mode == REPLAYING) -- a capture start/stop firing during
+        replay would otherwise interleave live serial data into replay's
+        own TouchIdStreamProcessor. Replay's own driver timer resumes
+        touchid_timer itself once it finishes, via this same method.
         """
         if not hasattr(self, 'visualization_tabs') or self.visualization_tabs is None:
             return
         if not hasattr(self, 'touchid_timer'):
+            return
+        if getattr(self, 'touchid_mode', TouchIdMode.NORMAL) == TouchIdMode.REPLAYING:
+            if self.touchid_timer.isActive():
+                self.touchid_timer.stop()
             return
         current_tab = self.visualization_tabs.tabText(self.visualization_tabs.currentIndex())
         if current_tab == 'TouchID':
@@ -492,210 +484,51 @@ class InferencePanelMixin:
 
         return tab
 
-    def _rebuild_touchid_buffers(self):
-        """Recreate both rolling buffers at the current window/hop sizing.
-        Does NOT reset touchid_derived_channels -- its causal state (bounded
-        sums, causal medians) stays valid across a window/hop resize since
-        the underlying raw sample stream is unbroken; only the windowing
-        (not the derivation) is changing."""
-        self.touchid_buffer = RollingBuffer(
-            n_channels=len(self.touchid_config.pzt_columns),
+    def _touchid_new_processor(self, derived_channels=None) -> TouchIdStreamProcessor:
+        """Build a fresh TouchIdStreamProcessor at the current config/idle
+        baseline. Pass `derived_channels` to carry an existing
+        CausalDerivedChannels instance's causal state (bounded sums, causal
+        medians) forward into the new processor instead of starting it fresh
+        -- used by _rebuild_touchid_buffers (see its docstring for why a
+        window/hop resize is NOT a discontinuity in the underlying raw
+        sample stream, unlike a sensor switch or a new idle baseline)."""
+        processor = TouchIdStreamProcessor(
+            pzt_columns=self.touchid_config.pzt_columns,
             window_size_s=self.touchid_config.window_size_s,
             hop_size_s=self.touchid_config.hop_size_s,
+            span_stale_timeout_s=self.touchid_config.span_stale_timeout_s,
+            min_span_fill_ratio=self.touchid_config.min_span_fill_ratio,
+            idle_baseline=self.touchid_idle_baseline,
         )
-        self.touchid_derived_buffer = RollingBuffer(
-            n_channels=len(self.touchid_config.pzt_columns) + 3,
-            window_size_s=self.touchid_config.window_size_s,
-            hop_size_s=self.touchid_config.hop_size_s,
-        )
-        # window_size_s/hop_size_s feed directly into ActiveSampleQueue's own
-        # sizing (merge-gap threshold, window/hop-in-samples), so a resize
-        # needs a fresh queue -- _touchid_store_reset() also drops the
-        # continuous store, which is fine since the underlying raw stream
-        # is unbroken and will simply refill it (unlike a sensor switch,
-        # there's no discontinuity here, just an easier restart than trying
-        # to re-derive queue bookkeeping for the old sizing's spans).
-        self._touchid_store_reset()
+        if derived_channels is not None:
+            processor.derived_channels = derived_channels
+        return processor
 
-    def _touchid_store_reset(self):
-        """(Re)initialize the continuous raw+derived sample store (used only
-        once an idle baseline exists) and drop the ActiveSampleQueue built
-        on top of it -- it's rebuilt lazily (see _touchid_ensure_active_queue)
-        once a measured fs is available again. Called on init, on a
-        window/hop resize, on a PZT sensor switch (discontinuous input
-        stream), and whenever a new idle baseline is captured."""
-        n_pzt = len(self.touchid_config.pzt_columns)
-        self.touchid_store_raw = np.empty((0, n_pzt))
-        self.touchid_store_integrated = np.empty((0, n_pzt))
-        self.touchid_store_shear_lr = np.empty(0)
-        self.touchid_store_shear_tb = np.empty(0)
-        self.touchid_store_normal = np.empty(0)
-        self.touchid_store_ts = np.empty(0)
-        self.touchid_store_base_abs = 0  # abs index of store[0]
-        self.touchid_store_next_abs = 0  # abs index just past the last appended sample
-        self.touchid_chunk_cursor_abs = 0  # abs index up to which micro-chunks have been pushed
-        self.touchid_active_queue: ActiveSampleQueue | None = None
-        # A fresh queue means span_ids restart from 0 -- reset the color
-        # cycle state too so a stale span_id from before the reset can't
-        # coincidentally collide with a new span's id.
+    def _touchid_reset_region_coloring(self):
+        """Reset the inference-region color cycle state -- called whenever
+        touchid_processor is rebuilt, since a fresh ActiveSampleQueue means
+        span_ids restart from 0 and a stale span_id from before the reset
+        could otherwise coincidentally collide with a new span's id."""
         self.touchid_region_span_id = None
         self.touchid_region_color_index = -1
 
-    def _touchid_ensure_active_queue(self, fs: float):
-        """Lazily build touchid_active_queue on the first tick a measured fs
-        is available -- it can't be constructed at init time since fs isn't
-        known until streaming has actually started."""
-        if self.touchid_active_queue is not None or self.touchid_idle_baseline is None:
-            return
-        self.touchid_active_queue = ActiveSampleQueue(
-            fs=fs,
-            window_size_s=self.touchid_config.window_size_s,
-            hop_size_s=self.touchid_config.hop_size_s,
-            baseline=self.touchid_idle_baseline,
+    def _rebuild_touchid_buffers(self):
+        """Recreate touchid_processor at the current window/hop sizing.
+        Carries the existing derived_channels instance forward -- its causal
+        state (bounded sums, causal medians) stays valid across a
+        window/hop resize since the underlying raw sample stream is
+        unbroken; only the windowing (not the derivation) is changing.
+        window_size_s/hop_size_s feed directly into ActiveSampleQueue's own
+        sizing (merge-gap threshold, window/hop-in-samples), so a resize
+        needs a fresh queue -- the fresh processor also drops the continuous
+        store, which is fine since the underlying raw stream is unbroken and
+        will simply refill it (unlike a sensor switch, there's no
+        discontinuity here, just an easier restart than trying to re-derive
+        queue bookkeeping for the old sizing's spans)."""
+        self.touchid_processor = self._touchid_new_processor(
+            derived_channels=self.touchid_processor.derived_channels
         )
-        self.touchid_chunk_cursor_abs = self.touchid_store_next_abs
-
-    def _touchid_append_to_store(self, channel_samples: dict, derived: dict, sweep_timestamps: np.ndarray):
-        """Append this tick's newly-pushed raw+derived samples to the
-        continuous store, in lockstep, at the running absolute index
-        ActiveSampleQueue's yielded (start_idx, end_idx) pairs reference."""
-        pzt_columns = self.touchid_config.pzt_columns
-        raw = np.stack([channel_samples[col] for col in pzt_columns], axis=1)
-        integrated = np.stack([derived['integrated'][col] for col in pzt_columns], axis=1)
-        self.touchid_store_raw = np.concatenate([self.touchid_store_raw, raw], axis=0)
-        self.touchid_store_integrated = np.concatenate([self.touchid_store_integrated, integrated], axis=0)
-        self.touchid_store_shear_lr = np.concatenate([self.touchid_store_shear_lr, derived['shear_lr']])
-        self.touchid_store_shear_tb = np.concatenate([self.touchid_store_shear_tb, derived['shear_tb']])
-        self.touchid_store_normal = np.concatenate([self.touchid_store_normal, derived['normal']])
-        self.touchid_store_ts = np.concatenate(
-            [self.touchid_store_ts, np.asarray(sweep_timestamps, dtype=np.float64)]
-        )
-        self.touchid_store_next_abs += len(raw)
-
-    def _touchid_trim_store(self):
-        """Drop the front of the continuous store once no live span
-        (finalized or open, per touchid_active_queue.oldest_referenced_idx)
-        references it anymore, keeping a window_size_s + span_stale_timeout_s
-        safety margin so a still-growing open span never has its start index
-        trimmed out from under it."""
-        queue = self.touchid_active_queue
-        if queue is None:
-            return
-        margin_n = round(
-            (self.touchid_config.window_size_s + self.touchid_config.span_stale_timeout_s) * queue.fs
-        )
-        oldest_referenced = queue.oldest_referenced_idx()
-        safe_abs = self.touchid_chunk_cursor_abs if oldest_referenced is None else min(
-            oldest_referenced, self.touchid_chunk_cursor_abs
-        )
-        trim_to_abs = max(self.touchid_store_base_abs, safe_abs - margin_n)
-        trim_n = trim_to_abs - self.touchid_store_base_abs
-        if trim_n <= 0:
-            return
-        self.touchid_store_raw = self.touchid_store_raw[trim_n:]
-        self.touchid_store_integrated = self.touchid_store_integrated[trim_n:]
-        self.touchid_store_shear_lr = self.touchid_store_shear_lr[trim_n:]
-        self.touchid_store_shear_tb = self.touchid_store_shear_tb[trim_n:]
-        self.touchid_store_normal = self.touchid_store_normal[trim_n:]
-        self.touchid_store_ts = self.touchid_store_ts[trim_n:]
-        self.touchid_store_base_abs = trim_to_abs
-
-    def _touchid_slice_store(self, start_abs: int, end_abs: int):
-        """Slice the continuous store at an absolute (start_idx, end_idx)
-        pair from ActiveSampleQueue -- returns (window_adc, window_integrated,
-        window_shear_lr, window_shear_tb, window_normal, window_ts), or None
-        if the range has already been trimmed out (shouldn't happen given
-        _touchid_trim_store's safety margin, but guarded rather than slicing
-        garbage)."""
-        if start_abs < self.touchid_store_base_abs:
-            return None
-        start_i = start_abs - self.touchid_store_base_abs
-        end_i = end_abs - self.touchid_store_base_abs
-        return (
-            self.touchid_store_raw[start_i:end_i],
-            self.touchid_store_integrated[start_i:end_i],
-            self.touchid_store_shear_lr[start_i:end_i],
-            self.touchid_store_shear_tb[start_i:end_i],
-            self.touchid_store_normal[start_i:end_i],
-            self.touchid_store_ts[start_i:end_i],
-        )
-
-    def _touchid_drain_active_queue(self, fs: float):
-        """Chunk any newly-appended continuous-store samples into 0.05s
-        micro-chunks, feed them into touchid_active_queue, drain whatever
-        windows it yields (painting the "being inferenced" highlight for
-        every one, matching the old comment on touchid_worker_busy below,
-        but submitting only the newest to the classify worker), and evict
-        stale spans -- run once per hop-timer tick, same cadence as the old
-        RollingBuffer.get_window() call it replaces."""
-        queue = self.touchid_active_queue
-        chunk_n = max(1, round(MICRO_CHUNK_S * fs))
-        now_t = time.monotonic()
-
-        while self.touchid_chunk_cursor_abs + chunk_n <= self.touchid_store_next_abs:
-            start_abs = self.touchid_chunk_cursor_abs
-            end_abs = start_abs + chunk_n
-            start_i = start_abs - self.touchid_store_base_abs
-            end_i = end_abs - self.touchid_store_base_abs
-            queue.push_micro_chunk((start_abs, end_abs), self.touchid_store_raw[start_i:end_i], now_t)
-            self.touchid_chunk_cursor_abs = end_abs
-
-        windows = queue.ready_windows(store_base_abs=self.touchid_store_base_abs)
-        queue.evict_stale(now_t, self.touchid_config.min_span_fill_ratio, self.touchid_config.span_stale_timeout_s)
-
-        # A merged span can fuse several genuinely separate touch events when
-        # the idle gap between them is shorter than
-        # merge_gap_chunks(window_size_s) -- reject any individual window
-        # straddling one of those gaps (>30% idle micro-chunks) even though
-        # the span itself was accepted, rather than feeding a mixed-signal
-        # window into the classifier or highlighting it as "inferenced".
-        accepted_windows = []
-        for start_abs, end_abs, span_id in windows:
-            sliced = self._touchid_slice_store(start_abs, end_abs)
-            if sliced is None:
-                continue
-            if window_idle_fraction(sliced[0], self.touchid_idle_baseline, fs) <= MAX_WINDOW_IDLE_FRACTION:
-                accepted_windows.append((start_abs, end_abs, span_id))
-        windows = accepted_windows
-
-        if not windows:
-            self._update_touchid_idle_gate_label('no window ready (idle / accumulating)')
-            self._touchid_maybe_clear_stale_prediction()
-            self._touchid_trim_store()
-            return
-        self._update_touchid_idle_gate_label()
-
-        for start_abs, end_abs, span_id in windows:
-            sliced = self._touchid_slice_store(start_abs, end_abs)
-            if sliced is not None:
-                self._touchid_set_inference_region(sliced[5], is_inferenced=True, span_id=span_id)
-
-        if self.touchid_worker_busy:
-            # A classification is still in flight -- don't submit another; the
-            # worker's own queue is bounded to 1 anyway (a new submission would
-            # just evict this one), so skip straight to leaving these windows
-            # unclassified rather than paying for the array packing below.
-            self._touchid_trim_store()
-            return
-
-        sliced = self._touchid_slice_store(*windows[-1][:2])
-        if sliced is None:
-            self._touchid_trim_store()
-            return
-        window_adc, window_integrated, window_shear_lr, window_shear_tb, window_normal, window_ts = sliced
-
-        self.touchid_worker_busy = True
-        self.touchid_classify_worker.submit({
-            'window_adc': window_adc,
-            'window_integrated': window_integrated,
-            'window_shear_lr': window_shear_lr,
-            'window_shear_tb': window_shear_tb,
-            'window_normal': window_normal,
-            'fs': fs,
-            'classifier': self.touchid_classifier,
-            'window_ts': window_ts,
-        })
-        self._touchid_trim_store()
+        self._touchid_reset_region_coloring()
 
     def on_touchid_window_changed(self, value):
         self.touchid_config.window_size_s = float(value)
@@ -758,27 +591,27 @@ class InferencePanelMixin:
             return
         new_columns = pzt_columns_for_sensor(sensor_number)
         self.touchid_config.pzt_columns = new_columns
-        self._rebuild_touchid_buffers()
         # A sensor switch means a discontinuous physical input stream (a
         # different PZT board), so the causal state (bounded windowed sums,
         # unbounded causal medians) from the old sensor must NOT carry
-        # forward -- reset it, same as touchid_smoother.reset() below.
-        # Skipping this would silently poison every window after the switch
-        # with a stale baseline from the previous sensor.
-        self.touchid_derived_channels = CausalDerivedChannels(pzt_columns=new_columns)
+        # forward, unlike a plain window/hop resize (_rebuild_touchid_buffers)
+        # -- build a wholly fresh processor (fresh CausalDerivedChannels AND
+        # a dropped continuous store/queue, since any live spans referencing
+        # the old store are no longer valid either), same reasoning as
+        # touchid_smoother.reset() below. Skipping this would silently
+        # poison every window after the switch with a stale baseline from
+        # the previous sensor.
+        #
+        # Idle baseline is also per-channel-set -- a different PZT board has
+        # a different noise floor, so a baseline captured for the old sensor
+        # must not silently gate the new one's windows.
+        self.touchid_idle_baseline = load_idle_baseline(new_columns)
+        self.touchid_processor = self._touchid_new_processor()
+        self._touchid_reset_region_coloring()
         self.touchid_smoother.reset()
-        # A different physical sensor board means the continuous store's
-        # existing samples (and any live spans referencing them) are no
-        # longer valid either -- same discontinuity reasoning as the
-        # CausalDerivedChannels reset just above.
-        self._touchid_store_reset()
         self._clear_touchid_stream_curves()
         self._touchid_clear_inference_regions()
         self._touchid_reset_stream_display()
-        # Idle baseline is per-channel-set -- a different PZT board has a
-        # different noise floor, so a baseline captured for the old sensor
-        # must not silently gate the new one's windows.
-        self.touchid_idle_baseline = load_idle_baseline(new_columns)
         self._update_touchid_idle_gate_label()
         self.save_last_touchid_settings()
 
@@ -941,13 +774,29 @@ class InferencePanelMixin:
             self.touchid_timer.start()
 
     def on_touchid_run_on_source_clicked(self):
-        """Run the currently selected/loaded model over whatever's loaded in
-        the Analysis tab -- in-memory cache or a loaded CSV, whichever its
-        Source selector currently points at (analysis_snapshot is populated
-        the same way regardless of source, see analysis_panel.load_analysis_source) --
-        store per-window predictions for the overlay renderer, and switch to
-        the Analysis tab so the user can view them.
+        """Kick off a replay: run the currently selected/loaded model over
+        whatever's loaded in the Analysis tab (in-memory cache or a loaded
+        CSV -- whichever its Source selector currently points at;
+        analysis_snapshot is populated the same way regardless of source,
+        see analysis_panel.load_analysis_source), reusing the EXACT SAME
+        TouchIdStreamProcessor + TouchIdClassifyWorker classes as live
+        streaming so the resulting numbers are identical to what live would
+        have produced for the same raw samples -- see
+        inference/stream_processor.py's module docstring. The actual replay
+        runs tick-by-tick on _touchid_replay_tick (driven by a
+        zero-interval QTimer so it still yields to the Qt event loop,
+        letting the Signal Stream plot/bar chart/region highlights animate
+        like a real live capture); this method just validates preconditions
+        and arms it.
         """
+        if self.touchid_mode != TouchIdMode.NORMAL:
+            QMessageBox.warning(
+                self, 'TouchID',
+                'Cannot start a replay while an idle baseline capture is in progress.'
+                if self.touchid_mode == TouchIdMode.CAPTURING_BASELINE
+                else 'A replay is already in progress.',
+            )
+            return
         snapshot = getattr(self, 'analysis_snapshot', None)
         if snapshot is None:
             QMessageBox.warning(
@@ -963,20 +812,136 @@ class InferencePanelMixin:
             )
             return
 
+        fs = float(snapshot.sample_rate_hz)
+        if fs <= 0:
+            QMessageBox.warning(self, 'TouchID', 'Loaded source has no valid sample rate.')
+            return
         try:
-            predictions = run_inference_on_snapshot(
-                snapshot, self.touchid_classifier, self.touchid_config,
-                idle_baseline=self.touchid_idle_baseline,
-            )
-        except Exception as exc:
-            QMessageBox.warning(self, 'TouchID', f'Inference on analysis source failed: {exc}')
-            if hasattr(self, 'log_status'):
-                self.log_status(f'TouchID: inference on analysis source failed - {exc}')
+            channel_indices = [snapshot.channel_labels.index(col) for col in self.touchid_config.pzt_columns]
+        except ValueError as exc:
+            QMessageBox.warning(self, 'TouchID', f'Source is missing a configured PZT column: {exc}')
+            return
+        if snapshot.sweep_count <= 0:
+            QMessageBox.warning(self, 'TouchID', 'Loaded source has no samples.')
             return
 
+        self.touchid_mode = TouchIdMode.REPLAYING
+        self.touchid_replay_results = []
+        if hasattr(self, 'log_status'):
+            self.log_status('TouchID: starting replay over analysis source')
+
+        if hasattr(self, 'visualization_tabs') and hasattr(self, 'touchid_tab_index'):
+            self.visualization_tabs.setCurrentIndex(self.touchid_tab_index)
+        if self.touchid_timer.isActive():
+            self.touchid_timer.stop()
+
+        # Fresh processor for replay, built at the snapshot's OWN measured
+        # fs -- same discontinuity reasoning as a sensor switch (replaying a
+        # past recording is a discontinuous input stream relative to
+        # whatever live session state exists), using the CURRENT
+        # touchid_config/touchid_idle_baseline: the baseline is a property
+        # of the sensor/hardware, not of live-vs-replay, so reusing the live
+        # session's baseline here is correct.
+        self.touchid_processor = self._touchid_new_processor()
+        self._touchid_reset_region_coloring()
+        self._clear_touchid_stream_curves()
+        self._touchid_clear_inference_regions()
+        self._touchid_reset_stream_display()
+        self.touchid_smoother.reset()
+
+        self._touchid_replay_snapshot = snapshot
+        self._touchid_replay_channel_indices = channel_indices
+        self._touchid_replay_fs = fs
+        self._touchid_replay_cursor = 0
+        self._touchid_replay_hop_n = max(1, round(self.touchid_config.hop_size_s * fs))
+
+        self._touchid_replay_timer = QTimer()
+        self._touchid_replay_timer.setInterval(0)
+        self._touchid_replay_timer.timeout.connect(self._touchid_replay_tick)
+        self._touchid_replay_timer.start()
+
+    def _touchid_replay_tick(self):
+        """One replay step: feed the next hop_size_s-worth-of-sweeps slice of
+        the snapshot into touchid_processor, same chunk size live uses per
+        QTimer tick, then paint + submit exactly like live -- except replay
+        must WAIT for a still-in-flight classification rather than drop it
+        (see touchid_worker_busy's check below): the hard constraint is that
+        every window live's algorithm would have decided to classify
+        actually gets classified and included in the resulting overlay, so
+        neither submitting a new window nor advancing the feed cursor is
+        allowed while one is still pending.
+        """
+        if self.touchid_worker_busy:
+            return  # wait -- do not drop, do not advance (see docstring above)
+
+        snapshot = self._touchid_replay_snapshot
+        total = snapshot.sweep_count
+        cursor = self._touchid_replay_cursor
+        if cursor >= total:
+            self._touchid_finish_replay()
+            return
+
+        fs = self._touchid_replay_fs
+        end = min(cursor + self._touchid_replay_hop_n, total)
+        channel_samples = {
+            col: snapshot.data[cursor:end, idx].astype(np.float64)
+            for col, idx in zip(self.touchid_config.pzt_columns, self._touchid_replay_channel_indices)
+        }
+        if snapshot.timestamps_s.size:
+            timestamps = np.asarray(snapshot.timestamps_s[cursor:end], dtype=np.float64)
+        else:
+            timestamps = np.arange(cursor, end, dtype=np.float64) / fs
+        self._touchid_replay_cursor = end
+
+        self._touchid_push_stream_display(channel_samples, timestamps)
+        self._update_touchid_stream_plot()
+
+        # now_t must NOT be wall-clock time here (unlike live) -- replay runs
+        # the whole capture as fast as possible, so time.monotonic() would
+        # barely advance between ticks and every span would look far younger
+        # than span_stale_timeout_s regardless of how much (sample) time it
+        # actually spans, silently disabling ActiveSampleQueue.evict_stale.
+        # end/fs instead reproduces the same real-time deltas the algorithm
+        # would have seen live for this exact recording (equivalent to the
+        # snapshot's own timestamps_s), so segmentation decisions come out
+        # identical to live's for the same raw samples.
+        now_t = end / fs
+        ready_windows = self.touchid_processor.push_chunk(channel_samples, timestamps, fs, now_t=now_t)
+
+        for window in ready_windows:
+            self._touchid_set_inference_region(window.window_ts, is_inferenced=True, span_id=window.span_id)
+        if ready_windows:
+            # Submit the newest of this tick's windows, same policy as live
+            # -- but unlike live, nothing here drops the rest going forward:
+            # touchid_worker_busy gates the very next tick (see top of this
+            # method), so the next hop can't start until this result is back.
+            self._touchid_submit_window(ready_windows[-1], fs)
+
+    def _touchid_finish_replay(self):
+        """Replay is done (snapshot exhausted and the final submission's
+        result has come back) -- convert touchid_replay_results into the
+        overlay shape the Analysis tab expects, restore live streaming
+        state, and switch to the Analysis tab so the user can view the
+        predictions, mirroring on_touchid_run_on_source_clicked's old
+        end-of-run behavior."""
+        self._touchid_replay_timer.stop()
+        self._touchid_replay_timer.deleteLater()
+        self._touchid_replay_timer = None
+
+        predictions = []
+        for window_ts, probs in self.touchid_replay_results:
+            top_class, top_conf = max(probs.items(), key=lambda kv: kv[1])
+            predictions.append({
+                'start_s': float(window_ts[0]),
+                'end_s': float(window_ts[-1]),
+                'class': top_class,
+                'confidence': float(top_conf),
+                'probs': probs,
+            })
         self.analysis_predicted_labels = predictions
         if hasattr(self, 'log_status'):
-            self.log_status(f'TouchID: predicted {len(predictions)} windows on analysis source')
+            self.log_status(f'TouchID: replay predicted {len(predictions)} windows on analysis source')
+
         if (
             hasattr(self, 'analysis_show_predicted_labels_check')
             and not self.analysis_show_predicted_labels_check.isChecked()
@@ -984,6 +949,20 @@ class InferencePanelMixin:
             self.analysis_show_predicted_labels_check.setChecked(True)
         if hasattr(self, '_render_label_regions'):
             self._render_label_regions()
+
+        self.touchid_mode = TouchIdMode.NORMAL
+        self.touchid_replay_results = []
+        # Discontinuous stream after a replay -- rebuild a fresh live
+        # processor, same reasoning as a sensor switch, so live streaming
+        # resumes clean rather than carrying replay's causal state forward.
+        self.touchid_processor = self._touchid_new_processor()
+        self._touchid_reset_region_coloring()
+        self._clear_touchid_stream_curves()
+        self._touchid_clear_inference_regions()
+        self._touchid_reset_stream_display()
+        self.touchid_smoother.reset()
+        self.sync_touchid_timer_state()
+
         if hasattr(self, 'visualization_tabs') and hasattr(self, 'analysis_tab_index'):
             self.visualization_tabs.setCurrentIndex(self.analysis_tab_index)
         if hasattr(self, 'analysis_inner_tabs'):
@@ -1019,8 +998,17 @@ class InferencePanelMixin:
         if not getattr(self, 'is_capturing', False):
             QMessageBox.warning(self, 'TouchID', 'Start capturing data before recording an idle baseline.')
             return
+        if self.touchid_mode != TouchIdMode.NORMAL:
+            QMessageBox.warning(
+                self, 'TouchID',
+                'Cannot record an idle baseline while a replay is in progress. Wait for it to finish first.'
+                if self.touchid_mode == TouchIdMode.REPLAYING
+                else 'An idle baseline capture is already in progress.',
+            )
+            return
         if self.touchid_idle_capture_active:
             return
+        self.touchid_mode = TouchIdMode.CAPTURING_BASELINE
         self.touchid_idle_capture_active = True
         self.touchid_idle_capture_samples = []
         self.touchid_idle_capture_n_samples = 0
@@ -1034,7 +1022,9 @@ class InferencePanelMixin:
         # A freshly captured baseline means segmentation should start fresh
         # under it rather than replaying already-elapsed history (which was
         # never being stored while no baseline existed) through a new queue.
-        self._touchid_store_reset()
+        self.touchid_processor = self._touchid_new_processor()
+        self._touchid_reset_region_coloring()
+        self.touchid_mode = TouchIdMode.NORMAL
         try:
             save_idle_baseline(baseline)
         except Exception as e:
@@ -1121,7 +1111,7 @@ class InferencePanelMixin:
             col: data_array[:, idx] for col, idx in index_map.items()
         }
 
-        if self.touchid_idle_capture_active:
+        if self.touchid_mode == TouchIdMode.CAPTURING_BASELINE:
             # Accumulate for the baseline fit in parallel with the normal
             # push/plot/inference pipeline below -- NOT a return-early here,
             # since that previously starved _update_touchid_stream_plot for
@@ -1145,15 +1135,6 @@ class InferencePanelMixin:
         self._touchid_push_stream_display(channel_samples, sweep_timestamps)
         self._update_touchid_stream_plot()
 
-        # Advance the derived-channel causal state by exactly this newly-
-        # pushed chunk (not the whole rolling window), so shear/normal stay
-        # continuous across window/hop boundaries (Constraint 0 -- this and
-        # the derivation formula itself are unchanged by the ActiveSampleQueue
-        # redesign below; only which sample-index range gets sliced out of
-        # the resulting continuous streams before featurization changes).
-        pzt_columns = self.touchid_config.pzt_columns
-        derived = self.touchid_derived_channels.process(channel_samples)
-
         fs = self.get_measured_sweep_rate_hz()
         if fs <= 0:
             return
@@ -1164,64 +1145,52 @@ class InferencePanelMixin:
         if self.touchid_classifier is None:
             return
 
-        if self.touchid_idle_baseline is None:
-            # No baseline captured yet -- fall back to the plain fixed
-            # window_size_s/hop_size_s grid via RollingBuffer, classifying
-            # every window unconditionally (matches is_window_quality's old
-            # no-op-without-a-baseline behavior).
-            derived_channel_samples = {f'integrated_{col}': derived['integrated'][col] for col in pzt_columns}
-            derived_channel_samples['shear_lr'] = derived['shear_lr']
-            derived_channel_samples['shear_tb'] = derived['shear_tb']
-            derived_channel_samples['normal'] = derived['normal']
-            self.touchid_buffer.push(channel_samples, sweep_timestamps)
-            self.touchid_derived_buffer.push(derived_channel_samples, sweep_timestamps)
+        # Advance the derived-channel causal state by exactly this newly-
+        # pushed chunk (not the whole rolling window), so shear/normal stay
+        # continuous across window/hop boundaries, then run it through
+        # whichever windowing branch is active (fixed grid vs.
+        # ActiveSampleQueue segmentation) -- see TouchIdStreamProcessor.push_chunk.
+        ready_windows = self.touchid_processor.push_chunk(
+            channel_samples, sweep_timestamps, fs, now_t=time.monotonic(),
+        )
+        self._touchid_handle_ready_windows(ready_windows, fs)
 
-            window = self.touchid_buffer.get_window(fs=fs)
-            if window is None:
-                return
-            window_adc, window_ts = window
-            derived_window = self.touchid_derived_buffer.get_window(fs=fs)
-            if derived_window is None:
-                return
-            derived_window_adc, _derived_ts = derived_window
-            n_pzt = len(pzt_columns)
-            window_integrated = derived_window_adc[:, :n_pzt]
-            window_shear_lr = derived_window_adc[:, n_pzt]
-            window_shear_tb = derived_window_adc[:, n_pzt + 1]
-            window_normal = derived_window_adc[:, n_pzt + 2]
+    def _touchid_handle_ready_windows(self, ready_windows: list, fs: float):
+        """Paint the "being inferenced" highlight for every window this
+        tick's push_chunk produced (they were all genuinely eligible), then
+        submit only the newest to the classify worker -- matching the old
+        touchid_worker_busy behavior: while a classification is still in
+        flight, don't submit another (the worker's own queue is bounded to
+        1 anyway, so a new submission would just evict a still-pending one),
+        skip straight to leaving the rest unclassified rather than paying
+        for the array packing below."""
+        if not ready_windows:
+            if self.touchid_processor.idle_baseline is not None:
+                self._update_touchid_idle_gate_label('no window ready (idle / accumulating)')
+                self._touchid_maybe_clear_stale_prediction()
+            return
+        self._update_touchid_idle_gate_label()
 
-            self._touchid_set_inference_region(window_ts, is_inferenced=True)
-            self._update_touchid_idle_gate_label()
+        for window in ready_windows:
+            self._touchid_set_inference_region(window.window_ts, is_inferenced=True, span_id=window.span_id)
 
-            if self.touchid_worker_busy:
-                # A classification is still in flight -- don't submit another; the
-                # worker's own queue is bounded to 1 anyway (a new submission would
-                # just evict this one), so skip straight to leaving this window
-                # unclassified rather than paying for the array packing below.
-                return
-
-            self.touchid_worker_busy = True
-            self.touchid_classify_worker.submit({
-                'window_adc': window_adc,
-                'window_integrated': window_integrated,
-                'window_shear_lr': window_shear_lr,
-                'window_shear_tb': window_shear_tb,
-                'window_normal': window_normal,
-                'fs': fs,
-                'classifier': self.touchid_classifier,
-                'window_ts': window_ts,
-            })
+        if self.touchid_worker_busy:
             return
 
-        # Baseline present: sample-accurate ActiveSampleQueue segmentation
-        # (inference/segmentation.py) -- feed this tick's newly-derived
-        # samples into the continuous store, then chunk/segment/classify off
-        # of it instead of a fixed hop grid.
-        self._touchid_append_to_store(channel_samples, derived, sweep_timestamps)
-        self._touchid_ensure_active_queue(fs)
-        if self.touchid_active_queue is None:
-            return
-        self._touchid_drain_active_queue(fs)
+        self._touchid_submit_window(ready_windows[-1], fs)
+
+    def _touchid_submit_window(self, window, fs: float):
+        self.touchid_worker_busy = True
+        self.touchid_classify_worker.submit({
+            'window_adc': window.window_adc,
+            'window_integrated': window.window_integrated,
+            'window_shear_lr': window.window_shear_lr,
+            'window_shear_tb': window.window_shear_tb,
+            'window_normal': window.window_normal,
+            'fs': fs,
+            'classifier': self.touchid_classifier,
+            'window_ts': window.window_ts,
+        })
 
     def _on_touchid_classify_error(self, message: str):
         self.touchid_worker_busy = False
@@ -1233,6 +1202,14 @@ class InferencePanelMixin:
         this always runs on the GUI thread even though the worker computed
         probs off-thread)."""
         self.touchid_worker_busy = False
+
+        if self.touchid_mode == TouchIdMode.REPLAYING:
+            # Collected here (rather than at submission time) so the raw
+            # probs used for the final Analysis-tab overlay are exactly what
+            # the classifier returned -- see _touchid_finish_replay, which
+            # converts this list into the {"start_s", "end_s", "class",
+            # "confidence", "probs"} shape the overlay renderer expects.
+            self.touchid_replay_results.append((window_ts, probs))
 
         self.touchid_last_classification_time = time.monotonic()
         smoothed = self.touchid_smoother.update(probs)

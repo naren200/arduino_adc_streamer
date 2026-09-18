@@ -29,9 +29,9 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from inference.config import InferenceConfig
-from inference.offline import run_inference_on_snapshot
 from inference.quality_gate import fit_idle_baseline, merge_gap_chunks, MICRO_CHUNK_S
 from inference.segmentation import ActiveSampleQueue
+from inference.stream_processor import TouchIdStreamProcessor
 
 _TEXTURE_PIEZO_ROOT = _REPO_ROOT.parent / "texture_piezo" / "data" / "raw" / "sensor_v12d_7_26" / "ch5"
 
@@ -185,52 +185,59 @@ def main() -> None:
     else:
         print("  PASS: zero false positives on pure idle")
 
-    # --- (d): smoke-test offline.run_inference_on_snapshot itself ------
-    # _replay above exercises ActiveSampleQueue directly; this exercises the
-    # actual wired-in offline.py code path (classify_at's (start, end)
-    # signature, the ActiveSampleQueue-driven loop, and the no-baseline
-    # fixed-grid fallback), which nothing else here touches.
+    # --- (d): smoke-test TouchIdStreamProcessor's own replay-style drive
+    # loop -- _replay above exercises ActiveSampleQueue directly; this
+    # exercises the actual shared class both live streaming and offline
+    # replay drive (gui/inference_panel.py's _touchid_replay_tick and
+    # update_touchid_display both call push_chunk), covering the
+    # ActiveSampleQueue-driven branch and the no-baseline fixed-grid
+    # fallback, which nothing else here touches.
     print()
     try:
-        all_ok = _check_offline_path(samples, rel_s, fs, config, baseline) and all_ok
+        all_ok = _check_stream_processor_path(samples, rel_s, fs, config, baseline) and all_ok
     except Exception as exc:
         all_ok = False
-        print(f"  FAIL: run_inference_on_snapshot raised: {exc!r}")
+        print(f"  FAIL: TouchIdStreamProcessor.push_chunk raised: {exc!r}")
 
     print()
     print("OVERALL: PASS" if all_ok else "OVERALL: FAIL")
 
 
-class _StubSnapshot:
-    def __init__(self, samples: np.ndarray, rel_s: np.ndarray, fs: float, pzt_columns: list[str]):
-        self.data = samples
-        self.timestamps_s = rel_s
-        self.sample_rate_hz = fs
-        self.channel_labels = list(pzt_columns)
+def _drive_stream_processor(samples, rel_s, fs, config, idle_baseline):
+    """Replay-style drive loop: feed the whole capture through push_chunk in
+    hop_size_s-sized slices (as fast as possible, sample-derived now_t --
+    same pattern gui/inference_panel.py's _touchid_replay_tick uses), and
+    collect every ReadyWindow it yields."""
+    processor = TouchIdStreamProcessor(
+        pzt_columns=list(PZT_COLUMNS),
+        window_size_s=config.window_size_s,
+        hop_size_s=config.hop_size_s,
+        span_stale_timeout_s=config.span_stale_timeout_s,
+        min_span_fill_ratio=config.min_span_fill_ratio,
+        idle_baseline=idle_baseline,
+    )
+    hop_n = max(1, round(config.hop_size_s * fs))
+    n = len(samples)
+    idx = 0
+    windows = []
+    while idx < n:
+        end = min(idx + hop_n, n)
+        channel_samples = {col: samples[idx:end, i] for i, col in enumerate(PZT_COLUMNS)}
+        now_t = end / fs
+        windows.extend(processor.push_chunk(channel_samples, rel_s[idx:end], fs, now_t=now_t))
+        idx = end
+    return windows
 
-    @property
-    def sweep_count(self) -> int:
-        return len(self.data)
 
-
-class _StubClassifier:
-    def predict_proba(self, features, window_channels=None, window_integrated=None):
-        return {"idle": 1.0, "bumpy_wood": 0.0}
-
-
-def _check_offline_path(samples, rel_s, fs, config, baseline) -> bool:
-    snapshot = _StubSnapshot(samples, rel_s, fs, PZT_COLUMNS)
-    classifier = _StubClassifier()
-    config.pzt_columns = list(PZT_COLUMNS)  # snapshot's real columns (PZT5_*), not the default PZT3_*
-
-    results_gated = run_inference_on_snapshot(snapshot, classifier, config, idle_baseline=baseline)
-    print(f"offline.run_inference_on_snapshot (gated): {len(results_gated)} windows")
-    ok = len(results_gated) > 0 and all(r["start_s"] < r["end_s"] for r in results_gated)
+def _check_stream_processor_path(samples, rel_s, fs, config, baseline) -> bool:
+    windows_gated = _drive_stream_processor(samples, rel_s, fs, config, baseline)
+    print(f"TouchIdStreamProcessor replay-style drive (gated): {len(windows_gated)} windows")
+    ok = len(windows_gated) > 0 and all(w.window_ts[0] < w.window_ts[-1] for w in windows_gated)
     print("  PASS" if ok else "  FAIL: no windows, or a start_s >= end_s")
 
-    results_ungated = run_inference_on_snapshot(snapshot, classifier, config, idle_baseline=None)
-    print(f"offline.run_inference_on_snapshot (no baseline, fixed grid): {len(results_ungated)} windows")
-    ok2 = len(results_ungated) > 0 and all(r["start_s"] < r["end_s"] for r in results_ungated)
+    windows_ungated = _drive_stream_processor(samples, rel_s, fs, config, None)
+    print(f"TouchIdStreamProcessor replay-style drive (no baseline, fixed grid): {len(windows_ungated)} windows")
+    ok2 = len(windows_ungated) > 0 and all(w.window_ts[0] < w.window_ts[-1] for w in windows_ungated)
     print("  PASS" if ok2 else "  FAIL: no windows, or a start_s >= end_s")
 
     return ok and ok2
