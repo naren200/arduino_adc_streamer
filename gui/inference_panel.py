@@ -476,6 +476,9 @@ class InferencePanelMixin:
         class_axis_font.setPointSize(11)
         class_axis_font.setBold(True)
         axis.setStyle(tickFont=class_axis_font)
+        self.touchid_plot_widget.setMouseEnabled(x=False, y=False)
+        self.touchid_plot_widget.getPlotItem().setMenuEnabled(False)
+        self.touchid_plot_widget.getPlotItem().hideButtons()
         display_layout.addWidget(self.touchid_plot_widget)
 
         plots_col.addWidget(display_group, 1)
