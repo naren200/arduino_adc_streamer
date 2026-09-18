@@ -60,6 +60,31 @@ WARMUP_SAMPLES = 200
 # distinct timers, two distinct jobs -- do not collapse them.
 FRAGMENT_MAX_AGE_S = 3.0
 
+# idle_gap_chunks_cap's per-chunk strip decision has no hysteresis: it fires
+# the instant a run of idle chunks reaches the cap, with no way to tell "this
+# is a genuine return to idle" from "this is one micro-chunk of settle/creep
+# dip in the middle of one continuous touch" (quality_gate.py's own
+# validation note: gaps between real touch events contain settle/creep
+# dynamics, not clean idle -- so a touch can legitimately dip back inside the
+# idle band for a chunk or two without the contact actually ending).
+# Observed effect (texture_piezo only_leather_and_idle_v2 capture): a single
+# borderline dip strips the fragment, and the resulting trailing remainder is
+# often too short for window_padding's MIN_REAL_FRACTION floor, so it's
+# dropped outright before the touch even gets a chance to resume -- one
+# continuous touch shows up as two separate windowed regions with real
+# signal missing between them.
+#
+# Fix: give the strip decision one chance to be wrong. A just-closed
+# fragment is held (not yet handed to ready_windows() for padding/rejection)
+# for up to MERGE_GRACE_MULTIPLIER x the strip threshold's worth of further
+# idle chunks; if real activity resumes within that grace window, it's
+# treated as the SAME touch continuing (merged back into the held fragment)
+# rather than a new one starting. Genuine inter-touch idle in that capture
+# runs 0.6-1.3s -- several times this grace window -- so real separations
+# between distinct touches still strip correctly; only a borderline
+# single-chunk dip gets absorbed, and only for as long as the hold lasts.
+MERGE_GRACE_MULTIPLIER = 2.0
+
 
 @dataclass
 class _Fragment:
@@ -109,8 +134,18 @@ class ActiveSampleQueue:
         self.baseline = baseline
         self.k = baseline.k if k is None else k
         self._idle_gap_chunks_cap = idle_gap_chunks_cap(window_size_s)
+        # Chunk-count grace window for the hold-and-merge check, same units
+        # as _idle_run_chunks/_idle_gap_chunks_cap.
+        self._merge_grace_chunks = round(MERGE_GRACE_MULTIPLIER * self._idle_gap_chunks_cap)
 
         self._fragments: list[_Fragment] = []
+
+        # A fragment that just got closed by the idle-strip, held back from
+        # self._fragments (and therefore from ready_windows()'s
+        # padding/rejection decision) while we wait to see if activity
+        # resumes within _merge_grace_chunks -- see MERGE_GRACE_MULTIPLIER.
+        self._held_fragment: _Fragment | None = None
+        self._held_idle_chunks = 0
 
         # Monotonically increasing id identifying one continuous active
         # fragment (one real touch event) -- lets a caller (the GUI's
@@ -149,6 +184,34 @@ class ActiveSampleQueue:
         active = chunk_is_active(chunk_samples, self.baseline, self.k)
         self._last_now_t = now_t
 
+        if self._held_fragment is not None:
+            if active:
+                # Resumed within the grace window -- this is the same touch
+                # continuing, not a new one. Reopen at the held fragment's
+                # own start so the whole span (including the idle gap that
+                # triggered the strip) stays one contiguous fragment, same
+                # as an absorbed (never-stripped) gap already is.
+                prev = self._held_fragment
+                self._held_fragment = None
+                self._held_idle_chunks = 0
+                self._open_start = prev.start_idx
+                self._open_start_ts = prev.start_ts
+                self._open_frag_id = prev.frag_id
+                self._open_end = end_idx
+                self._idle_run_chunks = 0
+                self._idle_run_start_idx = None
+                return
+
+            self._held_idle_chunks += 1
+            if self._held_idle_chunks > self._merge_grace_chunks:
+                # Grace window elapsed with no resumption -- genuinely idle
+                # now, hand it off to ready_windows() for the usual
+                # padding/rejection treatment.
+                self._fragments.append(self._held_fragment)
+                self._held_fragment = None
+                self._held_idle_chunks = 0
+            return
+
         if self._open_start is None:
             self._open_start = start_idx
             self._open_start_ts = now_t
@@ -173,11 +236,13 @@ class ActiveSampleQueue:
         # fragment (using the tracked start of this idle run, not a
         # chunk-count*width reconstruction, since chunk width isn't
         # guaranteed uniform) and close whatever real active signal is left.
+        # Hold it rather than closing it outright -- see _held_fragment.
         fragment_end = self._idle_run_start_idx
         if fragment_end > self._open_start:
-            self._fragments.append(
-                _Fragment(self._open_start, fragment_end, self._open_start_ts, now_t, self._open_frag_id)
+            self._held_fragment = _Fragment(
+                self._open_start, fragment_end, self._open_start_ts, now_t, self._open_frag_id
             )
+            self._held_idle_chunks = 0
 
         self._open_start = None
         self._open_end = None
@@ -302,6 +367,13 @@ class ActiveSampleQueue:
         merge-distance cap beyond this."""
         self._fragments = [f for f in self._fragments if now_t - f.end_ts <= FRAGMENT_MAX_AGE_S]
 
+        if self._held_fragment is not None and now_t - self._held_fragment.end_ts > FRAGMENT_MAX_AGE_S:
+            # Stream stopped mid-hold (e.g. capture ended) -- nothing will
+            # ever call push_micro_chunk again to resolve the hold, so drop
+            # it directly rather than carrying it forever.
+            self._held_fragment = None
+            self._held_idle_chunks = 0
+
         if self._open_start is not None and self._last_now_t is not None:
             if now_t - self._last_now_t > FRAGMENT_MAX_AGE_S:
                 self._open_start = None
@@ -320,4 +392,6 @@ class ActiveSampleQueue:
         candidates = [f.start_idx for f in self._fragments]
         if self._open_start is not None:
             candidates.append(self._open_start)
+        if self._held_fragment is not None:
+            candidates.append(self._held_fragment.start_idx)
         return min(candidates) if candidates else None

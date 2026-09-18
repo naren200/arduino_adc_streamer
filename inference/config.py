@@ -18,7 +18,6 @@ from file_operations.settings_persistence import load_settings_payload, save_set
 
 sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
 from clip_windowing_utils_v1 import CHANNEL_LABELS  # noqa: E402
-from clip_windowing_utils_v1 import PZT_COLUMNS as _DEFAULT_PZT_COLUMNS  # noqa: E402
 
 # texture_piezo's channel-suffix order (B/L/C/R/T) for one PZT sensor board,
 # independent of which physical sensor number it's wired up as -- see
@@ -28,7 +27,7 @@ from clip_windowing_utils_v1 import PZT_COLUMNS as _DEFAULT_PZT_COLUMNS  # noqa:
 # those onto PZT3_* at ingestion (drag_detection_utils_v1._canonicalize_pzt_columns),
 # but the live/offline GUI pipeline works with whichever board is actually
 # streaming, so it needs to build the right column names itself.
-DEFAULT_PZT_SENSOR_NUMBER = "3"
+DEFAULT_PZT_SENSOR_NUMBER = "5"
 
 TOUCHID_SETTINGS_PAYLOAD_KEY = "touchid_settings"
 
@@ -47,7 +46,7 @@ _CHECKPOINT_STEM_PREFIX = {
 @dataclass
 class InferenceConfig:
     window_size_s: float = 0.5      # independent literal, NOT imported from training config
-    hop_size_s: float = 0.5         # user-adjustable via GUI spinbox
+    hop_size_s: float = 0.1         # user-adjustable via GUI spinbox
     min_span_fill_ratio: float = 0.08  # UNUSED as of the fragment-stitching rewrite --
                                         # ActiveSampleQueue.expire() uses a single
                                         # FRAGMENT_MAX_AGE_S rule with no separate
@@ -61,10 +60,10 @@ class InferenceConfig:
                                         # fragments are instead padded out to a full
                                         # window using history -- see
                                         # inference/window_padding.py.
-    pzt_columns: list[str] = field(default_factory=lambda: list(_DEFAULT_PZT_COLUMNS))
-    smoothing_alpha: float = 0.9    # EMA alpha for ConfidenceSmoother, user-adjustable
+    pzt_columns: list[str] = field(default_factory=lambda: pzt_columns_for_sensor(DEFAULT_PZT_SENSOR_NUMBER))
+    smoothing_alpha: float = 0.4    # EMA alpha for ConfidenceSmoother, user-adjustable
     confidence_threshold: float = 0.6  # bar-chart gray/red cutoff + latched "last detected" gate, user-adjustable
-    model_type: str = "ann"         # "ann" | "cnn" | "quad" | "penta" — which architecture is active
+    model_type: str = "penta"       # "ann" | "cnn" | "quad" | "penta" — which architecture is active
     ann_model_path: str = str(TEXTURE_PIEZO_MODELS / "texture_ann_v2.pt")
     cnn_model_path: str = str(TEXTURE_PIEZO_MODELS / "texture_cnn_v2.pt")
     quad_model_path: str = str(TEXTURE_PIEZO_MODELS / "texture_quadbranch_v4.pt")
