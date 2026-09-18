@@ -29,7 +29,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from inference.config import InferenceConfig
-from inference.quality_gate import fit_idle_baseline, merge_gap_chunks, MICRO_CHUNK_S
+from inference.quality_gate import fit_idle_baseline, idle_gap_chunks_cap, MICRO_CHUNK_S
 from inference.segmentation import ActiveSampleQueue
 from inference.stream_processor import TouchIdStreamProcessor
 
@@ -58,11 +58,12 @@ def _replay(
     samples: np.ndarray, fs: float, config: InferenceConfig, baseline,
 ) -> tuple[ActiveSampleQueue, list[tuple[int, int]]]:
     """Feed the whole capture through in 0.05s micro-chunks, draining
-    ready_windows() and running evict_stale() every tick -- matching how the
+    ready_windows() and running expire() every tick -- matching how the
     live GUI panel and offline.py's batch loop both use ActiveSampleQueue
-    (draining as you go, not deferred to the end): evict_stale drops
-    finalized spans once they're older than span_stale_timeout_s, so windows
-    must be pulled out via ready_windows() before that cadence, not after."""
+    (draining as you go, not deferred to the end): expire drops fragments
+    once their most recent sample is older than FRAGMENT_MAX_AGE_S, so
+    windows must be pulled out via ready_windows() before that cadence, not
+    after."""
     queue = ActiveSampleQueue(
         fs=fs, window_size_s=config.window_size_s, hop_size_s=config.hop_size_s, baseline=baseline,
     )
@@ -76,18 +77,18 @@ def _replay(
         queue.push_micro_chunk((idx, end), samples[idx:end], now_t)
         idx = end
         windows.extend(queue.ready_windows())
-        queue.evict_stale(now_t, config.min_span_fill_ratio, config.span_stale_timeout_s)
+        queue.expire(now_t)
     return queue, windows
 
 
 def _merged_ground_truth_runs(labels_path: Path, window_size_s: float) -> list[tuple[float, float]]:
     """Merge labeled segments separated by gaps shorter than
-    merge_gap_chunks(window_size_s) worth of time, mirroring
+    idle_gap_chunks_cap(window_size_s) worth of time, mirroring
     ActiveSampleQueue's own short-idle-gap absorption, so the comparison
     uses the same tolerance the segmentation is allowed to use."""
     payload = json.loads(labels_path.read_text())
     segments = sorted(payload["segments"], key=lambda s: s["start_s"])
-    merge_gap_s = merge_gap_chunks(window_size_s) * MICRO_CHUNK_S
+    merge_gap_s = idle_gap_chunks_cap(window_size_s) * MICRO_CHUNK_S
     runs: list[list[float]] = []
     for seg in segments:
         if runs and seg["start_s"] - runs[-1][1] < merge_gap_s:

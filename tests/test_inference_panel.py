@@ -126,8 +126,8 @@ class TouchIdLivePathTests(unittest.TestCase):
         self.assertIn('waiting for streaming channels', harness.touchid_idle_gate_label.text())
 
 
-class ActiveSampleQueueSpanIdTests(unittest.TestCase):
-    """ready_windows() must expose a stable span_id so callers (the GUI's
+class ActiveSampleQueueFragIdTests(unittest.TestCase):
+    """ready_windows() must expose a stable frag_id so callers (the GUI's
     per-segment inference-region coloring) can tell "same touch event" from
     "a new one started" without comparing index ranges."""
 
@@ -141,7 +141,7 @@ class ActiveSampleQueueSpanIdTests(unittest.TestCase):
             captured_duration_s=5.0,
         )
 
-    def test_windows_from_same_span_share_span_id(self):
+    def test_windows_from_same_fragment_share_frag_id(self):
         fs = 1000.0
         queue = ActiveSampleQueue(
             fs=fs, window_size_s=0.1, hop_size_s=0.05, baseline=self._baseline(),
@@ -152,7 +152,7 @@ class ActiveSampleQueueSpanIdTests(unittest.TestCase):
         now_t = 0.0
         windows = []
         # Push several active chunks, well past one window_size_s, with no
-        # idle gap -- should all belong to the same open span.
+        # idle gap -- should all belong to the same open fragment.
         for _ in range(6):
             queue.push_micro_chunk((idx, idx + chunk_n), active_chunk, now_t)
             idx += chunk_n
@@ -160,10 +160,10 @@ class ActiveSampleQueueSpanIdTests(unittest.TestCase):
             windows.extend(queue.ready_windows())
 
         self.assertGreaterEqual(len(windows), 2)
-        span_ids = {w[2] for w in windows}
-        self.assertEqual(len(span_ids), 1)
+        frag_ids = {w[2] for w in windows}
+        self.assertEqual(len(frag_ids), 1)
 
-    def test_new_span_after_idle_gets_a_new_span_id(self):
+    def test_new_fragment_after_idle_gets_a_new_frag_id(self):
         fs = 1000.0
         queue = ActiveSampleQueue(
             fs=fs, window_size_s=0.1, hop_size_s=0.05, baseline=self._baseline(),
@@ -184,14 +184,15 @@ class ActiveSampleQueueSpanIdTests(unittest.TestCase):
                 windows.extend(queue.ready_windows())
 
         push(active_chunk, 4)
-        # Long enough idle run to force a genuine finalize (not just merged).
+        # Long enough idle run to force a genuine strip-and-close (not just
+        # absorbed inline).
         push(idle_chunk, 10)
         push(active_chunk, 4)
 
-        span_ids_seen = [w[2] for w in windows]
-        first_span = span_ids_seen[0]
-        last_span = span_ids_seen[-1]
-        self.assertNotEqual(first_span, last_span)
+        frag_ids_seen = [w[2] for w in windows]
+        first_frag = frag_ids_seen[0]
+        last_frag = frag_ids_seen[-1]
+        self.assertNotEqual(first_frag, last_frag)
 
 
 class TouchIdModeGuardTests(unittest.TestCase):

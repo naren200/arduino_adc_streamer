@@ -20,7 +20,7 @@ Owns:
   - The continuous raw+derived sample store + its trim/slice logic, feeding
     ActiveSampleQueue's index-only bookkeeping (used once a baseline exists).
   - The ActiveSampleQueue lifecycle itself (lazy construction once fs is
-    known, micro-chunking, idle-fraction window rejection).
+    known, micro-chunking, fragment expiry).
 
 Does NOT own: classification (the caller submits ReadyWindows to whatever
 worker/synchronous path it likes), the "which of this tick's windows to
@@ -38,7 +38,7 @@ import numpy as np
 
 from ._paths import TEXTURE_PIEZO_SRC
 from .buffer import RollingBuffer
-from .quality_gate import IdleBaseline, MAX_WINDOW_IDLE_FRACTION, MICRO_CHUNK_S, window_idle_fraction
+from .quality_gate import IdleBaseline, MICRO_CHUNK_S
 from .segmentation import ActiveSampleQueue
 
 sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
@@ -48,9 +48,9 @@ from causal_derived_channels import CausalDerivedChannels  # noqa: E402
 @dataclass
 class ReadyWindow:
     """One classifier-ready window, plus the bookkeeping the caller needs to
-    paint it and submit it. span_id is None in the fixed-grid fallback branch
-    (no span concept there -- see _touchid_region_color_for_span's docstring
-    in gui/inference_panel.py for how callers use this)."""
+    paint it and submit it. frag_id is None in the fixed-grid fallback branch
+    (no fragment concept there -- see _touchid_region_color_for_span's
+    docstring in gui/inference_panel.py for how callers use this)."""
 
     window_adc: np.ndarray
     window_integrated: np.ndarray
@@ -58,7 +58,7 @@ class ReadyWindow:
     window_shear_tb: np.ndarray
     window_normal: np.ndarray
     window_ts: np.ndarray
-    span_id: int | None
+    frag_id: int | None
 
 
 class TouchIdStreamProcessor:
@@ -203,7 +203,7 @@ class TouchIdStreamProcessor:
 
         now_t is caller-supplied, never read from the wall clock in here:
         live streaming passes time.monotonic() (hops really do arrive
-        ~hop_size_s apart in real time, so ActiveSampleQueue.evict_stale's
+        ~hop_size_s apart in real time, so ActiveSampleQueue.expire's
         staleness timeout means what it says). Replay must NOT pass
         wall-clock time -- it runs the whole capture as fast as possible, so
         wall-clock would barely advance between chunks and every span would
@@ -211,7 +211,7 @@ class TouchIdStreamProcessor:
         (sample-time) history it actually spans, silently disabling eviction.
         Replay instead passes a sample-derived clock (e.g.
         end_sample_index / fs, matching the snapshot's own timestamps_s) so
-        evict_stale sees the same real-time deltas the algorithm would have
+        expire sees the same real-time deltas the algorithm would have
         seen live for that exact recording, reproducing identical
         segmentation decisions.
         """
@@ -256,7 +256,7 @@ class TouchIdStreamProcessor:
             window_shear_tb=window_shear_tb,
             window_normal=window_normal,
             window_ts=window_ts,
-            span_id=None,
+            frag_id=None,
         )]
 
     def _push_chunk_active_queue(
@@ -269,9 +269,11 @@ class TouchIdStreamProcessor:
 
         Chunks any newly-appended continuous-store samples into 0.05s
         micro-chunks, feeds them into the queue, drains whatever windows it
-        yields, rejects any window straddling a merged-away idle gap (>30%
-        idle micro-chunks -- see quality_gate.window_idle_fraction), and
-        evicts stale spans."""
+        yields, and expires fragments too old to still matter. Idle is now
+        stripped out of a fragment before windowing (not rejected after), so
+        a returned window cannot straddle a genuine idle gap by
+        construction -- there is no post-hoc idle-fraction rejection step
+        anymore."""
         self._append_to_store(channel_samples, derived, timestamps)
         self._ensure_active_queue(fs)
         queue = self.active_queue
@@ -289,22 +291,14 @@ class TouchIdStreamProcessor:
             self._chunk_cursor_abs = end_abs
 
         windows = queue.ready_windows(store_base_abs=self._store_base_abs)
-        queue.evict_stale(now_t, self.min_span_fill_ratio, self.span_stale_timeout_s)
+        queue.expire(now_t)
 
-        # A merged span can fuse several genuinely separate touch events when
-        # the idle gap between them is shorter than
-        # merge_gap_chunks(window_size_s) -- reject any individual window
-        # straddling one of those gaps (>30% idle micro-chunks) even though
-        # the span itself was accepted, rather than feeding a mixed-signal
-        # window into the classifier or highlighting it as "inferenced".
         ready: list[ReadyWindow] = []
-        for start_abs, end_abs, span_id in windows:
+        for start_abs, end_abs, frag_id in windows:
             sliced = self._slice_store(start_abs, end_abs)
             if sliced is None:
                 continue
             window_adc = sliced[0]
-            if window_idle_fraction(window_adc, self.idle_baseline, fs) > MAX_WINDOW_IDLE_FRACTION:
-                continue
             window_integrated, window_shear_lr, window_shear_tb, window_normal, window_ts = sliced[1:]
             ready.append(ReadyWindow(
                 window_adc=window_adc,
@@ -313,7 +307,7 @@ class TouchIdStreamProcessor:
                 window_shear_tb=window_shear_tb,
                 window_normal=window_normal,
                 window_ts=window_ts,
-                span_id=span_id,
+                frag_id=frag_id,
             ))
 
         self._trim_store()

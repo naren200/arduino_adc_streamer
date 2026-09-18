@@ -3,7 +3,7 @@ Short-Span History Padding
 =============================
 When a real active span (see segmentation.ActiveSampleQueue) is shorter than
 window_size_s, the classifier previously either got nothing (the span sat
-until evict_stale dropped it unclassified) or -- briefly, before this module
+until expire dropped it unclassified) or -- briefly, before this module
 existed -- got just the short span alone, which starved feature extraction of
 enough signal and produced wrong classifications (observed: a ~0.15s touch
 tail misclassified as bumpy_wood instead of the touch's own tiona class,

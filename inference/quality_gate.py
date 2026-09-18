@@ -3,8 +3,8 @@ Idle Baseline + Per-Chunk Activity Test
 =========================================
 Fits a per-channel mean/std "idle" baseline from a short no-contact capture
 of the live sensor, and provides the shared 0.05s-micro-chunk-vs-idle-band
-activity test (chunk_is_active) plus the merge-gap threshold
-(merge_gap_chunks) that both feed inference/segmentation.py's
+activity test (chunk_is_active) plus the idle-strip threshold
+(idle_gap_chunks_cap) that both feed inference/segmentation.py's
 ActiveSampleQueue -- the sample-accurate replacement for this module's old
 is_window_quality gate (removed; see segmentation.py's module docstring for
 why a fixed-hop-grid accept/reject gate was replaced).
@@ -78,36 +78,11 @@ def chunk_is_active(chunk_samples: np.ndarray, baseline: IdleBaseline, k: float 
     return bool(out_of_band.any())
 
 
-MAX_WINDOW_IDLE_FRACTION = 0.25
-
-
-def window_idle_fraction(window_samples: np.ndarray, baseline: IdleBaseline, fs: float, k: float | None = None) -> float:
-    """Fraction of this window's own 0.05s micro-chunks that are idle (i.e.
-    NOT chunk_is_active), at the same granularity/activity test
-    ActiveSampleQueue uses to build spans. A merged span can fuse several
-    genuinely separate touch events together when the idle gap between them
-    is shorter than merge_gap_chunks(window_size_s) -- this catches a window
-    sliced from such a span that straddles one of those gaps, even though the
-    span itself (and thus the window) was accepted."""
-    if len(window_samples) == 0:
-        return 1.0
-    chunk_n = max(1, round(MICRO_CHUNK_S * fs))
-    n_chunks = 0
-    n_idle = 0
-    idx = 0
-    while idx < len(window_samples):
-        end = min(idx + chunk_n, len(window_samples))
-        n_chunks += 1
-        if not chunk_is_active(window_samples[idx:end], baseline, k):
-            n_idle += 1
-        idx = end
-    return n_idle / n_chunks
-
-
-def merge_gap_chunks(window_size_s: float) -> int:
-    """Idle runs shorter than this many micro-chunks get merge-absorbed into
-    the surrounding active span. Threshold is window_size_s/3, rounded to
-    the nearest whole micro-chunk."""
+def idle_gap_chunks_cap(window_size_s: float) -> int:
+    """Idle runs shorter than this many micro-chunks stay inline (absorbed)
+    in a fragment; runs at or beyond it are stripped out entirely and close
+    the fragment (see segmentation.ActiveSampleQueue). Threshold is
+    window_size_s/3, rounded to the nearest whole micro-chunk."""
     gap_s = window_size_s / 3.0
     return max(1, round(gap_s / MICRO_CHUNK_S))
 

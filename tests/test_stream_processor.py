@@ -54,7 +54,7 @@ class FixedGridFallbackTests(unittest.TestCase):
         ready = processor.push_chunk(_chunk(10, 5.0), _timestamps(0.0, 10, fs), fs, now_t=0.0)
         self.assertEqual(ready, [])
 
-    def test_window_size_worth_of_samples_yields_one_window_with_span_id_none(self):
+    def test_window_size_worth_of_samples_yields_one_window_with_frag_id_none(self):
         processor = self._processor()
         fs = 1000.0
         ready = []
@@ -66,7 +66,7 @@ class FixedGridFallbackTests(unittest.TestCase):
             t += 50 / fs
         self.assertEqual(len(ready), 1)
         window = ready[0]
-        self.assertIsNone(window.span_id)
+        self.assertIsNone(window.frag_id)
         self.assertEqual(len(window.window_adc), 100)
         self.assertEqual(len(window.window_ts), 100)
 
@@ -87,8 +87,8 @@ class FixedGridFallbackTests(unittest.TestCase):
 
 class ActiveSampleQueuePathTests(unittest.TestCase):
     """idle_baseline present -- push_chunk drives ActiveSampleQueue
-    segmentation instead of the fixed grid, and rejects windows that are
-    mostly idle micro-chunks (window_idle_fraction gate)."""
+    segmentation instead of the fixed grid, stripping idle out of a
+    fragment before windowing rather than rejecting a window after."""
 
     def _processor(self, baseline=None):
         return TouchIdStreamProcessor(
@@ -111,7 +111,7 @@ class ActiveSampleQueuePathTests(unittest.TestCase):
             t += 50 / fs
         self.assertEqual(ready, [])
 
-    def test_sustained_active_signal_yields_windows_with_a_span_id(self):
+    def test_sustained_active_signal_yields_windows_with_a_frag_id(self):
         processor = self._processor()
         fs = 1000.0
         ready = []
@@ -124,7 +124,7 @@ class ActiveSampleQueuePathTests(unittest.TestCase):
             t += 50 / fs
         self.assertGreater(len(ready), 0)
         for window in ready:
-            self.assertIsNotNone(window.span_id)
+            self.assertIsNotNone(window.frag_id)
             self.assertEqual(len(window.window_adc), 100)  # window_size_s=0.1 @ 1000Hz
 
     def test_now_t_is_never_read_from_wall_clock(self):
@@ -143,28 +143,6 @@ class ActiveSampleQueuePathTests(unittest.TestCase):
             ready.extend(got)
             t += 50 / fs
         self.assertGreater(len(ready), 0)
-
-    def test_window_straddling_a_merged_idle_gap_is_rejected(self):
-        """A window whose micro-chunks are mostly idle (window_idle_fraction
-        > MAX_WINDOW_IDLE_FRACTION) must never be returned, even if the
-        surrounding span was accepted -- see quality_gate.window_idle_fraction's
-        docstring for why (a merged span can fuse separate touch events)."""
-        processor = self._processor()
-        fs = 1000.0
-        ready = []
-        t = 0.0
-        # One short active burst, then mostly idle -- not enough active
-        # signal for a straddling window to pass the <=25% idle-fraction gate.
-        for _ in range(2):
-            ready.extend(processor.push_chunk(_chunk(50, 10.0), _timestamps(t, 50, fs), fs, now_t=t))
-            t += 50 / fs
-        for _ in range(8):
-            ready.extend(processor.push_chunk(_chunk(50, 0.0), _timestamps(t, 50, fs), fs, now_t=t))
-            t += 50 / fs
-        # Only 100ms of the 1000ms pushed was active -- far short of one
-        # window_size_s (0.1s) of *unbroken* signal once idle-fraction
-        # rejection is applied, so nothing should have qualified.
-        self.assertEqual(ready, [])
 
 
 class SameHopCadenceReproducibilityTests(unittest.TestCase):
@@ -204,7 +182,7 @@ class SameHopCadenceReproducibilityTests(unittest.TestCase):
         for wa, wb in zip(windows_a, windows_b):
             np.testing.assert_array_equal(wa.window_adc, wb.window_adc)
             np.testing.assert_array_equal(wa.window_ts, wb.window_ts)
-            self.assertEqual(wa.span_id, wb.span_id)
+            self.assertEqual(wa.frag_id, wb.frag_id)
 
 
 if __name__ == '__main__':

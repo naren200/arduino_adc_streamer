@@ -900,7 +900,7 @@ class InferencePanelMixin:
         # the whole capture as fast as possible, so time.monotonic() would
         # barely advance between ticks and every span would look far younger
         # than span_stale_timeout_s regardless of how much (sample) time it
-        # actually spans, silently disabling ActiveSampleQueue.evict_stale.
+        # actually spans, silently disabling ActiveSampleQueue.expire.
         # end/fs instead reproduces the same real-time deltas the algorithm
         # would have seen live for this exact recording (equivalent to the
         # snapshot's own timestamps_s), so segmentation decisions come out
@@ -909,7 +909,7 @@ class InferencePanelMixin:
         ready_windows = self.touchid_processor.push_chunk(channel_samples, timestamps, fs, now_t=now_t)
 
         for window in ready_windows:
-            self._touchid_set_inference_region(window.window_ts, is_inferenced=True, span_id=window.span_id)
+            self._touchid_set_inference_region(window.window_ts, is_inferenced=True, span_id=window.frag_id)
         if ready_windows:
             # Submit the newest of this tick's windows, same policy as live
             # -- but unlike live, nothing here drops the rest going forward:
@@ -1172,7 +1172,7 @@ class InferencePanelMixin:
         self._update_touchid_idle_gate_label()
 
         for window in ready_windows:
-            self._touchid_set_inference_region(window.window_ts, is_inferenced=True, span_id=window.span_id)
+            self._touchid_set_inference_region(window.window_ts, is_inferenced=True, span_id=window.frag_id)
 
         if self.touchid_worker_busy:
             return
@@ -1262,21 +1262,22 @@ class InferencePanelMixin:
 
         self._touchid_prune_inference_regions()
 
-    def _touchid_region_color_for_span(self, span_id):
+    def _touchid_region_color_for_span(self, frag_id):
         """Pick the RGB color for one inference-region highlight.
 
-        span_id is None in the no-idle-baseline fixed-grid fallback branch,
-        which has no span concept at all (see _TOUCHID_REGION_FALLBACK_COLOR's
-        docstring) -- always the same flat color there. With a baseline
-        present, every call cycles to the next PLOT_COLORS entry regardless of
-        span_id, so each individually-classified window gets its own distinct
-        color -- same-span adjacent windows (one continuous touch event,
-        hop_size_s == window_size_s) previously all shared one color and
-        visually fused into a single block, making it look like one oversized
-        window had been sent to inference instead of several separate ones."""
-        if span_id is None:
+        frag_id is None in the no-idle-baseline fixed-grid fallback branch,
+        which has no fragment concept at all (see
+        _TOUCHID_REGION_FALLBACK_COLOR's docstring) -- always the same flat
+        color there. With a baseline present, every call cycles to the next
+        PLOT_COLORS entry regardless of frag_id, so each individually-
+        classified window gets its own distinct color -- same-fragment
+        adjacent windows (one continuous touch event, hop_size_s ==
+        window_size_s) previously all shared one color and visually fused
+        into a single block, making it look like one oversized window had
+        been sent to inference instead of several separate ones."""
+        if frag_id is None:
             return _TOUCHID_REGION_FALLBACK_COLOR
-        self.touchid_region_span_id = span_id
+        self.touchid_region_span_id = frag_id
         self.touchid_region_color_index = (self.touchid_region_color_index + 1) % len(PLOT_COLORS)
         return PLOT_COLORS[self.touchid_region_color_index]
 
@@ -1290,7 +1291,7 @@ class InferencePanelMixin:
         the latest window happens to sit -- it ages out (removed) once its
         span has scrolled past the plot's rolling history window, same as the
         underlying curve data. See _touchid_region_color_for_span for how
-        span_id maps to a color."""
+        span_id (a ReadyWindow.frag_id) maps to a color."""
         if not is_inferenced:
             return
         if not hasattr(self, 'touchid_stream_plot_widget'):

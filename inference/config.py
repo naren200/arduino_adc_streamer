@@ -48,15 +48,19 @@ _CHECKPOINT_STEM_PREFIX = {
 class InferenceConfig:
     window_size_s: float = 0.5      # independent literal, NOT imported from training config
     hop_size_s: float = 0.5         # user-adjustable via GUI spinbox
-    min_span_fill_ratio: float = 0.08  # ActiveSampleQueue.evict_stale: min length (as a
-                                        # fraction of window_size_s) a still-growing OPEN span
-                                        # must reach before it's kept alive past
-                                        # span_stale_timeout_s. Short FINALIZED spans (done
-                                        # growing) are instead padded out to a full window using
-                                        # history -- see inference/window_padding.py.
-    span_stale_timeout_s: float = 1.0  # ActiveSampleQueue: drop an unfinished span once
-                                        # its oldest sample is this old, rather than
-                                        # waiting indefinitely for it to fill or close out
+    min_span_fill_ratio: float = 0.08  # UNUSED as of the fragment-stitching rewrite --
+                                        # ActiveSampleQueue.expire() uses a single
+                                        # FRAGMENT_MAX_AGE_S rule with no separate
+                                        # fill-ratio grace period. Kept as a
+                                        # TouchIdStreamProcessor constructor param for
+                                        # now to avoid a wider call-site cleanup.
+    span_stale_timeout_s: float = 1.0  # TouchIdStreamProcessor._trim_store's safety
+                                        # margin only -- fragment expiry itself is now
+                                        # governed by segmentation.FRAGMENT_MAX_AGE_S,
+                                        # not this value. Short (leftover-remainder)
+                                        # fragments are instead padded out to a full
+                                        # window using history -- see
+                                        # inference/window_padding.py.
     pzt_columns: list[str] = field(default_factory=lambda: list(_DEFAULT_PZT_COLUMNS))
     smoothing_alpha: float = 0.9    # EMA alpha for ConfidenceSmoother, user-adjustable
     confidence_threshold: float = 0.6  # bar-chart gray/red cutoff + latched "last detected" gate, user-adjustable
