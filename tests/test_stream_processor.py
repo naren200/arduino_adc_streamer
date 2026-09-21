@@ -185,5 +185,49 @@ class SameHopCadenceReproducibilityTests(unittest.TestCase):
             self.assertEqual(wa.frag_id, wb.frag_id)
 
 
+class FilterRawTests(unittest.TestCase):
+    """TouchIdStreamProcessor.filter_raw despikes raw channel_samples via the
+    same causal median-3 primitive texture_piezo's offline path uses."""
+
+    def _processor(self):
+        return TouchIdStreamProcessor(
+            pzt_columns=PZT_COLUMNS,
+            window_size_s=0.1,
+            hop_size_s=0.05,
+            span_stale_timeout_s=1.0,
+            min_span_fill_ratio=0.08,
+            idle_baseline=None,
+        )
+
+    def test_isolated_spike_is_removed(self):
+        processor = self._processor()
+        values = np.array([10.0, 10.0, 10.0, 500.0, 10.0, 10.0, 10.0])
+        samples = {col: values.copy() for col in PZT_COLUMNS}
+        filtered = processor.filter_raw(samples)
+        for col in PZT_COLUMNS:
+            self.assertNotEqual(filtered[col][3], 500.0)
+            self.assertEqual(filtered[col][3], 10.0)
+
+    def test_chunk_invariant_regardless_of_split(self):
+        rng = np.random.default_rng(0)
+        raw = rng.normal(2048, 40, size=100)
+        raw[37] += 400  # isolated spike
+
+        proc_whole = self._processor()
+        whole = proc_whole.filter_raw({col: raw for col in PZT_COLUMNS})
+
+        proc_split = self._processor()
+        split_parts = {col: [] for col in PZT_COLUMNS}
+        for start, end in [(0, 13), (13, 50), (50, 61), (61, 100)]:
+            chunk = {col: raw[start:end] for col in PZT_COLUMNS}
+            filtered_chunk = proc_split.filter_raw(chunk)
+            for col in PZT_COLUMNS:
+                split_parts[col].append(filtered_chunk[col])
+
+        for col in PZT_COLUMNS:
+            split_joined = np.concatenate(split_parts[col])
+            np.testing.assert_array_equal(whole[col], split_joined)
+
+
 if __name__ == '__main__':
     unittest.main()

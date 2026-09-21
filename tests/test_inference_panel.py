@@ -1,4 +1,5 @@
 import os
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -40,12 +41,26 @@ class TouchIdHarness(InferencePanelMixin):
         self.visualization_tabs = FakeTabs()
         self.samples_per_sweep = 5
         self._t = 0.0
+        # touchid_read_cursor_abs's real-code counterparts -- update_touchid_
+        # display reads these directly (same as spectrum_processor.py's
+        # fallback branch), so the harness needs to carry them like the real
+        # ADCStreamerGUI host does. buffer_write_index only ever advances via
+        # advance_buffer() below, standing in for the serial thread writing
+        # new sweeps into raw_data_buffer.
+        self.buffer_lock = threading.Lock()
+        self.buffer_write_index = 0
+        self.MAX_SWEEPS_BUFFER = 50000
         self.init_touchid_state()
         # create_touchid_tab builds the real plot widgets update_touchid_display
         # writes into (touchid_stream_plot_widget, touchid_stream_curves, ...).
         # Keep a strong reference -- without a parent, PyQt would otherwise
         # garbage-collect the underlying C++ objects out from under later calls.
         self._tab = self.create_touchid_tab()
+
+    def advance_buffer(self, n_sweeps):
+        """Simulate the serial thread writing n_sweeps new sweeps."""
+        with self.buffer_lock:
+            self.buffer_write_index += n_sweeps
 
     def get_display_channel_specs(self):
         cols = self.touchid_config.pzt_columns
@@ -78,6 +93,7 @@ class TouchIdLivePathTests(unittest.TestCase):
         self.assertTrue(harness.touchid_timer.isActive())
 
         for _ in range(3):
+            harness.advance_buffer(5)
             harness.update_touchid_display()
 
         self.assertEqual(len(harness.touchid_stream_curves), 5)

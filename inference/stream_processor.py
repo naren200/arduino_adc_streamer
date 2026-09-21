@@ -43,6 +43,7 @@ from .segmentation import ActiveSampleQueue
 
 sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
 from causal_derived_channels import CausalDerivedChannels  # noqa: E402
+import data as data_mod  # noqa: E402
 
 
 @dataclass
@@ -88,6 +89,12 @@ class TouchIdStreamProcessor:
         # windowed sums and unbounded causal medians carry forward
         # continuously instead of restarting every window.
         self.derived_channels = CausalDerivedChannels(pzt_columns=self.pzt_columns)
+
+        # Persistent per-channel causal median-3 despike state -- the same
+        # single shared implementation texture_piezo's offline
+        # load_calibration_csv path uses (via the batch causal_median_filter_3
+        # wrapper), so live/replay raw is despiked identically to offline raw.
+        self._raw_filter = {col: data_mod._CausalMedian3() for col in self.pzt_columns}
 
         n_pzt = len(self.pzt_columns)
         # Fixed-grid fallback path (used only while idle_baseline is None).
@@ -193,6 +200,18 @@ class TouchIdStreamProcessor:
             self._store_normal[start_i:end_i],
             self._store_ts[start_i:end_i],
         )
+
+    def filter_raw(self, channel_samples: dict) -> dict:
+        """Causal median-3 despike -- same _CausalMedian3 primitive/algorithm
+        texture_piezo's offline load_calibration_csv path uses, so live and
+        offline raw are despiked identically. Must be called ONCE per tick,
+        before channel_samples is used for anything else (the Signal Stream
+        plot, idle-baseline accumulation, AND push_chunk) -- callers must not
+        filter twice."""
+        return {
+            col: np.array([self._raw_filter[col].push(v) for v in np.asarray(channel_samples[col]).reshape(-1)])
+            for col in self.pzt_columns
+        }
 
     def push_chunk(
         self, channel_samples: dict, timestamps: np.ndarray, fs: float, now_t: float,

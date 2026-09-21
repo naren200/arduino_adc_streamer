@@ -94,6 +94,18 @@ _TOUCHID_STREAM_HISTORY_S = 5.0
 # that the underlying signal curves stay clearly visible through it.
 _TOUCHID_REGION_ALPHA = 60
 
+# Decimation factor for the Signal Stream plot's rendered curves (pyqtgraph
+# setDownsampling, method='peak' -- keeps both the min and max sample per
+# decimated bucket, so spikes still render at full height; this only skips
+# points that would've overlapped on the same pixel column anyway). Kept
+# deliberately low/near-dormant: ds=15 measured ~53% cheaper repaint but was
+# visibly worse (per user feedback) -- this small value trades away most of
+# that repaint-cost saving in exchange for a curve that looks effectively
+# unchanged from full resolution. Raise this (a single-line change) if more
+# headroom is needed later.
+_TOUCHID_STREAM_DOWNSAMPLE_FACTOR = 2
+
+
 # Fallback region color for the no-idle-baseline fixed-grid branch, which has
 # no span concept at all (touchid_active_queue is never used there -- every
 # hop just classifies its own fixed window_size_s/hop_size_s slice). Cycling
@@ -182,6 +194,9 @@ class InferencePanelMixin:
         # cycle state too so a stale span_id from before the reset can't
         # coincidentally collide with a new span's id.
         self._touchid_reset_region_coloring()
+        # Absolute-index read cursor for update_touchid_display's sweep
+        # read -- see _touchid_reset_read_cursor's docstring.
+        self._touchid_reset_read_cursor()
 
         # Rolling history feeding the Signal Stream plot -- separate from
         # touchid_processor's own buffering (which only holds one inference
@@ -507,6 +522,26 @@ class InferencePanelMixin:
             processor.derived_channels = derived_channels
         return processor
 
+    def _touchid_reset_read_cursor(self):
+        """Reset update_touchid_display's absolute sweep read cursor
+        (touchid_read_cursor_abs).
+
+        None means "no cursor yet" -- the next tick initializes it to
+        whatever raw_data_buffer's current write position is (buffer_write_
+        index) and reads nothing that tick, rather than reading backlog that
+        predates the reset. Called wherever touchid_processor is rebuilt for
+        a genuine discontinuity (sensor switch, fresh idle baseline, end of
+        replay) so a stale cursor spanning the discontinuity can't hand the
+        fresh processor a backlog read that includes samples from before it
+        -- and from CaptureLifecycleMixin.start_capture, since a fresh
+        capture zeroes buffer_write_index itself (a stale cursor from the
+        previous capture would otherwise be larger than the restarted
+        counter, making every read look like "nothing pending"). NOT called
+        on a plain window/hop resize (_rebuild_touchid_buffers) -- that's
+        not a discontinuity in the raw stream, so the read cursor should
+        keep progressing normally."""
+        self.touchid_read_cursor_abs = None
+
     def _touchid_reset_region_coloring(self):
         """Reset the inference-region color cycle state -- called whenever
         touchid_processor is rebuilt, since a fresh ActiveSampleQueue means
@@ -611,6 +646,7 @@ class InferencePanelMixin:
         self.touchid_idle_baseline = load_idle_baseline(new_columns)
         self.touchid_processor = self._touchid_new_processor()
         self._touchid_reset_region_coloring()
+        self._touchid_reset_read_cursor()
         self.touchid_smoother.reset()
         self._clear_touchid_stream_curves()
         self._touchid_clear_inference_regions()
@@ -890,6 +926,7 @@ class InferencePanelMixin:
             col: snapshot.data[cursor:end, idx].astype(np.float64)
             for col, idx in zip(self.touchid_config.pzt_columns, self._touchid_replay_channel_indices)
         }
+        channel_samples = self.touchid_processor.filter_raw(channel_samples)
         if snapshot.timestamps_s.size:
             timestamps = np.asarray(snapshot.timestamps_s[cursor:end], dtype=np.float64)
         else:
@@ -960,6 +997,7 @@ class InferencePanelMixin:
         # resumes clean rather than carrying replay's causal state forward.
         self.touchid_processor = self._touchid_new_processor()
         self._touchid_reset_region_coloring()
+        self._touchid_reset_read_cursor()
         self._clear_touchid_stream_curves()
         self._touchid_clear_inference_regions()
         self._touchid_reset_stream_display()
@@ -1027,6 +1065,7 @@ class InferencePanelMixin:
         # never being stored while no baseline existed) through a new queue.
         self.touchid_processor = self._touchid_new_processor()
         self._touchid_reset_region_coloring()
+        self._touchid_reset_read_cursor()
         self.touchid_mode = TouchIdMode.NORMAL
         try:
             save_idle_baseline(baseline)
@@ -1103,16 +1142,60 @@ class InferencePanelMixin:
             )
             return
 
-        required_sweeps = max(1, int(self.touchid_config.hop_size_s * self.get_measured_sweep_rate_hz()) + 1)
-        extracted = self._extract_recent_sweeps(required_sweeps) if hasattr(self, '_extract_recent_sweeps') else None
+        # Read exactly the sweeps written since the last tick's read, using
+        # raw_data_buffer's own absolute write position (buffer_write_index)
+        # as the cursor -- NOT a duration estimate. An estimate sized off
+        # get_measured_sweep_rate_hz() drifts against the buffer's actual
+        # position (that rate is itself a measurement), so on any tick where
+        # the true arrival count exceeds the estimate, the oldest sweeps in
+        # that gap are never read by any tick -- a slow, compounding leak,
+        # not just an occasional stall. Reading off the real write index has
+        # nothing to drift: pending is exactly right every tick.
+        if not hasattr(self, 'buffer_lock'):
+            self._update_touchid_idle_gate_label('waiting for sweep data')
+            return
+        with self.buffer_lock:
+            current_write_index = self.buffer_write_index
+
+        if self.touchid_read_cursor_abs is None:
+            # First tick since start (or since a discontinuity reset) --
+            # start exactly from here rather than reading whatever backlog
+            # happened to accumulate before TouchID started watching.
+            self.touchid_read_cursor_abs = current_write_index
+
+        pending_sweeps = current_write_index - self.touchid_read_cursor_abs
+        if pending_sweeps <= 0:
+            self._update_touchid_idle_gate_label('waiting for sweep data')
+            return
+
+        max_buffer = getattr(self, 'MAX_SWEEPS_BUFFER', None)
+        if max_buffer and pending_sweeps > max_buffer:
+            # Fell behind by more than the ring buffer holds -- the oldest
+            # pending sweeps have already been overwritten and can't be
+            # recovered. Catch up to what's still actually available
+            # instead of reading stale/wrapped data.
+            dropped = pending_sweeps - max_buffer
+            if hasattr(self, 'log_status'):
+                self.log_status(
+                    f'TouchID: fell behind by {dropped} sweeps (ring buffer overrun) -- catching up'
+                )
+            self.touchid_read_cursor_abs = current_write_index - max_buffer
+            pending_sweeps = max_buffer
+
+        extracted = self._extract_recent_sweeps(pending_sweeps) if hasattr(self, '_extract_recent_sweeps') else None
         if extracted is None:
             self._update_touchid_idle_gate_label('waiting for sweep data')
             return
         data_array, sweep_timestamps = extracted
+        # Advance by exactly how many sweeps were actually returned (not by
+        # pending_sweeps) so a short read never leaves the cursor ahead of
+        # data that was never actually consumed.
+        self.touchid_read_cursor_abs += len(data_array)
 
         channel_samples = {
             col: data_array[:, idx] for col, idx in index_map.items()
         }
+        channel_samples = self.touchid_processor.filter_raw(channel_samples)
 
         if self.touchid_mode == TouchIdMode.CAPTURING_BASELINE:
             # Accumulate for the baseline fit in parallel with the normal
@@ -1159,14 +1242,27 @@ class InferencePanelMixin:
         self._touchid_handle_ready_windows(ready_windows, fs)
 
     def _touchid_handle_ready_windows(self, ready_windows: list, fs: float):
-        """Paint the "being inferenced" highlight for every window this
-        tick's push_chunk produced (they were all genuinely eligible), then
-        submit only the newest to the classify worker -- matching the old
-        touchid_worker_busy behavior: while a classification is still in
-        flight, don't submit another (the worker's own queue is bounded to
-        1 anyway, so a new submission would just evict a still-pending one),
-        skip straight to leaving the rest unclassified rather than paying
-        for the array packing below."""
+        """Paint the "being inferenced" highlight for only the newest window
+        this tick's push_chunk produced, then submit that same window to the
+        classify worker -- matching touchid_worker_busy's existing policy:
+        while a classification is still in flight, don't submit another
+        (the worker's own queue is bounded to 1 anyway, so a new submission
+        would just evict a still-pending one), skip straight to leaving the
+        rest unclassified rather than paying for the array packing below.
+
+        Painting used to loop over every ready window, creating one
+        LinearRegionItem (a real Qt widget insertion into the plot's scene
+        graph) per window -- so a tick that produced several windows (a
+        sustained shear/touch, where push_chunk finalizes multiple
+        fragments/hops at once) paid a per-tick GUI cost that scaled with
+        how many windows were ready. That's exactly the tick that then runs
+        long enough to delay the next QTimer fire and starve the buffer
+        read, so the highlight was itself feeding the sample-loss problem it
+        was drawn to explain. Painting only the newest window bounds this
+        tick's GUI cost to a constant one region, same as classification
+        already does -- at the cost of not drawing a separate highlight per
+        sub-window during a burst, which was always a display aid, not
+        something classification/segmentation correctness depends on."""
         if not ready_windows:
             if self.touchid_processor.idle_baseline is not None:
                 self._update_touchid_idle_gate_label('no window ready (idle / accumulating)')
@@ -1174,13 +1270,13 @@ class InferencePanelMixin:
             return
         self._update_touchid_idle_gate_label()
 
-        for window in ready_windows:
-            self._touchid_set_inference_region(window.window_ts, is_inferenced=True, span_id=window.frag_id)
+        newest = ready_windows[-1]
+        self._touchid_set_inference_region(newest.window_ts, is_inferenced=True, span_id=newest.frag_id)
 
         if self.touchid_worker_busy:
             return
 
-        self._touchid_submit_window(ready_windows[-1], fs)
+        self._touchid_submit_window(newest, fs)
 
     def _touchid_submit_window(self, window, fs: float):
         self.touchid_worker_busy = True
@@ -1260,6 +1356,7 @@ class InferencePanelMixin:
             if curve is None:
                 color = PLOT_COLORS[i % len(PLOT_COLORS)]
                 curve = self.touchid_stream_plot_widget.plot([], pen=pg.mkPen(color=color, width=2), name=col)
+                curve.setDownsampling(ds=_TOUCHID_STREAM_DOWNSAMPLE_FACTOR, auto=False, method='peak')
                 self.touchid_stream_curves[col] = curve
             curve.setData(x=x, y=y)
 

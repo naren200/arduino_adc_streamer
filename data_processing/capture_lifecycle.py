@@ -137,6 +137,13 @@ class CaptureLifecycleMixin:
             self.full_view_btn.setEnabled(False)
 
         self._reset_capture_buffer_state()
+        if hasattr(self, "_touchid_reset_read_cursor"):
+            # _reset_capture_buffer_state above zeroes buffer_write_index --
+            # a stale TouchID read cursor from a previous capture would
+            # otherwise sit past the restarted counter, making every read
+            # this capture look like "nothing pending" until write_index
+            # catches back up to it.
+            self._touchid_reset_read_cursor()
         self._reset_signal_processing_state(reset_shear=False)
         if hasattr(self, 'begin_pzt_ghost_capture'):
             self.begin_pzt_ghost_capture()
@@ -267,6 +274,22 @@ class CaptureLifecycleMixin:
 
         if self.serial_thread:
             self.serial_thread.set_capturing(False)
+            # Surface the binary-packet accept/reject counters at capture end.
+            # These are tracked in serial_thread the whole time (see
+            # SerialReaderThread._is_packet_timing_sane / sample_count %
+            # expected != 0), but were previously only ever logged mid-capture
+            # via _maybe_emit_capture_idle_debug -- easy to miss, and lost
+            # entirely once the capture stops. A real-signal gap investigation
+            # (repeated large mcu_gap_us jumps in the block-timing sidecar)
+            # needs this number to tell packet rejection apart from an
+            # MCU-side stall, since both produce an identical gap signature
+            # in block_start_us/block_end_us alone.
+            accepted = getattr(self.serial_thread, '_accepted_packets_total', None)
+            rejected = getattr(self.serial_thread, '_rejected_packets_total', None)
+            if accepted is not None or rejected is not None:
+                self.log_status(
+                    f"Serial packet totals this capture: accepted={accepted}, rejected={rejected}"
+                )
 
         self.is_capturing = False
         if hasattr(self, "update_analysis_availability"):
