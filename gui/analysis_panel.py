@@ -103,7 +103,11 @@ class AnalysisPanelMixin:
         self._analysis_load_state = AnalysisLoadState.IDLE
         self._analysis_generation = 0
         self._analysis_loaded_status = ""
-        self.analysis_label_class_names = list(InferenceConfig().class_names)
+        # "baseline" is a labeling-only class (5s of pure-idle signal per capture,
+        # used to fit the quality-gate noise floor) and must not be added to
+        # InferenceConfig.class_names, since that list is order-sensitive and
+        # drives the live model's output indices.
+        self.analysis_label_class_names = list(InferenceConfig().class_names) + ["baseline"]
         self.analysis_label_segments: list[dict] = []
         self._analysis_label_dirty = False
         self._analysis_label_undo_stack: list[list[dict]] = []
@@ -947,6 +951,13 @@ class AnalysisPanelMixin:
                 else:
                     self.analysis_snapshot = build_in_memory_snapshot(self)
             self._rebuild_analysis_channel_checks()
+            if hasattr(self, 'touchid_load_last_inference_btn'):
+                # New snapshot object -- any cached replay predictions no
+                # longer belong to what's loaded (see
+                # on_touchid_load_last_inference_clicked's identity check).
+                self.touchid_load_last_inference_btn.setEnabled(
+                    self.analysis_snapshot is self._touchid_last_inference_snapshot
+                )
             self._load_labels_for_current_source()
             self._analysis_pending_auto_range = True
             self._analysis_loaded_status = (

@@ -10,8 +10,8 @@ from PyQt6.QtWidgets import QApplication
 
 from gui.inference_panel import InferencePanelMixin
 from inference.mode import TouchIdMode
-from inference.segmentation import ActiveSampleQueue
-from inference.quality_gate import IdleBaseline
+from touchid_inference.segmentation import ActiveSampleQueue
+from touchid_inference.quality_gate import IdleBaseline
 
 
 class FakeTabs:

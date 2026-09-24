@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -44,13 +45,10 @@ from inference.config import (
 )
 from inference.architectures import ARCH_REGISTRY, CHECKPOINT_DEFAULT
 from inference.mode import TouchIdMode
-from inference.quality_gate import (
-    IDLE_CAPTURE_DURATION_S,
-    fit_idle_baseline,
-    load_idle_baseline,
-    save_idle_baseline,
-)
-from inference.smoothing import ConfidenceSmoother
+from inference.quality_gate import load_idle_baseline, save_idle_baseline
+from inference.replay_fastforward import ReplayFastForward
+from inference.smoothing import WindowedVoteSmoother, is_guilty_candidate
+from touchid_inference.quality_gate import IDLE_CAPTURE_DURATION_S, fit_idle_baseline
 from inference.stream_processor import TouchIdStreamProcessor
 from constants.plotting import PLOT_COLORS
 
@@ -132,9 +130,9 @@ class InferencePanelMixin:
         except Exception:
             pass
 
-        self.touchid_smoother = ConfidenceSmoother(
+        self.touchid_smoother = WindowedVoteSmoother(
             class_names=self.touchid_config.class_names,
-            alpha=self.touchid_config.smoothing_alpha,
+            window_n=self.touchid_config.smoothing_window_n,
         )
 
         self.touchid_classifier = None
@@ -147,6 +145,22 @@ class InferencePanelMixin:
             self.touchid_classifier_error = str(exc)
 
         self.touchid_show_smoothed = True
+
+        # Manual on/off switch for running windows through the classifier
+        # (see on_touchid_stop_inference_clicked). Independent of
+        # touchid_mode: an idle baseline capture ALSO forces inference off
+        # regardless of this flag's value (see update_touchid_display), but
+        # leaves this flag itself untouched so inference resumes to whatever
+        # state the user had it in once the capture finishes.
+        self.touchid_inference_enabled = True
+
+        # Cache of the smoother's last output, reused for display on a tick
+        # whose window got excluded by the guilty-clip filter (see
+        # _on_touchid_classified) -- excluding a window from the vote must
+        # not blank the display, it just means this tick doesn't move the
+        # smoothed reading.
+        self._touchid_last_smoothed: dict | None = None
+        self._touchid_last_smoothed_top: tuple[str, float] | None = None
 
         # Latched "last detected" state: only updated when a prediction's top
         # confidence crosses touchid_config.confidence_threshold, and left
@@ -171,6 +185,11 @@ class InferencePanelMixin:
         # until then, so existing behavior is unchanged for anyone who
         # hasn't captured one yet.
         self.touchid_idle_baseline = load_idle_baseline(self.touchid_config.pzt_columns)
+        if self.touchid_idle_baseline is not None:
+            # The baseline's own persisted k is the actual active value --
+            # keep touchid_config.idle_gate_k (and the spinbox it seeds) in
+            # sync with it rather than a possibly stale touchid_settings value.
+            self.touchid_config.idle_gate_k = self.touchid_idle_baseline.k
         self.touchid_idle_capture_active = False
         self.touchid_idle_capture_samples: list[np.ndarray] = []
         self.touchid_idle_capture_n_samples = 0
@@ -182,7 +201,19 @@ class InferencePanelMixin:
         self.touchid_mode = TouchIdMode.NORMAL
         # Populated only while touchid_mode is REPLAYING -- see
         # on_touchid_run_on_source_clicked.
-        self.touchid_replay_results: list[dict] = []
+        self.touchid_replay_results: list[tuple] = []
+
+        # Snapshot object (identity, not value) + raw predictions from the
+        # most recently completed 'Run on Analysis Source' replay -- lets
+        # 'Load Last Inference' reapply those predictions to the Analysis
+        # overlay without re-running the model, as long as analysis_snapshot
+        # is still that exact object (see on_touchid_load_last_inference_clicked).
+        self._touchid_last_inference_snapshot = None
+        self._touchid_last_inference_predictions: list[dict] = []
+
+        # Whether a replay skips its per-tick animation to run at full
+        # speed -- see inference/replay_fastforward.py.
+        self.touchid_fast_forward = ReplayFastForward()
 
         # Owns buffering/derivation/segmentation (inference/stream_processor.py)
         # -- the single source of truth shared by live streaming and offline
@@ -294,14 +325,19 @@ class InferencePanelMixin:
         self.touchid_hop_spin.valueChanged.connect(self.on_touchid_hop_changed)
         control_layout.addWidget(self.touchid_hop_spin, 0, 3)
 
-        control_layout.addWidget(QLabel('Smoothing α:'), 0, 4)
-        self.touchid_alpha_spin = QDoubleSpinBox()
-        self.touchid_alpha_spin.setRange(0.01, 1.0)
-        self.touchid_alpha_spin.setDecimals(2)
-        self.touchid_alpha_spin.setSingleStep(0.05)
-        self.touchid_alpha_spin.setValue(self.touchid_config.smoothing_alpha)
-        self.touchid_alpha_spin.valueChanged.connect(self.on_touchid_alpha_changed)
-        control_layout.addWidget(self.touchid_alpha_spin, 0, 5)
+        control_layout.addWidget(QLabel('Smoothing N:'), 0, 4)
+        self.touchid_smoothing_n_spin = QSpinBox()
+        self.touchid_smoothing_n_spin.setRange(1, 30)
+        self.touchid_smoothing_n_spin.setSingleStep(1)
+        self.touchid_smoothing_n_spin.setValue(self.touchid_config.smoothing_window_n)
+        self.touchid_smoothing_n_spin.setToolTip(
+            "Number of recent windows the majority-vote/median smoother pools: the displayed "
+            "class is the mode of the last N windows' top-1 predictions, and its confidence is "
+            "the per-class median over the same N windows. Larger N is steadier but slower to "
+            "react to a real texture change; smaller N reacts faster but flickers more."
+        )
+        self.touchid_smoothing_n_spin.valueChanged.connect(self.on_touchid_smoothing_n_changed)
+        control_layout.addWidget(self.touchid_smoothing_n_spin, 0, 5)
 
         self.touchid_smoothed_check = QCheckBox('Show smoothed')
         self.touchid_smoothed_check.setChecked(True)
@@ -343,6 +379,15 @@ class InferencePanelMixin:
         self.touchid_reload_model_btn.clicked.connect(self.on_touchid_reload_model_clicked)
         control_layout.addWidget(self.touchid_reload_model_btn, 0, 13)
 
+        self.touchid_stop_inference_btn = QPushButton('Stop Inference')
+        self.touchid_stop_inference_btn.setToolTip(
+            'Pause running windows through the classifier. The signal stream plot, sample-rate '
+            'readout, and idle-baseline capture keep working -- only classification stops. '
+            'Click again to resume.'
+        )
+        self.touchid_stop_inference_btn.clicked.connect(self.on_touchid_stop_inference_clicked)
+        control_layout.addWidget(self.touchid_stop_inference_btn, 0, 17)
+
         self.touchid_run_on_source_btn = QPushButton('Run on Analysis Source')
         self.touchid_run_on_source_btn.setToolTip(
             "Run the selected model over whatever is currently loaded in the Analysis tab "
@@ -351,6 +396,37 @@ class InferencePanelMixin:
         )
         self.touchid_run_on_source_btn.clicked.connect(self.on_touchid_run_on_source_clicked)
         control_layout.addWidget(self.touchid_run_on_source_btn, 0, 14)
+
+        self.touchid_stop_replay_btn = QPushButton('Stop')
+        self.touchid_stop_replay_btn.setToolTip(
+            "Stop the in-progress 'Run on Analysis Source' replay early. Windows classified "
+            "so far are kept and still summarized in the final results."
+        )
+        self.touchid_stop_replay_btn.setEnabled(False)
+        self.touchid_stop_replay_btn.clicked.connect(self.on_touchid_stop_replay_clicked)
+        control_layout.addWidget(self.touchid_stop_replay_btn, 0, 16)
+
+        self.touchid_fast_forward_check = QCheckBox('Fast Forward')
+        self.touchid_fast_forward_check.setToolTip(
+            "Skip the per-tick stream-plot animation during 'Run on Analysis Source' so the "
+            "replay runs at full speed instead of animating like live capture. Windows are "
+            "still classified one by one, same result either way -- this only affects how "
+            "fast it gets there. Can be toggled mid-replay."
+        )
+        self.touchid_fast_forward_check.stateChanged.connect(self.on_touchid_fast_forward_toggled)
+        control_layout.addWidget(self.touchid_fast_forward_check, 0, 19)
+
+        self.touchid_load_last_inference_btn = QPushButton('Load Last Inference')
+        self.touchid_load_last_inference_btn.setToolTip(
+            "Reapply the predicted labels from the most recent 'Run on Analysis Source' "
+            "replay to the Analysis overlay without re-running the model. Only enabled "
+            "while the Analysis tab's loaded source is still the exact same one that "
+            "replay ran over -- Load a new source or re-run and this disables until the "
+            "next replay completes."
+        )
+        self.touchid_load_last_inference_btn.setEnabled(False)
+        self.touchid_load_last_inference_btn.clicked.connect(self.on_touchid_load_last_inference_clicked)
+        control_layout.addWidget(self.touchid_load_last_inference_btn, 0, 18)
 
         self.touchid_capture_idle_btn = QPushButton(f'Capture Idle Baseline ({IDLE_CAPTURE_DURATION_S:.0f}s)')
         self.touchid_capture_idle_btn.setToolTip(
@@ -372,6 +448,19 @@ class InferencePanelMixin:
         self._touchid_refresh_pzt_sensor_combo()
         self.touchid_pzt_sensor_combo.currentTextChanged.connect(self.on_touchid_pzt_sensor_changed)
         pzt_layout.addWidget(self.touchid_pzt_sensor_combo)
+
+        self.touchid_guilty_filter_check = QCheckBox('Guilty-clip filter')
+        self.touchid_guilty_filter_check.setChecked(self.touchid_config.guilty_clip_filter_enabled)
+        self.touchid_guilty_filter_check.setToolTip(
+            "Excludes a window from the smoothing vote when its raw prediction disagrees with "
+            "the smoother's current majority label, or its raw softmax isn't a clean call (a "
+            "real runner-up class even though the top class is under 79% confidence). Fit/"
+            "validated on labeled replay captures: catches ~83% of windows that would otherwise "
+            "corrupt the smoothed output, at an ~11.7% cost on windows that were actually fine."
+        )
+        self.touchid_guilty_filter_check.stateChanged.connect(self.on_touchid_guilty_filter_toggled)
+        pzt_layout.addWidget(self.touchid_guilty_filter_check)
+
         pzt_layout.addStretch()
         control_layout.addLayout(pzt_layout, 1, 0, 1, 10)
 
@@ -426,6 +515,24 @@ class InferencePanelMixin:
         )
         self.touchid_threshold_spin.valueChanged.connect(self.on_touchid_threshold_changed)
         summary_row.addWidget(self.touchid_threshold_spin)
+
+        summary_row.addSpacing(16)
+        summary_row.addWidget(QLabel('Idle gate k:'))
+        self.touchid_idle_gate_k_spin = QDoubleSpinBox()
+        self.touchid_idle_gate_k_spin.setRange(1.0, 30.0)
+        self.touchid_idle_gate_k_spin.setDecimals(1)
+        self.touchid_idle_gate_k_spin.setSingleStep(0.5)
+        self.touchid_idle_gate_k_spin.setValue(self.touchid_config.idle_gate_k)
+        self.touchid_idle_gate_k_spin.setToolTip(
+            "Idle-band width, in multiples of the captured baseline's per-channel std. "
+            "A micro-chunk only counts as active (and gets inferenced) if a sample falls "
+            "outside [mean - k*std, mean + k*std]. Higher k = only stronger, more clearly "
+            "above-noise-floor signals are inferenced; lower k = more borderline activity "
+            "gets through. Applies immediately to the loaded baseline, and is used as the "
+            "default for the next captured baseline."
+        )
+        self.touchid_idle_gate_k_spin.valueChanged.connect(self.on_touchid_idle_gate_k_changed)
+        summary_row.addWidget(self.touchid_idle_gate_k_spin)
 
         summary_row.addSpacing(16)
         summary_row.addWidget(QLabel('Last Detected:'))
@@ -579,13 +686,47 @@ class InferencePanelMixin:
         self.touchid_timer.setInterval(max(1, int(self.touchid_config.hop_size_s * 1000)))
         self.save_last_touchid_settings()
 
-    def on_touchid_alpha_changed(self, value):
-        self.touchid_config.smoothing_alpha = float(value)
-        self.touchid_smoother.alpha = float(value)
+    def on_touchid_smoothing_n_changed(self, value):
+        self.touchid_config.smoothing_window_n = int(value)
+        self.touchid_smoother.set_window_n(int(value))
         self.save_last_touchid_settings()
+
+    def _touchid_reset_smoother(self):
+        self.touchid_smoother.reset()
+        self._touchid_last_smoothed = None
+        self._touchid_last_smoothed_top = None
 
     def on_touchid_threshold_changed(self, value):
         self.touchid_config.confidence_threshold = float(value)
+        self.save_last_touchid_settings()
+
+    def on_touchid_guilty_filter_toggled(self, state):
+        self.touchid_config.guilty_clip_filter_enabled = bool(state)
+        self.save_last_touchid_settings()
+
+    def on_touchid_idle_gate_k_changed(self, value):
+        self.touchid_config.idle_gate_k = float(value)
+        # Apply immediately to the already-captured baseline (mean/std are
+        # unaffected -- k only rescales the accept band), instead of forcing
+        # a recapture, and persist so it survives a restart.
+        if self.touchid_idle_baseline is not None:
+            self.touchid_idle_baseline.k = float(value)
+            # ActiveSampleQueue copies baseline.k into its own self.k once at
+            # construction (segmentation.py) rather than reading
+            # self.baseline.k live on every chunk -- mutating the baseline
+            # object above does NOT reach an already-built queue, so the
+            # live queue (if one exists yet) needs its k updated directly or
+            # this spin box would silently do nothing until the next
+            # discontinuity (sensor switch, new baseline) rebuilt the queue.
+            active_queue = getattr(self.touchid_processor, 'active_queue', None)
+            if active_queue is not None:
+                active_queue.k = float(value)
+            try:
+                save_idle_baseline(self.touchid_idle_baseline)
+            except Exception as e:
+                if hasattr(self, 'log_status'):
+                    self.log_status(f'Warning: could not save idle baseline: {e}')
+            self._update_touchid_idle_gate_label()
         self.save_last_touchid_settings()
 
     def on_touchid_smoothed_toggled(self, state):
@@ -647,7 +788,7 @@ class InferencePanelMixin:
         self.touchid_processor = self._touchid_new_processor()
         self._touchid_reset_region_coloring()
         self._touchid_reset_read_cursor()
-        self.touchid_smoother.reset()
+        self._touchid_reset_smoother()
         self._clear_touchid_stream_curves()
         self._touchid_clear_inference_regions()
         self._touchid_reset_stream_display()
@@ -767,6 +908,40 @@ class InferencePanelMixin:
         self.save_last_touchid_settings()
         self._touchid_reload_model()
 
+    def on_touchid_stop_inference_clicked(self):
+        """Toggle classification on/off without touching the stream plot,
+        sample-rate readout, or idle-baseline capture -- see
+        update_touchid_display's inference gate."""
+        self.touchid_inference_enabled = not self.touchid_inference_enabled
+        if self.touchid_inference_enabled:
+            self.touchid_stop_inference_btn.setText('Stop Inference')
+            self.touchid_stop_inference_btn.setStyleSheet('')
+        else:
+            self.touchid_stop_inference_btn.setText('Resume Inference')
+            self.touchid_stop_inference_btn.setStyleSheet('font-weight: bold; color: #cc0000;')
+            # Nothing new will be classified while stopped -- clear the live
+            # readout immediately instead of leaving it frozen on a stale
+            # prediction, same as the existing stale-prediction timeout.
+            self._touchid_maybe_clear_stale_prediction_immediate()
+        if hasattr(self, 'log_status'):
+            self.log_status(
+                'TouchID: inference stopped' if not self.touchid_inference_enabled
+                else 'TouchID: inference resumed'
+            )
+
+    def _touchid_maybe_clear_stale_prediction_immediate(self):
+        """Same clearing behavior as _touchid_maybe_clear_stale_prediction, but
+        unconditional -- used when the user explicitly stops inference rather
+        than waiting out _TOUCHID_PREDICTION_STALE_TIMEOUT_S."""
+        self._touchid_reset_smoother()
+        self.touchid_class_label.setText('-')
+        self.touchid_confidence_label.setText('confidence: -')
+        n = len(self.touchid_config.class_names)
+        self.touchid_bar_item.setOpts(
+            height=[0.0] * n, brushes=[pg.mkBrush(_TOUCHID_BELOW_THRESHOLD_COLOR)] * n,
+        )
+        self.touchid_last_classification_time = None
+
     def on_touchid_reload_model_clicked(self):
         self._touchid_reload_model()
 
@@ -788,7 +963,7 @@ class InferencePanelMixin:
 
         self.touchid_classifier = None
         self.touchid_classifier_error = None
-        self.touchid_smoother.reset()
+        self._touchid_reset_smoother()
 
         try:
             self.touchid_classifier = TextureClassifier(self.touchid_config)
@@ -866,6 +1041,8 @@ class InferencePanelMixin:
 
         self.touchid_mode = TouchIdMode.REPLAYING
         self.touchid_replay_results = []
+        self.touchid_run_on_source_btn.setEnabled(False)
+        self.touchid_stop_replay_btn.setEnabled(True)
         if hasattr(self, 'log_status'):
             self.log_status('TouchID: starting replay over analysis source')
 
@@ -886,7 +1063,7 @@ class InferencePanelMixin:
         self._clear_touchid_stream_curves()
         self._touchid_clear_inference_regions()
         self._touchid_reset_stream_display()
-        self.touchid_smoother.reset()
+        self._touchid_reset_smoother()
 
         self._touchid_replay_snapshot = snapshot
         self._touchid_replay_channel_indices = channel_indices
@@ -933,8 +1110,10 @@ class InferencePanelMixin:
             timestamps = np.arange(cursor, end, dtype=np.float64) / fs
         self._touchid_replay_cursor = end
 
-        self._touchid_push_stream_display(channel_samples, timestamps)
-        self._update_touchid_stream_plot()
+        render_tick = self.touchid_fast_forward.should_render_tick()
+        if render_tick:
+            self._touchid_push_stream_display(channel_samples, timestamps)
+            self._update_touchid_stream_plot()
 
         # now_t must NOT be wall-clock time here (unlike live) -- replay runs
         # the whole capture as fast as possible, so time.monotonic() would
@@ -948,8 +1127,9 @@ class InferencePanelMixin:
         now_t = end / fs
         ready_windows = self.touchid_processor.push_chunk(channel_samples, timestamps, fs, now_t=now_t)
 
-        for window in ready_windows:
-            self._touchid_set_inference_region(window.window_ts, is_inferenced=True, span_id=window.frag_id)
+        if render_tick:
+            for window in ready_windows:
+                self._touchid_set_inference_region(window.window_ts, is_inferenced=True, span_id=window.frag_id)
         if ready_windows:
             # Submit the newest of this tick's windows, same policy as live
             # -- but unlike live, nothing here drops the rest going forward:
@@ -957,31 +1137,65 @@ class InferencePanelMixin:
             # method), so the next hop can't start until this result is back.
             self._touchid_submit_window(ready_windows[-1], fs)
 
-    def _touchid_finish_replay(self):
-        """Replay is done (snapshot exhausted and the final submission's
-        result has come back) -- convert touchid_replay_results into the
-        overlay shape the Analysis tab expects, restore live streaming
-        state, and switch to the Analysis tab so the user can view the
-        predictions, mirroring on_touchid_run_on_source_clicked's old
-        end-of-run behavior."""
-        self._touchid_replay_timer.stop()
-        self._touchid_replay_timer.deleteLater()
-        self._touchid_replay_timer = None
+    def on_touchid_stop_replay_clicked(self):
+        """Stop an in-progress 'Run on Analysis Source' replay early.
+        Windows classified up to this point are kept -- _touchid_finish_replay
+        summarizes exactly whatever's in touchid_replay_results so far, same
+        as a replay that ran to completion."""
+        if self.touchid_mode != TouchIdMode.REPLAYING:
+            return
+        self._touchid_finish_replay(stopped_early=True)
 
-        predictions = []
-        for window_ts, probs in self.touchid_replay_results:
-            top_class, top_conf = max(probs.items(), key=lambda kv: kv[1])
-            predictions.append({
-                'start_s': float(window_ts[0]),
-                'end_s': float(window_ts[-1]),
-                'class': top_class,
-                'confidence': float(top_conf),
-                'probs': probs,
-            })
-        self.analysis_predicted_labels = predictions
+    def on_touchid_fast_forward_toggled(self, *_args):
+        self.touchid_fast_forward.set_enabled(self.touchid_fast_forward_check.isChecked())
+
+    def on_touchid_load_last_inference_clicked(self):
+        """Reapply the last completed replay's predictions to the Analysis
+        overlay without re-running the model, as long as the Analysis tab's
+        analysis_snapshot is still the exact object that replay ran over
+        (identity check -- load_analysis_source always assigns a brand new
+        snapshot object, so any intervening Load, including a re-Load of the
+        same file, invalidates this)."""
+        snapshot = getattr(self, 'analysis_snapshot', None)
+        if (
+            snapshot is None
+            or self._touchid_last_inference_snapshot is None
+            or snapshot is not self._touchid_last_inference_snapshot
+        ):
+            QMessageBox.warning(
+                self, 'TouchID',
+                'The Analysis source has changed since the last replay -- '
+                "use 'Run on Analysis Source' to classify it.",
+            )
+            self.touchid_load_last_inference_btn.setEnabled(False)
+            return
+
+        self.analysis_predicted_labels = self._touchid_last_inference_predictions
+        if hasattr(self, 'visualization_tabs') and hasattr(self, 'analysis_tab_index'):
+            self.visualization_tabs.setCurrentIndex(self.analysis_tab_index)
+        if hasattr(self, 'analysis_inner_tabs'):
+            self.analysis_inner_tabs.setCurrentIndex(0)
+        self._touchid_show_predicted_labels_exclusively()
         if hasattr(self, 'log_status'):
-            self.log_status(f'TouchID: replay predicted {len(predictions)} windows on analysis source')
+            self.log_status(
+                f'TouchID: reloaded {len(self._touchid_last_inference_predictions)} cached '
+                'predictions onto analysis source'
+            )
 
+    def _touchid_show_predicted_labels_exclusively(self):
+        """Show the predicted-labels overlay and hide the manual-labels
+        overlay, in that order: uncheck 'Enable Labeling' first (and let it
+        re-render, clearing manual regions) before checking 'Show Predicted
+        Labels' (and re-rendering again to draw predicted regions). Showing
+        both together is ambiguous -- overlapping regions from two label
+        sets on the same trace are hard to read -- so a replay finishing or
+        'Load Last Inference' always leaves exactly the predicted overlay
+        visible, never both at once."""
+        if (
+            hasattr(self, 'analysis_labeling_enabled_check')
+            and self.analysis_labeling_enabled_check.isChecked()
+        ):
+            self.analysis_labeling_enabled_check.setChecked(False)
         if (
             hasattr(self, 'analysis_show_predicted_labels_check')
             and not self.analysis_show_predicted_labels_check.isChecked()
@@ -989,6 +1203,117 @@ class InferencePanelMixin:
             self.analysis_show_predicted_labels_check.setChecked(True)
         if hasattr(self, '_render_label_regions'):
             self._render_label_regions()
+
+    def _touchid_replay_breakdown_lines(self, predictions: list[dict], label: str) -> list[str]:
+        """Per-class share of total windows and mean top-1 confidence within
+        that class, plus an overall mean confidence, for ONE prediction
+        series (either raw window-level or smoothed-N-window) -- the
+        "which classes is this run actually confident about" readout,
+        not just a raw window count."""
+        total = len(predictions)
+        if total == 0:
+            return [label, '  No windows.']
+
+        per_class = {}
+        for cls in self.touchid_config.class_names:
+            confs = [p['confidence'] for p in predictions if p['class'] == cls]
+            pct = 100.0 * len(confs) / total
+            avg_conf = (sum(confs) / len(confs)) if confs else 0.0
+            per_class[cls] = (len(confs), pct, avg_conf)
+
+        # Most source files/captures are single-material -- the dominant
+        # class's share IS the purity of this run against that assumption,
+        # so surface it up front rather than making the reader scan the
+        # per-class table to find it. Low purity (dominant class well under
+        # 100%) or a low dominant avg confidence both point at the same
+        # tuning knobs: window/hop size, confidence threshold, idle gate k,
+        # smoothing N.
+        dominant_cls = max(per_class, key=lambda c: per_class[c][0])
+        dom_count, dom_pct, dom_avg_conf = per_class[dominant_cls]
+        overall_avg_conf = sum(p['confidence'] for p in predictions) / total
+
+        lines = [
+            f'{label} ({total} windows)',
+            f'  Dominant class: {dominant_cls}  ({dom_pct:.1f}% of windows, avg confidence {dom_avg_conf:.2f})',
+        ]
+        for cls in self.touchid_config.class_names:
+            count, pct, avg_conf = per_class[cls]
+            lines.append(f'    {cls:<14} {count:>5} windows  ({pct:5.1f}%)  avg confidence {avg_conf:.2f}')
+        lines.append(f'  Overall mean confidence: {overall_avg_conf:.2f}')
+        return lines
+
+    def _touchid_replay_summary_text(
+        self, raw_predictions: list[dict], smoothed_predictions: list[dict], stopped_early: bool,
+    ) -> str:
+        """Two separate breakdowns side by side in one report: raw
+        window-level predictions (exactly what each individual window's
+        argmax said) and smoothed-N-window predictions (the majority-vote
+        label / median confidence the live display actually shows) -- so a
+        single-material run (e.g. all-tiona) can be checked for how much
+        the smoother's N actually improves purity/confidence over the raw
+        per-window numbers, not just what the final smoothed number is."""
+        header = 'TouchID replay results'
+        if stopped_early:
+            header += ' (stopped early)'
+        if not raw_predictions:
+            return f'{header}\nNo windows were classified.'
+
+        lines = [header, '']
+        lines += self._touchid_replay_breakdown_lines(raw_predictions, 'Window-level (raw, unsmoothed)')
+        lines.append('')
+        lines += self._touchid_replay_breakdown_lines(
+            smoothed_predictions, f'Smoothed (N={self.touchid_config.smoothing_window_n})')
+        return '\n'.join(lines)
+
+    def _touchid_finish_replay(self, stopped_early: bool = False):
+        """Replay is done -- either the snapshot was exhausted and the final
+        submission's result came back, or the user clicked Stop early.
+        Converts touchid_replay_results into the overlay shape the Analysis
+        tab expects, computes+shows the aggregate per-class confidence
+        summary, restores live streaming state, and switches to the Analysis
+        tab so the user can view the predictions, mirroring
+        on_touchid_run_on_source_clicked's old end-of-run behavior."""
+        if self._touchid_replay_timer is not None:
+            self._touchid_replay_timer.stop()
+            self._touchid_replay_timer.deleteLater()
+            self._touchid_replay_timer = None
+
+        raw_predictions = []
+        smoothed_predictions = []
+        for window_ts, probs, smoothed_top_class, smoothed_top_conf in self.touchid_replay_results:
+            top_class, top_conf = max(probs.items(), key=lambda kv: kv[1])
+            start_s, end_s = float(window_ts[0]), float(window_ts[-1])
+            raw_predictions.append({
+                'start_s': start_s, 'end_s': end_s,
+                'class': top_class, 'confidence': float(top_conf), 'probs': probs,
+            })
+            smoothed_predictions.append({
+                'start_s': start_s, 'end_s': end_s,
+                'class': smoothed_top_class, 'confidence': float(smoothed_top_conf),
+            })
+        # The Analysis-tab overlay shows the raw per-window labels -- exactly
+        # what each window's own classification produced, unaffected by the
+        # smoother -- so it isn't itself smeared by majority-vote lag.
+        self.analysis_predicted_labels = raw_predictions
+        self._touchid_last_inference_snapshot = self._touchid_replay_snapshot
+        self._touchid_last_inference_predictions = raw_predictions
+        if hasattr(self, 'touchid_load_last_inference_btn'):
+            self.touchid_load_last_inference_btn.setEnabled(bool(raw_predictions))
+
+        summary = self._touchid_replay_summary_text(raw_predictions, smoothed_predictions, stopped_early)
+        if hasattr(self, 'log_status'):
+            self.log_status(
+                f'TouchID: replay predicted {len(raw_predictions)} windows on analysis source'
+                + (' (stopped early)' if stopped_early else '')
+            )
+            for line in summary.splitlines():
+                self.log_status(line)
+        QMessageBox.information(self, 'TouchID', summary)
+
+        self.touchid_run_on_source_btn.setEnabled(True)
+        self.touchid_stop_replay_btn.setEnabled(False)
+
+        self._touchid_show_predicted_labels_exclusively()
 
         self.touchid_mode = TouchIdMode.NORMAL
         self.touchid_replay_results = []
@@ -1001,7 +1326,7 @@ class InferencePanelMixin:
         self._clear_touchid_stream_curves()
         self._touchid_clear_inference_regions()
         self._touchid_reset_stream_display()
-        self.touchid_smoother.reset()
+        self._touchid_reset_smoother()
         self.sync_touchid_timer_state()
 
         if hasattr(self, 'visualization_tabs') and hasattr(self, 'analysis_tab_index'):
@@ -1058,7 +1383,8 @@ class InferencePanelMixin:
 
     def _finish_touchid_idle_capture(self, fs: float):
         samples = np.concatenate(self.touchid_idle_capture_samples, axis=0)
-        baseline = fit_idle_baseline(samples, self.touchid_config.pzt_columns, fs)
+        baseline = fit_idle_baseline(
+            samples, self.touchid_config.pzt_columns, fs, k=self.touchid_config.idle_gate_k)
         self.touchid_idle_baseline = baseline
         # A freshly captured baseline means segmentation should start fresh
         # under it rather than replaying already-elapsed history (which was
@@ -1099,7 +1425,7 @@ class InferencePanelMixin:
             return  # already cleared (or never classified yet) -- nothing to do
         if time.monotonic() - self.touchid_last_classification_time < _TOUCHID_PREDICTION_STALE_TIMEOUT_S:
             return
-        self.touchid_smoother.reset()
+        self._touchid_reset_smoother()
         self.touchid_class_label.setText('-')
         self.touchid_confidence_label.setText('confidence: -')
         n = len(self.touchid_config.class_names)
@@ -1231,6 +1557,19 @@ class InferencePanelMixin:
         if self.touchid_classifier is None:
             return
 
+        # Inference is off either because the user explicitly stopped it, or
+        # because an idle baseline capture is in progress (stopped by
+        # default there -- classifying against not-yet-baselined signal
+        # would be meaningless, and the capture wants the sensor untouched
+        # anyway). The stream plot/sample-rate readout above still update.
+        if not self.touchid_inference_enabled or self.touchid_mode == TouchIdMode.CAPTURING_BASELINE:
+            # During a baseline capture, the capture branch above already set
+            # its own "recording Xs/Ys..." status -- don't clobber it.
+            if self.touchid_mode != TouchIdMode.CAPTURING_BASELINE:
+                self._update_touchid_idle_gate_label('inference stopped')
+            self._touchid_maybe_clear_stale_prediction()
+            return
+
         # Advance the derived-channel causal state by exactly this newly-
         # pushed chunk (not the whole rolling window), so shear/normal stay
         # continuous across window/hop boundaries, then run it through
@@ -1302,18 +1641,49 @@ class InferencePanelMixin:
         probs off-thread)."""
         self.touchid_worker_busy = False
 
-        if self.touchid_mode == TouchIdMode.REPLAYING:
-            # Collected here (rather than at submission time) so the raw
-            # probs used for the final Analysis-tab overlay are exactly what
-            # the classifier returned -- see _touchid_finish_replay, which
-            # converts this list into the {"start_s", "end_s", "class",
-            # "confidence", "probs"} shape the overlay renderer expects.
-            self.touchid_replay_results.append((window_ts, probs))
-
         self.touchid_last_classification_time = time.monotonic()
-        smoothed = self.touchid_smoother.update(probs)
-        display_probs = smoothed if self.touchid_show_smoothed else probs
-        top_class, top_conf = max(display_probs.items(), key=lambda kv: kv[1])
+
+        # Same now_t domain the processor itself uses for this mode (see
+        # push_chunk's now_t in update_touchid_display vs. _touchid_replay_tick):
+        # replay must NOT use wall-clock time here, since replay runs a whole
+        # capture as fast as possible and time.monotonic() would barely
+        # advance between windows, defeating the smoother's age-based pruning.
+        # window_ts[-1] is replay's own synthetic elapsed-time domain
+        # (end/fs), equivalent to what _touchid_replay_tick passed as now_t.
+        smoother_now_t = (
+            float(window_ts[-1]) if self.touchid_mode == TouchIdMode.REPLAYING else time.monotonic()
+        )
+
+        excluded = self.touchid_config.guilty_clip_filter_enabled and is_guilty_candidate(
+            probs, self.touchid_smoother.majority_label())
+        if excluded and self._touchid_last_smoothed is not None:
+            smoothed = self._touchid_last_smoothed
+            smoothed_top_class, smoothed_top_conf = self._touchid_last_smoothed_top
+        else:
+            smoothed = self.touchid_smoother.update(probs, now_t=smoother_now_t)
+            # Computed unconditionally (not just when "Show smoothed" is checked)
+            # so a replay run always has both the raw window-level label and the
+            # windowed-vote/median label available to compare, regardless of
+            # what the live display happens to be showing.
+            smoothed_top_class, smoothed_top_conf = self.touchid_smoother.top_class(smoothed)
+            self._touchid_last_smoothed = smoothed
+            self._touchid_last_smoothed_top = (smoothed_top_class, smoothed_top_conf)
+
+        if self.touchid_mode == TouchIdMode.REPLAYING:
+            # Collected here (rather than at submission time) so both the raw
+            # probs used for the final Analysis-tab overlay AND the smoothed
+            # label/confidence at this exact point in the sequence are
+            # exactly what the classifier/smoother produced -- see
+            # _touchid_finish_replay, which builds separate raw-window-level
+            # and smoothed-N-window summaries from this.
+            self.touchid_replay_results.append((window_ts, probs, smoothed_top_class, smoothed_top_conf))
+
+        if self.touchid_show_smoothed:
+            display_probs = smoothed
+            top_class, top_conf = smoothed_top_class, smoothed_top_conf
+        else:
+            display_probs = probs
+            top_class, top_conf = max(display_probs.items(), key=lambda kv: kv[1])
 
         self.touchid_class_label.setText(top_class)
         self.touchid_confidence_label.setText(f'confidence: {top_conf:.2%}')
@@ -1360,6 +1730,18 @@ class InferencePanelMixin:
                 self.touchid_stream_curves[col] = curve
             curve.setData(x=x, y=y)
 
+        # Pin the view to exactly the rolling history window the curve data
+        # itself covers -- pyqtgraph's default auto-range instead fits the
+        # bounding box of EVERY scene item, including the inference-region
+        # highlights below. A long-open fragment's regions can span well
+        # past the curves' own _TOUCHID_STREAM_HISTORY_S window (each
+        # region only ages out once ITS OWN end falls outside that window,
+        # so an old fragment's early windows linger visually for a while),
+        # which without this call stretched the x-axis wide open and showed
+        # a highlighted span with no curve data behind most of it.
+        if len(x):
+            self.touchid_stream_plot_widget.setXRange(float(x[0]), float(x[-1]), padding=0)
+
         self._touchid_prune_inference_regions()
 
     def _touchid_region_color_for_span(self, frag_id):
@@ -1368,17 +1750,22 @@ class InferencePanelMixin:
         frag_id is None in the no-idle-baseline fixed-grid fallback branch,
         which has no fragment concept at all (see
         _TOUCHID_REGION_FALLBACK_COLOR's docstring) -- always the same flat
-        color there. With a baseline present, every call cycles to the next
-        PLOT_COLORS entry regardless of frag_id, so each individually-
-        classified window gets its own distinct color -- same-fragment
-        adjacent windows (one continuous touch event, hop_size_s ==
-        window_size_s) previously all shared one color and visually fused
-        into a single block, making it look like one oversized window had
-        been sent to inference instead of several separate ones."""
+        color there. With a baseline present, color is keyed to the
+        FRAGMENT (one real touch event), not the individual window: every
+        window drawn from the same still-open fragment reuses the current
+        color, and the color only advances when frag_id actually changes
+        (a new touch started). Heavily overlapping windows (hop_size_s <<
+        window_size_s) therefore paint as one growing same-colored block per
+        touch, rather than strobing through a new color every hop -- which
+        read as a segmentation bug even though the underlying windowing was
+        correct (the strobe was only ever showing hop cadence, not the
+        window span). Distinct colors are still used across DIFFERENT
+        fragments so consecutive separate touches remain visually distinct."""
         if frag_id is None:
             return _TOUCHID_REGION_FALLBACK_COLOR
-        self.touchid_region_span_id = frag_id
-        self.touchid_region_color_index = (self.touchid_region_color_index + 1) % len(PLOT_COLORS)
+        if frag_id != self.touchid_region_span_id:
+            self.touchid_region_span_id = frag_id
+            self.touchid_region_color_index = (self.touchid_region_color_index + 1) % len(PLOT_COLORS)
         return PLOT_COLORS[self.touchid_region_color_index]
 
     def _touchid_set_inference_region(self, window_ts, is_inferenced: bool, span_id=None):

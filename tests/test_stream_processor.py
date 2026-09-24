@@ -5,8 +5,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 
-from inference.quality_gate import IdleBaseline
 from inference.stream_processor import TouchIdStreamProcessor
+from touchid_inference.quality_gate import IdleBaseline
 
 PZT_COLUMNS = [f"PZT3_{c}" for c in "BLCRT"]
 

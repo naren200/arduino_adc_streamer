@@ -17,14 +17,15 @@ CNNQuadBranchV4.feat_norm in texture_piezo/src/model.py), and their raw-signal
 normalization is one shared global scale fit once across quadbranch_v3/v4/
 pentabranch_v1 alike (texture_piezo's data_v3.raw_norm.adc_scale_stats /
 integrated_scale_stats in configs/config.yaml) rather than a per-version fit.
-So ArchSpec.requires_sidecars is False for these two -- version discovery
-only needs the checkpoint .pt file plus a matching `<key>branch_<version>`
-entry in texture_piezo's config.yaml (for fusion_feat_names/dropout).
+So these two need no sidecar at all -- only the checkpoint .pt file plus a
+matching `<key>branch_<version>` entry in texture_piezo's config.yaml (for
+fusion_feat_names/dropout). Nothing here declares that, though: model_discovery
+decides whether a checkpoint is offerable by loading it, so an architecture
+that needs no sidecars simply never fails for want of one.
 """
 
 from __future__ import annotations
 
-import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,7 +35,7 @@ import numpy as np
 import torch
 import yaml
 
-from ._paths import TEXTURE_PIEZO_MODELS, TEXTURE_PIEZO_ROOT, TEXTURE_PIEZO_SRC
+from ._paths import TEXTURE_PIEZO_ROOT, TEXTURE_PIEZO_SRC
 
 sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
 from clip_windowing_utils_v1 import build_feature_names  # noqa: E402
@@ -43,7 +44,6 @@ import data as data_mod  # noqa: E402
 
 _TRAIN_CONFIG_PATH = TEXTURE_PIEZO_ROOT / "configs" / "config.yaml"
 _FEATURE_NAMES_PATH = TEXTURE_PIEZO_ROOT / "data" / "processed" / "clip_feature_names_v2.json"
-_FEATURE_NAMES_DIR = TEXTURE_PIEZO_ROOT / "data" / "processed"
 
 # Shared across every quad/penta version to date (fit once on quad_train_idx
 # in 07_model_v4.ipynb, reused verbatim by quadbranch_v3/v4 and pentabranch_v1
@@ -65,9 +65,9 @@ def _load_feature_names() -> list[str]:
         return json.load(f)
 
 
-def _resolve_trained_feature_names(prefix: str, version: str) -> list[str]:
-    """The exact, ordered hand-crafted feature names checkpoint `{prefix}_{version}`
-    was trained on -- texture_piezo is the single source of truth for this, not
+def _resolve_trained_feature_names(config, version: str) -> list[str]:
+    """The exact, ordered hand-crafted feature names this checkpoint was
+    trained on -- texture_piezo is the single source of truth for this, not
     any number hardcoded here.
 
     texture_piezo's feature set grows over time (e.g. commit 31184e6 appended
@@ -85,20 +85,54 @@ def _resolve_trained_feature_names(prefix: str, version: str) -> list[str]:
     manifest exists -- correct only for checkpoints trained against the
     feature set currently on disk; older checkpoints predating this
     convention will still raise a clear shape/name error at load time.
+
+    The manifest is located by model_discovery, not by rebuilding a filename
+    here: texture_piezo has written manifests under at least three
+    conventions (`clip_feature_names_texture_ann_v3.json`,
+    `clip_feature_names_v2.json`, `ann_v3b_feature_names.json`), so matching
+    one literal pattern silently fell back to the live feature list for every
+    checkpoint saved under the other two.
     """
-    manifest_path = _FEATURE_NAMES_DIR / f"clip_feature_names_{prefix}_{version}.json"
-    if manifest_path.exists():
-        import json
+    import json
+
+    manifest_path = getattr(config, "feature_names_path", "")
+    if manifest_path and Path(manifest_path).exists():
         with open(manifest_path) as f:
             return json.load(f)
     return build_feature_names()
 
 
+# A checkpoint file is either a bare state_dict or a dict wrapping one
+# alongside training metadata (ann_v3b_best.pt is {model_state, in_dim,
+# names}). When the wrapper carries the feature names it was trained on, that
+# beats any manifest resolved off the filesystem -- it cannot drift from the
+# weights it ships with.
+_STATE_DICT_KEYS = ("model_state", "state_dict", "model")
+_EMBEDDED_NAMES_KEYS = ("names", "feature_names")
+
+
+def _load_checkpoint(path) -> tuple[dict, list[str] | None]:
+    """-> (state_dict, feature names the checkpoint embeds, or None)."""
+    payload = torch.load(path, map_location="cpu")
+    for key in _STATE_DICT_KEYS:
+        inner = payload.get(key) if isinstance(payload, dict) else None
+        if isinstance(inner, dict):
+            names = next(
+                (payload[name_key] for name_key in _EMBEDDED_NAMES_KEYS
+                 if isinstance(payload.get(name_key), list)),
+                None,
+            )
+            return inner, names
+    return payload, None
+
+
 @dataclass
 class ArchSpec:
     key: str  # "ann" | "cnn" | "quad" | "penta"
-    version_regex: re.Pattern  # group(1)=version, group(2)=checkpoint tag or None (see CHECKPOINT_TAGS)
-    requires_sidecars: bool  # scaler_<version>.pkl + raw_norm_stats_<version>.npz
+    # Filename parsing and artifact resolution live in model_discovery, keyed
+    # off ARCH_STEM_PREFIXES -- an ArchSpec no longer carries its own regex or
+    # a requires_sidecars flag, because whether a checkpoint is usable is
+    # decided by whether `load` succeeds, not by which files happen to exist.
     # (config, version) -> a loaded runtime object exposing .predict_proba(...)
     load: Callable[["InferenceConfig", str], "ArchitectureRuntime"]  # noqa: F821
 
@@ -127,10 +161,19 @@ class _AnnRuntime(ArchitectureRuntime):
     def __init__(self, config, version):
         import joblib
         self.scaler = joblib.load(config.scaler_path)
-        self.feature_names = _resolve_trained_feature_names("texture_ann", version)
+        state_dict, embedded_names = _load_checkpoint(config.ann_model_path)
+        self.feature_names = embedded_names or _resolve_trained_feature_names(config, version)
+        # A scaler fitted on a different width than the feature names means
+        # select_features would hand transform() the wrong columns and produce
+        # confident nonsense rather than an error. Fail loudly instead.
+        if self.scaler.n_features_in_ != len(self.feature_names):
+            raise ValueError(
+                f"scaler expects {self.scaler.n_features_in_} features but the feature names "
+                f"resolved for {version} number {len(self.feature_names)}"
+            )
         self.model = ANN(in_dim=len(self.feature_names), num_classes=len(config.class_names),
                           hidden_dims=[64, 32], dropout=0.3)
-        self.model.load_state_dict(torch.load(config.ann_model_path, map_location="cpu"))
+        self.model.load_state_dict(state_dict)
         self.model.eval()
 
     def predict_proba(self, feature_vector, window_channels, class_names, window_integrated=None):
@@ -161,10 +204,16 @@ class _CnnRuntime(ArchitectureRuntime):
     def __init__(self, config, version):
         import joblib
         self.scaler = joblib.load(config.scaler_path)
-        self.feature_names = _resolve_trained_feature_names("texture_cnn", version)
+        state_dict, embedded_names = _load_checkpoint(config.cnn_model_path)
+        self.feature_names = embedded_names or _resolve_trained_feature_names(config, version)
+        if self.scaler.n_features_in_ != len(self.feature_names):
+            raise ValueError(
+                f"scaler expects {self.scaler.n_features_in_} features but the feature names "
+                f"resolved for {version} number {len(self.feature_names)}"
+            )
         self.model = CNN1D(n_raw_channels=8, n_feat=len(self.feature_names),
                             num_classes=len(config.class_names), dropout=0.4)
-        self.model.load_state_dict(torch.load(config.cnn_model_path, map_location="cpu"))
+        self.model.load_state_dict(state_dict)
         self.model.eval()
         raw_stats = np.load(config.raw_norm_stats_path)
         self.raw_mean = raw_stats["mean"].astype(np.float64)
@@ -306,7 +355,11 @@ def _load_quad_or_penta(config, version, model_cls, is_penta: bool):
             f"-- needed for dropout/fusion_feat_names."
         )
     fusion_feat_names = version_cfg.get("fusion_feat_names", [])
-    checkpoint_path = TEXTURE_PIEZO_MODELS / f"texture_{prefix}branch_{version}.pt"
+    # Use the path the caller selected, not a rebuilt default name -- rebuilding
+    # it here ignored the checkpoint tag entirely, so picking
+    # texture_pentabranch_v1_best_working_09_17_2026 in the GUI silently loaded
+    # the untagged texture_pentabranch_v1.pt instead.
+    checkpoint_path = getattr(config, f"{prefix}_model_path")
 
     kwargs = dict(
         n_fft=_QUAD_N_FFT, n_feat=len(fusion_feat_names),
@@ -353,32 +406,14 @@ def _load_penta(config, version):
 # Registry
 # ---------------------------------------------------------------------------
 
-# Checkpoint tags are free-form (e.g. texture_pentabranch_v1_best_working_09_17_2026.pt),
-# not a fixed enum -- these three are just given priority ordering when sorting
-# a version's discovered checkpoints (see config.discover_checkpoints). A file
-# with no tag suffix (e.g. texture_ann_v2.pt) is the implicit CHECKPOINT_DEFAULT
-# checkpoint for that version. The version group itself IS constrained (v\d+
-# plus an optional single trailing letter, e.g. v2b) so that everything after
-# the version's own trailing underscore is unambiguously the checkpoint tag.
-CHECKPOINT_TAGS = ("best", "final", "last")
-CHECKPOINT_DEFAULT = "default"
-_VERSION_PATTERN = r"(v\d+[a-zA-Z]?)"
+# Checkpoint naming, version parsing and tag priority all live in
+# model_discovery (ARCH_STEM_PREFIXES / CHECKPOINT_TAGS); re-exported here so
+# existing importers of these two names keep working.
+from .model_discovery import CHECKPOINT_DEFAULT, CHECKPOINT_TAGS  # noqa: E402,F401
 
 ARCH_REGISTRY: dict[str, ArchSpec] = {
-    "ann": ArchSpec(
-        key="ann", version_regex=re.compile(rf"^texture_ann_{_VERSION_PATTERN}(?:_(.+))?$"),
-        requires_sidecars=True, load=_load_ann,
-    ),
-    "cnn": ArchSpec(
-        key="cnn", version_regex=re.compile(rf"^texture_cnn(?:2d)?_{_VERSION_PATTERN}(?:_(.+))?$"),
-        requires_sidecars=True, load=_load_cnn,
-    ),
-    "quad": ArchSpec(
-        key="quad", version_regex=re.compile(rf"^texture_quadbranch_{_VERSION_PATTERN}(?:_(.+))?$"),
-        requires_sidecars=False, load=_load_quad,
-    ),
-    "penta": ArchSpec(
-        key="penta", version_regex=re.compile(rf"^texture_pentabranch_{_VERSION_PATTERN}(?:_(.+))?$"),
-        requires_sidecars=False, load=_load_penta,
-    ),
+    "ann": ArchSpec(key="ann", load=_load_ann),
+    "cnn": ArchSpec(key="cnn", load=_load_cnn),
+    "quad": ArchSpec(key="quad", load=_load_quad),
+    "penta": ArchSpec(key="penta", load=_load_penta),
 }

@@ -38,12 +38,12 @@ import numpy as np
 
 from ._paths import TEXTURE_PIEZO_SRC
 from .buffer import RollingBuffer
-from .quality_gate import IdleBaseline, MICRO_CHUNK_S
-from .segmentation import ActiveSampleQueue
 
 sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
 from causal_derived_channels import CausalDerivedChannels  # noqa: E402
 import data as data_mod  # noqa: E402
+from touchid_inference.quality_gate import IdleBaseline, MICRO_CHUNK_S  # noqa: E402
+from touchid_inference.segmentation import ActiveSampleQueue  # noqa: E402
 
 
 @dataclass
