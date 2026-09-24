@@ -210,6 +210,10 @@ class BinaryProcessorMixin:
                 if hasattr(self, 'prepare_pzt_ghost_block'):
                     block_samples_array = self.prepare_pzt_ghost_block(block_samples_array)
                     archive_samples_array = self.prepare_pzt_ghost_block(archive_samples_array)
+                if hasattr(self, 'prepare_pzt_blip_filter_blocks'):
+                    block_samples_array, archive_samples_array = self.prepare_pzt_blip_filter_blocks(
+                        block_samples_array, archive_samples_array,
+                    )
 
                 # --- Vectorized circular buffer write (single lock per block) ---
                 with self.buffer_lock:

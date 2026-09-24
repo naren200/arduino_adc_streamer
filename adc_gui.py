@@ -210,6 +210,7 @@ class ADCStreamerGUI(
         self.buffer_lock = threading.Lock()
         self._init_filter_state()
         self._init_pzt_ghost_removal_state()
+        self._init_pzt_blip_filter_state()
         self._reset_capture_buffer_state()
         
         self.is_capturing = False
