@@ -147,6 +147,8 @@ class CaptureLifecycleMixin:
         self._reset_signal_processing_state(reset_shear=False)
         if hasattr(self, 'begin_pzt_ghost_capture'):
             self.begin_pzt_ghost_capture()
+        if hasattr(self, 'begin_pzt_blip_filter_capture'):
+            self.begin_pzt_blip_filter_capture()
         if hasattr(self, 'set_pzt_ghost_controls_enabled'):
             self.set_pzt_ghost_controls_enabled(False)
         self._reset_force_capture_state()
