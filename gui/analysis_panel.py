@@ -630,6 +630,84 @@ class AnalysisPanelMixin:
         pzt_force_layout.addWidget(self.analysis_pzt_profile_delete_btn, 9, 5)
         self._refresh_analysis_pzt_profile_combo()
 
+        pzt_force_layout.addWidget(QLabel("Shear Noise:"), 10, 0)
+        self.analysis_shear_force_noise_spin = QDoubleSpinBox()
+        self.analysis_shear_force_noise_spin.setRange(0.0, 1e6)
+        self.analysis_shear_force_noise_spin.setDecimals(6)
+        self.analysis_shear_force_noise_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_noise_threshold_v"]))
+        self.analysis_shear_force_noise_spin.setSuffix(" V")
+        self.analysis_shear_force_noise_spin.setToolTip(
+            "Noise threshold used only by the Shear Force L/R and T/B integrators, "
+            "independent of the PZT Channel Force Noise threshold above."
+        )
+        self.analysis_shear_force_noise_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_shear_force_noise_spin, 10, 1)
+
+        pzt_force_layout.addWidget(QLabel("Normal Noise:"), 10, 2)
+        self.analysis_normal_force_noise_spin = QDoubleSpinBox()
+        self.analysis_normal_force_noise_spin.setRange(0.0, 1e6)
+        self.analysis_normal_force_noise_spin.setDecimals(6)
+        self.analysis_normal_force_noise_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_noise_threshold_v"]))
+        self.analysis_normal_force_noise_spin.setSuffix(" V")
+        self.analysis_normal_force_noise_spin.setToolTip(
+            "Noise threshold used only by the Normal Force integrator, independent of "
+            "the PZT Channel Force Noise threshold above."
+        )
+        self.analysis_normal_force_noise_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_normal_force_noise_spin, 10, 3)
+
+        pzt_force_layout.addWidget(QLabel("Shear Zero Floor:"), 11, 0)
+        self.analysis_shear_force_zero_floor_spin = QDoubleSpinBox()
+        self.analysis_shear_force_zero_floor_spin.setRange(0.0, 1e6)
+        self.analysis_shear_force_zero_floor_spin.setDecimals(4)
+        self.analysis_shear_force_zero_floor_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_zero_band_min_n"]))
+        self.analysis_shear_force_zero_floor_spin.setSuffix(" N")
+        self.analysis_shear_force_zero_floor_spin.setToolTip(
+            "Zero-band floor (N) used only by the Shear Force integrators, independent "
+            "of the PZT Channel Force Zero floor above."
+        )
+        self.analysis_shear_force_zero_floor_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_shear_force_zero_floor_spin, 11, 1)
+
+        pzt_force_layout.addWidget(QLabel("Normal Zero Floor:"), 11, 2)
+        self.analysis_normal_force_zero_floor_spin = QDoubleSpinBox()
+        self.analysis_normal_force_zero_floor_spin.setRange(0.0, 1e6)
+        self.analysis_normal_force_zero_floor_spin.setDecimals(4)
+        self.analysis_normal_force_zero_floor_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_zero_band_min_n"]))
+        self.analysis_normal_force_zero_floor_spin.setSuffix(" N")
+        self.analysis_normal_force_zero_floor_spin.setToolTip(
+            "Zero-band floor (N) used only by the Normal Force integrator, independent "
+            "of the PZT Channel Force Zero floor above."
+        )
+        self.analysis_normal_force_zero_floor_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_normal_force_zero_floor_spin, 11, 3)
+
+        pzt_force_layout.addWidget(QLabel("Shear Min Peak:"), 12, 0)
+        self.analysis_shear_force_min_event_peak_spin = QDoubleSpinBox()
+        self.analysis_shear_force_min_event_peak_spin.setRange(0.0, 1e6)
+        self.analysis_shear_force_min_event_peak_spin.setDecimals(4)
+        self.analysis_shear_force_min_event_peak_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_zero_min_event_peak_n"]))
+        self.analysis_shear_force_min_event_peak_spin.setSuffix(" N")
+        self.analysis_shear_force_min_event_peak_spin.setToolTip(
+            "Minimum event peak (N) used only by the Shear Force integrators, "
+            "independent of the PZT Channel Force Min event peak above."
+        )
+        self.analysis_shear_force_min_event_peak_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_shear_force_min_event_peak_spin, 12, 1)
+
+        pzt_force_layout.addWidget(QLabel("Normal Min Peak:"), 12, 2)
+        self.analysis_normal_force_min_event_peak_spin = QDoubleSpinBox()
+        self.analysis_normal_force_min_event_peak_spin.setRange(0.0, 1e6)
+        self.analysis_normal_force_min_event_peak_spin.setDecimals(4)
+        self.analysis_normal_force_min_event_peak_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_zero_min_event_peak_n"]))
+        self.analysis_normal_force_min_event_peak_spin.setSuffix(" N")
+        self.analysis_normal_force_min_event_peak_spin.setToolTip(
+            "Minimum event peak (N) used only by the Normal Force integrator, "
+            "independent of the PZT Channel Force Min event peak above."
+        )
+        self.analysis_normal_force_min_event_peak_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_normal_force_min_event_peak_spin, 12, 3)
+
         settings_root.addWidget(pzt_force_group)
 
         zoom_group = QGroupBox("Zoom")
@@ -833,6 +911,24 @@ class AnalysisPanelMixin:
             )
             self.analysis_pzt_quiet_hold_spin.setValue(
                 float(pzt_force.get("quiet_hold_clear_s", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]))
+            )
+            self.analysis_shear_force_noise_spin.setValue(
+                float(pzt_force.get("shear_force_noise_threshold_v", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_noise_threshold_v"]))
+            )
+            self.analysis_normal_force_noise_spin.setValue(
+                float(pzt_force.get("normal_force_noise_threshold_v", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_noise_threshold_v"]))
+            )
+            self.analysis_shear_force_zero_floor_spin.setValue(
+                float(pzt_force.get("shear_force_zero_band_min_n", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_zero_band_min_n"]))
+            )
+            self.analysis_normal_force_zero_floor_spin.setValue(
+                float(pzt_force.get("normal_force_zero_band_min_n", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_zero_band_min_n"]))
+            )
+            self.analysis_shear_force_min_event_peak_spin.setValue(
+                float(pzt_force.get("shear_force_zero_min_event_peak_n", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_zero_min_event_peak_n"]))
+            )
+            self.analysis_normal_force_min_event_peak_spin.setValue(
+                float(pzt_force.get("normal_force_zero_min_event_peak_n", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_zero_min_event_peak_n"]))
             )
             self._update_analysis_pzt_mux_timing_controls()
             self._update_analysis_pzt_baseline_results()
@@ -1116,6 +1212,12 @@ class AnalysisPanelMixin:
             "force_zero_min_event_peak_n": float(self.analysis_pzt_min_event_peak_spin.value()),
             "quiet_hold_release_fraction": float(self.analysis_pzt_quiet_release_spin.value()),
             "quiet_hold_clear_s": float(self.analysis_pzt_quiet_hold_spin.value()),
+            "shear_force_noise_threshold_v": float(self.analysis_shear_force_noise_spin.value()),
+            "normal_force_noise_threshold_v": float(self.analysis_normal_force_noise_spin.value()),
+            "shear_force_zero_band_min_n": float(self.analysis_shear_force_zero_floor_spin.value()),
+            "normal_force_zero_band_min_n": float(self.analysis_normal_force_zero_floor_spin.value()),
+            "shear_force_zero_min_event_peak_n": float(self.analysis_shear_force_min_event_peak_spin.value()),
+            "normal_force_zero_min_event_peak_n": float(self.analysis_normal_force_min_event_peak_spin.value()),
             "channel_calibration": dict(pzt_force.get("channel_calibration", {})),
         })
         self.analysis_state["pzt_force"] = pzt_force
@@ -2271,6 +2373,12 @@ class AnalysisPanelMixin:
             self.analysis_pzt_mux_connected_ms_spin,
             self.analysis_pzt_off_mux_leak_check,
             self.analysis_pzt_off_mux_rleak_spin,
+            self.analysis_shear_force_noise_spin,
+            self.analysis_normal_force_noise_spin,
+            self.analysis_shear_force_zero_floor_spin,
+            self.analysis_normal_force_zero_floor_spin,
+            self.analysis_shear_force_min_event_peak_spin,
+            self.analysis_normal_force_min_event_peak_spin,
             self.analysis_pzt_calculate_baseline_btn,
             self.analysis_marker_check,
             self.analysis_reset_view_btn,

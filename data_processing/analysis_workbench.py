@@ -22,12 +22,16 @@ import numpy as np
 from constants.force import X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
 from constants.plotting import IADC_RESOLUTION_BITS
 from constants.pressure_map import DEFAULT_HPF_CUTOFF_HZ, DEFAULT_INTEGRATION_WINDOW_SAMPLES
+from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS, PZT_FORCE_PIC_COULOMB_TO_COULOMB
 from constants.shear import SHEAR_SENSOR_POSITIONS
 from data_processing.adc_filter_engine import ADCFilterEngine
 from data_processing.normal_force_calculator import NormalForceCalculator
 from data_processing.pzt_force_calculation import (
+    PztForceChannelIntegrator,
     calculate_pzt_force_from_settings,
     estimate_pzt_quiet_baseline,
+    pzt_capacitance_to_farads,
+    pzt_capacitance_value_for_position,
 )
 from data_processing.shear_detector import ShearDetector
 from data_processing.signal_integrator import SignalIntegrator
@@ -348,7 +352,6 @@ def prepare_analysis_data(
         traces.append(AnalysisTrace(label=label, x=x_base[:, column], y=y_values, group="signal"))
 
     force_traces = build_force_traces(snapshot, axis_mode)
-    calculated_force_by_label: dict[str, np.ndarray] = {}
     try:
         pzt_leak_dt_s, pzt_timing_status = resolve_analysis_pzt_mux_leak_dt_s(
             snapshot,
@@ -368,20 +371,11 @@ def prepare_analysis_data(
             pre_sample_decay_dt_s_by_label=pzt_pre_sample_decay_by_label,
         )
         # "PZT Channel Force" (settings["enabled"]) only controls whether
-        # these 5 raw per-channel curves are DISPLAYED; the computation
-        # itself always runs so Shear Force / Normal Force (below) can
-        # consume it even when this checkbox is off.
+        # these 5 raw per-channel curves are DISPLAYED. Shear Force / Normal
+        # Force (below) no longer consumes these arrays at all -- it runs its
+        # own moving-average-derived integration, independent of this toggle.
         if bool((pzt_force_settings or {}).get("enabled", False)):
             force_traces.extend(pzt_channel_force_traces)
-        # Reused verbatim by build_force_based_shear_normal_traces below so
-        # Shear Force / Normal Force consume the EXACT SAME per-channel
-        # accumulated-force arrays "PZT Channel Force" computes (displayed or
-        # not), rather than recomputing (and re-resolving MUX timing) a
-        # second time.
-        calculated_force_by_label = {
-            trace.label.removeprefix(_PZT_CHANNEL_FORCE_LABEL_PREFIX).removesuffix(_PZT_CHANNEL_FORCE_LABEL_SUFFIX): trace.y
-            for trace in pzt_channel_force_traces
-        }
         if pzt_timing_status:
             status_parts.append(pzt_timing_status)
     except Exception as exc:
@@ -394,7 +388,8 @@ def prepare_analysis_data(
                 axis_mode=axis_mode,
                 overlay_flags=overlay_flags or {},
                 vref_voltage=vref_voltage,
-                calculated_force_by_label=calculated_force_by_label,
+                integration_window_samples=integration_window_samples,
+                pzt_force_settings=pzt_force_settings or {},
             )
         )
     except Exception as exc:
@@ -726,14 +721,34 @@ def integrate_voltage_series_causal_median(
     voltage_by_key: Mapping,
     *,
     integration_window_samples: int,
+    mode: str = "sum",
 ) -> dict:
     """Shear/normal integration path: causal median baseline removal + a
-    moving rectangular sum, mirroring the calibration notebook's shear
+    moving rectangular reduction, mirroring the calibration notebook's shear
     pipeline (``_causal_median_baseline`` in ``calibration_utils.py``)
     instead of the HPF-based ``SignalIntegrator`` used for the generic
     "Integration" overlay trace.
+
+    ``mode="sum"`` (default) is today's moving rectangular SUM -- an integral
+    that grows with window length, used unchanged by the Shear/Normal Jerk
+    overlay traces. ``mode="average"`` divides by the number of samples
+    actually included at each index, which keeps the output in the same
+    voltage scale as the input -- a smoothed voltage, not an accumulated
+    integral -- so it can be fed through exactly one downstream RC-charge
+    integration afterward without double-integrating.
+
+    The first ``window - 1`` indices of a moving window are never a genuine
+    full window (fewer real samples summed/averaged than every later index),
+    so this function drops them from its own output entirely rather than
+    returning a partial-window value -- every caller gets already-warmed-up
+    data with no separate trimming step of their own. Callers that plot this
+    against a shared x/time axis must drop the same ``window - 1`` leading
+    samples from that axis; use :func:`moving_window_warmup_count`.
     """
+    if mode not in ("sum", "average"):
+        raise ValueError(f"unsupported integrate_voltage_series_causal_median mode '{mode}'")
     window = max(1, int(integration_window_samples))
+    warmup = window - 1
     result: dict = {}
     for key, raw_values in voltage_by_key.items():
         raw = np.asarray(raw_values, dtype=np.float64).reshape(-1)
@@ -747,9 +762,38 @@ def integrate_voltage_series_causal_median(
         cumsum = np.concatenate([[0.0], np.cumsum(centered)])
         end_idx = np.arange(len(centered))
         start_idx = np.maximum(0, end_idx - window + 1)
-        result[key] = cumsum[end_idx + 1] - cumsum[start_idx]
+        window_sum = cumsum[end_idx + 1] - cumsum[start_idx]
+        if mode == "average":
+            window_counts = (end_idx - start_idx + 1).astype(np.float64)
+            values = window_sum / window_counts
+        else:
+            values = window_sum
+        result[key] = values[warmup:]
 
     return result
+
+
+def moving_window_warmup_count(integration_window_samples: int) -> int:
+    """Leading sample count a ``integration_window_samples`` moving window drops.
+
+    Shared by every moving-window derived trace (Integration overlay,
+    Shear/Normal Jerk, Shear/Normal Force) so a caller can drop the same
+    number of leading samples from its x/time axis that the underlying
+    series functions already dropped from their own output.
+    """
+    return max(0, int(integration_window_samples) - 1)
+
+
+def _trim_x_to_moving_window_warmup(window_samples: int, x: np.ndarray) -> np.ndarray:
+    """Drop the leading x/time samples that a moving-window series already dropped.
+
+    ``integrate_voltage_series_causal_median`` and the ``SignalIntegrator``
+    path (via :func:`integrate_voltage_series`) drop their own first
+    ``moving_window_warmup_count(window_samples)`` outputs internally (see
+    those functions' docstrings); the shared x/time axis plotted alongside
+    them must drop the same leading samples to stay aligned.
+    """
+    return x[moving_window_warmup_count(window_samples):]
 
 
 def build_overlay_traces(
@@ -806,7 +850,11 @@ def build_overlay_traces(
     shear_tb: list[float] = []
     normal: list[float] = []
 
-    for row_index in range(snapshot.sweep_count):
+    # integrate_voltage_series_causal_median already dropped its own leading
+    # warmup samples -- every position's array is the same, already-trimmed
+    # length, shorter than snapshot.sweep_count.
+    trimmed_count = len(next(iter(integrated.values()))) if integrated else 0
+    for row_index in range(trimmed_count):
         values = {
             position: float(np.asarray(integrated[position], dtype=np.float64)[row_index])
             for position in SHEAR_SENSOR_POSITIONS
@@ -817,11 +865,12 @@ def build_overlay_traces(
         shear_tb.append(float(shear.b_tb))
         normal.append(float(normal_result.total_force))
 
+    trimmed_x = _trim_x_to_moving_window_warmup(integration_window_samples, x)
     if overlay_flags.get("shear", False):
-        overlays.append(AnalysisTrace("Shear L/R Jerk [V]", x, np.asarray(shear_lr, dtype=np.float64), "derived"))
-        overlays.append(AnalysisTrace("Shear T/B Jerk [V]", x, np.asarray(shear_tb, dtype=np.float64), "derived"))
+        overlays.append(AnalysisTrace("Shear L/R Jerk [V]", trimmed_x, np.asarray(shear_lr, dtype=np.float64), "derived"))
+        overlays.append(AnalysisTrace("Shear T/B Jerk [V]", trimmed_x, np.asarray(shear_tb, dtype=np.float64), "derived"))
     if overlay_flags.get("normal", False):
-        overlays.append(AnalysisTrace("Normal Jerk [V]", x, np.asarray(normal, dtype=np.float64), "derived"))
+        overlays.append(AnalysisTrace("Normal Jerk [V]", trimmed_x, np.asarray(normal, dtype=np.float64), "derived"))
     return overlays
 
 
@@ -851,6 +900,157 @@ def _resolve_shear_position_channels_and_volts(
     return position_channels, volts_by_position
 
 
+def _compute_shear_normal_from_moving_average(
+    snapshot: AnalysisSourceSnapshot,
+    data: np.ndarray,
+    *,
+    vref_voltage: float,
+    integration_window_samples: int,
+) -> tuple[dict[str, tuple[int, str]], np.ndarray, np.ndarray, np.ndarray] | None:
+    """Shear/Normal Jerk pipeline, but with a moving AVERAGE instead of a moving SUM.
+
+    The moving SUM used by the on-screen "Shear/Normal Jerk" traces
+    (``integrate_voltage_series_causal_median`` default ``mode="sum"``) grows
+    with window length -- it is itself an integral. A moving AVERAGE instead
+    stays in the same voltage scale as its input (a smoothed voltage), so
+    ``build_force_based_shear_normal_traces`` can integrate it exactly once
+    through an RC-charge model without double-integrating. Returns ``None``
+    when the five C/L/R/T/B positions aren't resolvable.
+    """
+    resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
+    if resolved_positions is None:
+        return None
+    position_channels, volts_by_position = resolved_positions
+
+    averaged = integrate_voltage_series_causal_median(
+        volts_by_position,
+        integration_window_samples=integration_window_samples,
+        mode="average",
+    )
+    shear_detector = ShearDetector()
+    normal_calculator = NormalForceCalculator()
+    # integrate_voltage_series_causal_median already dropped its own leading
+    # warmup samples -- every position's array is the same, already-trimmed
+    # length, shorter than snapshot.sweep_count.
+    trimmed_count = len(next(iter(averaged.values()))) if averaged else 0
+    shear_lr_avg = np.zeros(trimmed_count, dtype=np.float64)
+    shear_tb_avg = np.zeros(trimmed_count, dtype=np.float64)
+    normal_avg = np.zeros(trimmed_count, dtype=np.float64)
+    for row_index in range(trimmed_count):
+        values = {
+            position: float(np.asarray(averaged[position], dtype=np.float64)[row_index])
+            for position in SHEAR_SENSOR_POSITIONS
+        }
+        shear = shear_detector.detect(values)
+        normal_result = normal_calculator.compute(shear.residual)
+        shear_lr_avg[row_index] = shear.b_lr
+        shear_tb_avg[row_index] = shear.b_tb
+        normal_avg[row_index] = normal_result.total_force
+
+    return position_channels, shear_lr_avg, shear_tb_avg, normal_avg
+
+
+def _role_for_shear_normal_position(sensor_position: str) -> str:
+    """Map a Shear/Normal Force integrator's sensor position to its role.
+
+    Position "C" (center) feeds Normal Force; "L"/"T" (outer) feed the two
+    Shear Force components. Used to pick each integrator's own
+    ``shear_force_*``/``normal_force_*`` threshold settings below.
+    """
+    return "normal" if sensor_position == "C" else "shear"
+
+
+def _shear_normal_role_threshold(
+    supplied: Mapping[str, object], resolved: Mapping[str, object], role: str, shared_key: str,
+) -> float:
+    """Resolve a shear/normal-specific threshold, preferring an explicit caller override.
+
+    ``role_key`` is ``{role}_force_{shared_key}`` (e.g. ``normal_force_noise_threshold_v``)
+    for the ``noise_threshold_v`` shared key, but ``{role}_{shared_key}`` (e.g.
+    ``normal_force_zero_band_min_n``) for keys that already start with
+    ``force_`` -- matching the actual key names in
+    ``constants.pzt_force.PZT_FORCE_DEFAULT_SETTINGS``.
+
+    Precedence: an explicitly supplied role-specific key wins; otherwise an
+    explicitly supplied legacy shared key (e.g. ``noise_threshold_v``) is
+    honored, so callers that only set the old shared key (as every existing
+    caller predating this split does) keep behaving exactly as before;
+    otherwise falls back to the role-specific default.
+    """
+    role_key = f"{role}_{shared_key}" if shared_key.startswith("force_") else f"{role}_force_{shared_key}"
+    if role_key in supplied:
+        return float(supplied[role_key])
+    if shared_key in supplied:
+        return float(supplied[shared_key])
+    return float(resolved[role_key])
+
+
+def _new_shear_normal_force_integrator(
+    settings: Mapping[str, object], sensor_position: str,
+) -> PztForceChannelIntegrator:
+    """Build one independent RC-charge integrator for a Shear/Normal Force series.
+
+    Mirrors the settings resolution ``calculate_pzt_force_from_settings``
+    uses internally, but returns a live integrator instance instead of
+    running it over an array — the moving-average Shear/Normal series are
+    already centered, so they must never be re-centered by a second Vmid
+    estimate the way a fresh ``calculate_pzt_force_from_voltage`` call would.
+    Invalid capacitance/rleak/d33 raise via the integrator's own
+    ``__post_init__`` validation.
+
+    Noise threshold and zero-band thresholds are read from this integrator's
+    own ``shear_force_*``/``normal_force_*`` settings rather than the shared
+    ``noise_threshold_v``/``force_zero_band_min_n``/``force_zero_min_event_peak_n``
+    keys used by PZT Channel Force — Shear and Normal residuals differ enough
+    in typical magnitude that one shared volt/newton threshold isn't right
+    for both.
+    """
+    supplied = dict(settings or {})
+    resolved = {**PZT_FORCE_DEFAULT_SETTINGS, **supplied}
+    role = _role_for_shear_normal_position(sensor_position)
+    capacitance_f = pzt_capacitance_to_farads(
+        pzt_capacitance_value_for_position(supplied, sensor_position),
+        str(resolved["capacitance_unit"]),
+    )
+    d33_c_per_n = float(resolved["d33_pc_per_n"]) * PZT_FORCE_PIC_COULOMB_TO_COULOMB
+    off_mux_raw = resolved.get("off_mux_rleak_ohm")
+    off_mux_rleak_ohm = (
+        float(off_mux_raw)
+        if bool(resolved.get("off_mux_leak_enabled", False)) and off_mux_raw not in (None, "")
+        else None
+    )
+    return PztForceChannelIntegrator(
+        capacitance_f=capacitance_f,
+        rleak_ohm=float(resolved["rleak_ohm"]),
+        d33_c_per_n=d33_c_per_n,
+        noise_threshold_v=_shear_normal_role_threshold(supplied, resolved, role, "noise_threshold_v"),
+        off_mux_rleak_ohm=off_mux_rleak_ohm,
+        force_zero_band_fraction=float(resolved["force_zero_band_fraction"]),
+        force_zero_band_min_n=_shear_normal_role_threshold(supplied, resolved, role, "force_zero_band_min_n"),
+        force_zero_min_event_peak_n=_shear_normal_role_threshold(
+            supplied, resolved, role, "force_zero_min_event_peak_n"
+        ),
+        quiet_hold_release_fraction=float(resolved["quiet_hold_release_fraction"]),
+        quiet_hold_clear_s=float(resolved["quiet_hold_clear_s"]),
+        stuck_force_failsafe_enabled=bool(resolved["stuck_force_failsafe_enabled"]),
+        stuck_force_quiet_hold_s=float(resolved["stuck_force_quiet_hold_s"]),
+        stuck_force_decay_tau_s=float(resolved["stuck_force_decay_tau_s"]),
+    )
+
+
+def _integrate_causal_series(
+    values: np.ndarray, time_s: np.ndarray, integrator: PztForceChannelIntegrator,
+) -> np.ndarray:
+    """Replay an already-centered scalar series through one RC integrator, causally."""
+    values = np.asarray(values, dtype=np.float64).reshape(-1)
+    times = np.asarray(time_s, dtype=np.float64).reshape(-1)
+    out = np.zeros(values.size, dtype=np.float64)
+    for index in range(values.size):
+        step = integrator.process_centered_sample(float(values[index]), float(times[index]))
+        out[index] = step.accumulated_force_n
+    return out
+
+
 def build_force_based_shear_normal_traces(
     snapshot: AnalysisSourceSnapshot,
     data: np.ndarray,
@@ -858,61 +1058,60 @@ def build_force_based_shear_normal_traces(
     axis_mode: str,
     overlay_flags: Mapping[str, bool],
     vref_voltage: float,
-    calculated_force_by_label: Mapping[str, np.ndarray],
+    integration_window_samples: int,
+    pzt_force_settings: Mapping[str, object],
 ) -> list[AnalysisTrace]:
-    """Reconstruct Shear Force / Normal Force with the Pressure Map's own method.
+    """Integrate the shear-free Jerk *average* through one RC-charge stage each.
 
-    Mirrors ``PressureForceDisplayEngine.process_sample`` in
-    ``pressure_force_display.py`` exactly: each position's PZT force is
-    already integrated (the SAME per-channel ``accumulated_force_n`` arrays
-    "PZT Channel Force" computes and displays, passed in verbatim via
-    ``calculated_force_by_label`` — never recomputed here), and only then is
-    ``ShearDetector``/``NormalForceCalculator`` applied to those
-    already-accumulated force values. Shear and Normal are stateless,
-    instantaneous combinators here too — there is exactly one integration
-    step per position, never a second one for shear or normal. This depends
-    only on ``calculated_force_by_label`` being available (the caller always
-    computes it, independent of the "PZT Channel Force" display checkbox)
-    and on all five C/L/R/T/B positions being resolvable — NOT on
-    ``pzt_force_settings["enabled"]``, which only controls whether the raw
-    per-channel traces are displayed elsewhere.
+    Shear/Normal Jerk (``build_overlay_traces``) uses a moving-window SUM,
+    which already grows with window length -- an integral in its own right.
+    Feeding that into a second, RC-charge integrator would double-integrate.
+    This function instead detects shear on a moving AVERAGE of the same
+    causally-centered voltage (average keeps voltage units -- a smoothed
+    voltage, not an accumulated integral), then integrates the resulting
+    shear-free Normal residual and the two shear components each through
+    their OWN independent ``PztForceChannelIntegrator`` -- exactly one true
+    integration stage per output. Fully independent of "PZT Channel Force"
+    (its own accumulators) and of the Shear/Normal Jerk display checkboxes
+    (its own moving-average computation, not the displayed sum-based Jerk
+    values) -- only needs valid numeric PZT force settings and all five
+    C/L/R/T/B positions.
     """
     if not any(bool(overlay_flags.get(key, False)) for key in ("shear_force", "normal_force")):
         return []
 
-    resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
-    if resolved_positions is None:
+    computed = _compute_shear_normal_from_moving_average(
+        snapshot, data,
+        vref_voltage=vref_voltage,
+        integration_window_samples=integration_window_samples,
+    )
+    if computed is None:
         raise ValueError("Shear Force / Normal Force requires all five C/L/R/T/B channels")
-    position_channels, _volts_by_position = resolved_positions
+    position_channels, shear_lr_avg, shear_tb_avg, normal_avg = computed
 
-    force_by_position: dict[str, np.ndarray] = {}
-    for position in SHEAR_SENSOR_POSITIONS:
-        _column, label = position_channels[position]
-        if label not in calculated_force_by_label:
-            raise ValueError(
-                f"Shear Force / Normal Force requires PZT Channel Force for position {position} ({label})"
-            )
-        force_by_position[position] = np.asarray(calculated_force_by_label[label], dtype=np.float64)
-
-    shear_detector = ShearDetector()
-    normal_calculator = NormalForceCalculator()
-    normal_force = np.zeros(snapshot.sweep_count, dtype=np.float64)
-    shear_force_lr = np.zeros(snapshot.sweep_count, dtype=np.float64)
-    shear_force_tb = np.zeros(snapshot.sweep_count, dtype=np.float64)
-    for row_index in range(snapshot.sweep_count):
-        current_forces = {
-            position: float(force_by_position[position][row_index])
-            for position in SHEAR_SENSOR_POSITIONS
-        }
-        shear = shear_detector.detect(current_forces)
-        normal_result = normal_calculator.compute(shear.residual)
-        normal_force[row_index] = normal_result.total_force
-        shear_force_lr[row_index] = shear.b_lr
-        shear_force_tb[row_index] = shear.b_tb
+    time_base_s = build_trace_time_axis_seconds(snapshot)
+    row_time_s = time_base_s[:, 0] if time_base_s.size else np.empty(0, dtype=np.float64)
+    # shear_lr_avg/shear_tb_avg/normal_avg already dropped their own leading
+    # warmup samples inside _compute_shear_normal_from_moving_average -- the
+    # matching time axis must drop the same count to stay aligned, so each
+    # RC integrator's very first input is already a fully warmed-up average
+    # rather than a partial-window value.
+    row_time_s = _trim_x_to_moving_window_warmup(integration_window_samples, row_time_s)
 
     x_matrix, _label, _units = build_trace_x_axis(snapshot, axis_mode)
     center_column = position_channels["C"][0]
     x = x_matrix[:, center_column] if x_matrix.size else np.empty(0, dtype=np.float64)
+    x = _trim_x_to_moving_window_warmup(integration_window_samples, x)
+
+    normal_force = _integrate_causal_series(
+        normal_avg, row_time_s, _new_shear_normal_force_integrator(pzt_force_settings, "C")
+    )
+    shear_force_lr = _integrate_causal_series(
+        shear_lr_avg, row_time_s, _new_shear_normal_force_integrator(pzt_force_settings, "L")
+    )
+    shear_force_tb = _integrate_causal_series(
+        shear_tb_avg, row_time_s, _new_shear_normal_force_integrator(pzt_force_settings, "T")
+    )
 
     traces: list[AnalysisTrace] = []
     if overlay_flags.get("shear_force", False):
@@ -949,10 +1148,12 @@ def build_integration_traces(
         hpf_cutoff_hz=hpf_cutoff_hz,
         channel_map=list(voltage_by_label),
     )
+    # integrate_voltage_series already dropped its own leading warmup samples.
+    trimmed_x = _trim_x_to_moving_window_warmup(integration_window_samples, x)
     return [
         AnalysisTrace(
             f"Integrated {label} [V samples]",
-            x,
+            trimmed_x,
             np.asarray(integrated[label], dtype=np.float64),
             "integration",
         )
@@ -969,6 +1170,13 @@ def integrate_voltage_series(
     hpf_cutoff_hz: float,
     channel_map,
 ) -> dict:
+    """This is a single one-shot call over an entire loaded capture (a fresh
+    ``SignalIntegrator`` every call, never carried across calls the way live
+    streaming usage of ``SignalIntegrator`` is), so -- like
+    ``integrate_voltage_series_causal_median`` -- it drops its own leading
+    ``moving_window_warmup_count(integration_window_samples)`` outputs before
+    returning, rather than emitting partial-window values from a cold start.
+    """
     keys = list(voltage_by_key)
     integrator = SignalIntegrator(
         channel_count=len(keys),
@@ -978,12 +1186,14 @@ def integrate_voltage_series(
         channel_map=channel_map,
     )
     try:
-        return integrator.process(
+        result = integrator.process(
             [voltage_by_key[key] for key in keys],
             sample_rate_hz=sample_rate_hz if sample_rate_hz > 0 else None,
         )
     except Exception:
-        return _fallback_integrated(voltage_by_key, int(integration_window_samples))
+        result = _fallback_integrated(voltage_by_key, int(integration_window_samples))
+    warmup = moving_window_warmup_count(integration_window_samples)
+    return {key: np.asarray(values, dtype=np.float64)[warmup:] for key, values in result.items()}
 
 
 def counts_to_volts(values, vref_voltage: float) -> np.ndarray:

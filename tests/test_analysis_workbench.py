@@ -122,12 +122,54 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         np.testing.assert_array_equal(snapshot.data, owner.raw_data_buffer)
 
     def test_causal_median_integration_matches_expanding_baseline(self):
+        # window=2 -> index 0 has no full window and is dropped entirely;
+        # only indices 1-3 (each backed by a genuine 2-sample window) remain.
         result = integrate_voltage_series_causal_median(
             {"C": np.asarray([0.0, 0.0, 10.0, 10.0])},
             integration_window_samples=2,
         )
 
-        np.testing.assert_allclose(result["C"], [0.0, 0.0, 10.0, 15.0])
+        np.testing.assert_allclose(result["C"], [0.0, 10.0, 15.0])
+
+    def test_causal_median_integration_average_mode_divides_by_actual_window_fill(self):
+        # Same series/window as the sum-mode test above: window=2, so index 0
+        # (partial 1-sample window) is dropped from both outputs, and every
+        # remaining index has a full 2-sample window.
+        sum_result = integrate_voltage_series_causal_median(
+            {"C": np.asarray([0.0, 0.0, 10.0, 10.0])},
+            integration_window_samples=2,
+        )
+        avg_result = integrate_voltage_series_causal_median(
+            {"C": np.asarray([0.0, 0.0, 10.0, 10.0])},
+            integration_window_samples=2,
+            mode="average",
+        )
+
+        # index 1: window-fill count 2 -> sum/2
+        # index 2: window-fill count 2 -> sum/2
+        # index 3: window-fill count 2 -> sum/2
+        expected = np.asarray(sum_result["C"]) / 2.0
+        np.testing.assert_allclose(avg_result["C"], expected)
+        # Sanity: average never exceeds the peak per-sample deviation the way
+        # a growing sum would over a longer window.
+        self.assertTrue(np.all(np.abs(avg_result["C"]) <= 10.0 + 1e-9))
+
+    def test_causal_median_integration_drops_leading_samples_shorter_than_window(self):
+        # A whole capture shorter than the window has no genuine full window
+        # anywhere -- output must be empty, not partial-window values.
+        result = integrate_voltage_series_causal_median(
+            {"C": np.asarray([1.0, 2.0])},
+            integration_window_samples=5,
+        )
+        self.assertEqual(result["C"].size, 0)
+
+    def test_causal_median_integration_rejects_unknown_mode(self):
+        with self.assertRaises(ValueError):
+            integrate_voltage_series_causal_median(
+                {"C": np.asarray([0.0, 1.0])},
+                integration_window_samples=2,
+                mode="bogus",
+            )
 
     def test_reorder_circular_capture_returns_oldest_to_newest(self):
         data = np.asarray(
@@ -849,23 +891,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             "noise_threshold_v": 0.0,
         }
         vref_voltage = 3.3
-
-        # Precompute the SAME per-position accumulated-force arrays "PZT
-        # Channel Force" already produces (via calculate_pzt_force_from_settings)
-        # and pass them straight through, exactly as prepare_analysis_data does
-        # — the function under test must reuse these, never recompute them.
-        max_adc = float((2 ** 12) - 1)
-        volts_by_position = {
-            position: (data[:, index] / max_adc) * vref_voltage
-            for index, position in enumerate(["C", "L", "R", "T", "B"])
-        }
-        timestamps = snapshot.timestamps_s
-        force_by_position = {
-            position: calculate_pzt_force_from_settings(
-                volts_by_position[position], timestamps, pzt_force_settings, sensor_position=position,
-            )
-            for position in ["C", "L", "R", "T", "B"]
-        }
+        window_samples = 2
 
         traces = build_force_based_shear_normal_traces(
             snapshot,
@@ -873,36 +899,72 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             axis_mode="samples",
             overlay_flags={"shear_force": True, "normal_force": True},
             vref_voltage=vref_voltage,
-            calculated_force_by_label=force_by_position,
+            integration_window_samples=window_samples,
+            pzt_force_settings=pzt_force_settings,
         )
         by_label = {trace.label: trace for trace in traces}
         self.assertEqual(
             set(by_label), {"Shear Force L/R [N]", "Shear Force T/B [N]", "Normal Force [N]"}
         )
 
-        # Hand-computed reference: split shear/normal from those SAME
-        # already-accumulated force values — mirrors
-        # pressure_force_display.py's order exactly, exactly one integration
-        # step per position, never a second one.
+        # Hand-computed reference: moving-AVERAGE (not sum) of causally
+        # centered voltage per position -> ShearDetector/NormalForceCalculator
+        # -> one independent PztForceChannelIntegrator per output series.
+        # This must match the function under test exactly, since it's meant
+        # to be the same computation, not an approximation of it.
+        max_adc = float((2 ** 12) - 1)
+        volts_by_position = {
+            position: (data[:, index] / max_adc) * vref_voltage
+            for index, position in enumerate(["C", "L", "R", "T", "B"])
+        }
+        averaged = integrate_voltage_series_causal_median(
+            volts_by_position, integration_window_samples=window_samples, mode="average",
+        )
         detector = ShearDetector()
         calculator = NormalForceCalculator()
-        normal_ref, shear_lr_ref, shear_tb_ref = [], [], []
-        for row in range(data.shape[0]):
-            current_forces = {
-                position: float(force_by_position[position][row])
-                for position in ["C", "L", "R", "T", "B"]
-            }
-            shear = detector.detect(current_forces)
-            normal_ref.append(calculator.compute(shear.residual).total_force)
-            shear_lr_ref.append(shear.b_lr)
-            shear_tb_ref.append(shear.b_tb)
+        normal_avg_ref, shear_lr_avg_ref, shear_tb_avg_ref = [], [], []
+        # integrate_voltage_series_causal_median already dropped its own
+        # leading (window_samples - 1) partial-window rows, so "row" here
+        # indexes the already-trimmed arrays, not the original capture rows.
+        trimmed_count = len(averaged["C"])
+        for row in range(trimmed_count):
+            values = {position: float(averaged[position][row]) for position in ["C", "L", "R", "T", "B"]}
+            shear = detector.detect(values)
+            normal_avg_ref.append(calculator.compute(shear.residual).total_force)
+            shear_lr_avg_ref.append(shear.b_lr)
+            shear_tb_avg_ref.append(shear.b_tb)
+
+        warmup = window_samples - 1
+        trimmed_timestamps = snapshot.timestamps_s[warmup:]
+
+        def _integrate(series, sensor_position):
+            capacitance_f = pzt_capacitance_to_farads(
+                pzt_force_settings["center_capacitance_value" if sensor_position == "C" else "outer_capacitance_value"],
+                pzt_force_settings["capacitance_unit"],
+            )
+            integrator_out = []
+            from data_processing.pzt_force_calculation import PztForceChannelIntegrator
+            integrator = PztForceChannelIntegrator(
+                capacitance_f=capacitance_f,
+                rleak_ohm=pzt_force_settings["rleak_ohm"],
+                d33_c_per_n=pzt_force_settings["d33_pc_per_n"] * 1e-12,
+                noise_threshold_v=pzt_force_settings["noise_threshold_v"],
+            )
+            for row, value in enumerate(series):
+                step = integrator.process_centered_sample(float(value), float(trimmed_timestamps[row]))
+                integrator_out.append(step.accumulated_force_n)
+            return integrator_out
+
+        normal_ref = _integrate(normal_avg_ref, "C")
+        shear_lr_ref = _integrate(shear_lr_avg_ref, "L")
+        shear_tb_ref = _integrate(shear_tb_avg_ref, "T")
 
         np.testing.assert_allclose(by_label["Normal Force [N]"].y, normal_ref, rtol=1e-6, atol=1e-12)
         np.testing.assert_allclose(by_label["Shear Force L/R [N]"].y, shear_lr_ref, rtol=1e-6, atol=1e-12)
         np.testing.assert_allclose(by_label["Shear Force T/B [N]"].y, shear_tb_ref, rtol=1e-6, atol=1e-12)
 
-        # Existing voltage-based Shear/Normal Jerk path is untouched by
-        # enabling the new Force overlay flags.
+        # Existing voltage-based Shear/Normal Jerk path (moving SUM) is
+        # untouched by enabling the new Force overlay flags.
         pressure_overlays = build_overlay_traces(
             snapshot, snapshot.data, axis_mode="samples",
             overlay_flags={"shear": True, "normal": True}, vref_voltage=vref_voltage,
@@ -913,24 +975,213 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             {"Shear L/R Jerk [V]", "Shear T/B Jerk [V]", "Normal Jerk [V]"},
         )
 
-    def test_force_based_shear_normal_traces_raises_on_empty_calculated_force(self):
+    def test_force_based_shear_normal_traces_raises_when_positions_missing(self):
+        # Only 3 of 5 required C/L/R/T/B positions -- a genuine "no data" case.
         snapshot = AnalysisSourceSnapshot(
-            data=np.asarray([[100, 100, -100, 50, -50]], dtype=np.float32),
+            data=np.asarray([[100, 100, -100]], dtype=np.float32),
             timestamps_s=np.asarray([0.0], dtype=np.float64),
+            channel_labels=["C", "L", "R"],
+            metadata={"configuration": {"channels": [1, 2, 3], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=100.0,
+        )
+        with self.assertRaises(ValueError):
+            build_force_based_shear_normal_traces(
+                snapshot, snapshot.data, axis_mode="samples",
+                overlay_flags={"normal_force": True}, vref_voltage=3.3,
+                integration_window_samples=30,
+                pzt_force_settings={"center_capacitance_value": 150.0, "outer_capacitance_value": 150.0},
+            )
+
+    def test_force_based_shear_normal_traces_idle_stretch_stays_near_zero(self):
+        # A long quiet stretch (sub-noise-threshold jitter around 0) must not
+        # drift under the RC integrator -- this is the test that would catch
+        # a baseline/centering regression in the moving-average path.
+        rng_values = np.asarray([0.0, 0.0002, -0.0001, 0.0001, -0.0002, 0.0] * 10, dtype=np.float32)
+        data = np.tile(rng_values.reshape(-1, 1), (1, 5)) * 100.0  # small ADC-count jitter, all positions
+        timestamps = np.arange(data.shape[0], dtype=np.float64) * 0.01
+        snapshot = AnalysisSourceSnapshot(
+            data=data,
+            timestamps_s=timestamps,
             channel_labels=["C", "L", "R", "T", "B"],
             metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
             source_id="unit",
             sample_rate_hz=100.0,
         )
-        # No per-channel accumulated force is available at all (e.g. genuinely
-        # invalid PZT settings upstream) — this is a real "no data" case, not
-        # the "PZT Channel Force" display checkbox being off.
-        with self.assertRaises(ValueError):
-            build_force_based_shear_normal_traces(
-                snapshot, snapshot.data, axis_mode="samples",
-                overlay_flags={"normal_force": True}, vref_voltage=3.3,
-                calculated_force_by_label={},
-            )
+        pzt_force_settings = {
+            "center_capacitance_value": 150.0,
+            "outer_capacitance_value": 150.0,
+            "capacitance_unit": "pF",
+            "rleak_ohm": 1_000_000.0,
+            "d33_pc_per_n": 600.0,
+            "noise_threshold_v": 0.05,
+        }
+
+        traces = build_force_based_shear_normal_traces(
+            snapshot, snapshot.data, axis_mode="samples",
+            overlay_flags={"normal_force": True}, vref_voltage=3.3,
+            integration_window_samples=30,
+            pzt_force_settings=pzt_force_settings,
+        )
+        normal_force = next(trace.y for trace in traces if trace.label == "Normal Force [N]")
+        self.assertTrue(np.all(np.abs(normal_force) < 1e-6), msg=f"drifted: {normal_force}")
+
+    def test_shear_normal_default_settings_match_shared_legacy_values(self):
+        # The new per-role keys must default to exactly the same value as
+        # their pre-existing shared counterpart, so nobody's behavior changes
+        # until they explicitly diverge shear from normal.
+        self.assertEqual(
+            PZT_FORCE_DEFAULT_SETTINGS["shear_force_noise_threshold_v"],
+            PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"],
+        )
+        self.assertEqual(
+            PZT_FORCE_DEFAULT_SETTINGS["normal_force_noise_threshold_v"],
+            PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"],
+        )
+        self.assertEqual(
+            PZT_FORCE_DEFAULT_SETTINGS["shear_force_zero_band_min_n"],
+            PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"],
+        )
+        self.assertEqual(
+            PZT_FORCE_DEFAULT_SETTINGS["normal_force_zero_band_min_n"],
+            PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"],
+        )
+        self.assertEqual(
+            PZT_FORCE_DEFAULT_SETTINGS["shear_force_zero_min_event_peak_n"],
+            PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"],
+        )
+        self.assertEqual(
+            PZT_FORCE_DEFAULT_SETTINGS["normal_force_zero_min_event_peak_n"],
+            PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"],
+        )
+
+    def test_shear_normal_force_noise_thresholds_are_independent(self):
+        # Same tap-like input to both paths; a very high Normal noise
+        # threshold must silence Normal Force while a low Shear noise
+        # threshold still lets Shear Force respond, and vice versa.
+        data = np.asarray(
+            [
+                [200, 300, -300, 100, -100],
+                [260, 500, -420, 140, -140],
+                [260, 500, -420, 140, -140],
+                [180, 260, -260, 80, -80],
+            ],
+            dtype=np.float32,
+        )
+        snapshot = AnalysisSourceSnapshot(
+            data=data,
+            timestamps_s=np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64),
+            channel_labels=["C", "L", "R", "T", "B"],
+            metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=100.0,
+        )
+        base_settings = {
+            "center_capacitance_value": 150.0,
+            "outer_capacitance_value": 150.0,
+            "capacitance_unit": "pF",
+            "rleak_ohm": 1_000_000.0,
+            "d33_pc_per_n": 600.0,
+        }
+
+        # Normal silenced (huge threshold), Shear responsive (near-zero threshold).
+        traces = build_force_based_shear_normal_traces(
+            snapshot, snapshot.data, axis_mode="samples",
+            overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=3.3,
+            integration_window_samples=2,
+            pzt_force_settings={
+                **base_settings,
+                "normal_force_noise_threshold_v": 100.0,
+                "shear_force_noise_threshold_v": 0.0,
+            },
+        )
+        by_label = {trace.label: trace for trace in traces}
+        self.assertTrue(np.all(by_label["Normal Force [N]"].y == 0.0))
+        self.assertTrue(np.any(by_label["Shear Force L/R [N]"].y != 0.0))
+
+        # Flip it: Shear silenced, Normal responsive.
+        traces = build_force_based_shear_normal_traces(
+            snapshot, snapshot.data, axis_mode="samples",
+            overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=3.3,
+            integration_window_samples=2,
+            pzt_force_settings={
+                **base_settings,
+                "normal_force_noise_threshold_v": 0.0,
+                "shear_force_noise_threshold_v": 100.0,
+            },
+        )
+        by_label = {trace.label: trace for trace in traces}
+        self.assertTrue(np.all(by_label["Shear Force L/R [N]"].y == 0.0))
+        self.assertTrue(np.all(by_label["Shear Force T/B [N]"].y == 0.0))
+        self.assertTrue(np.any(by_label["Normal Force [N]"].y != 0.0))
+
+    def test_shear_normal_force_threshold_falls_back_to_legacy_shared_key(self):
+        # A caller that only sets the pre-existing shared "noise_threshold_v"
+        # (every caller predating this split) must keep getting that value
+        # applied to both Normal and Shear, not the new default.
+        snapshot = AnalysisSourceSnapshot(
+            data=np.asarray(
+                [[200, 300, -300, 100, -100], [260, 500, -420, 140, -140]], dtype=np.float32
+            ),
+            timestamps_s=np.asarray([0.0, 0.01], dtype=np.float64),
+            channel_labels=["C", "L", "R", "T", "B"],
+            metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=100.0,
+        )
+        pzt_force_settings = {
+            "center_capacitance_value": 150.0,
+            "outer_capacitance_value": 150.0,
+            "capacitance_unit": "pF",
+            "rleak_ohm": 1_000_000.0,
+            "d33_pc_per_n": 600.0,
+            "noise_threshold_v": 100.0,  # legacy shared key only, no new per-role keys
+        }
+        traces = build_force_based_shear_normal_traces(
+            snapshot, snapshot.data, axis_mode="samples",
+            overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=3.3,
+            integration_window_samples=2,
+            pzt_force_settings=pzt_force_settings,
+        )
+        by_label = {trace.label: trace for trace in traces}
+        # Threshold of 100V silences everything, matching pre-split behavior.
+        self.assertTrue(np.all(by_label["Normal Force [N]"].y == 0.0))
+        self.assertTrue(np.all(by_label["Shear Force L/R [N]"].y == 0.0))
+        self.assertTrue(np.all(by_label["Shear Force T/B [N]"].y == 0.0))
+
+    def test_force_based_shear_normal_traces_independent_of_jerk_display_toggles(self):
+        snapshot = AnalysisSourceSnapshot(
+            data=np.asarray(
+                [[200, 300, -300, 100, -100], [260, 500, -420, 140, -140]], dtype=np.float32
+            ),
+            timestamps_s=np.asarray([0.0, 0.01], dtype=np.float64),
+            channel_labels=["C", "L", "R", "T", "B"],
+            metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=100.0,
+        )
+        pzt_force_settings = {
+            "center_capacitance_value": 150.0,
+            "outer_capacitance_value": 150.0,
+            "capacitance_unit": "pF",
+            "rleak_ohm": 1_000_000.0,
+            "d33_pc_per_n": 600.0,
+            "noise_threshold_v": 0.0,
+        }
+        # Shear/Normal Jerk display checkboxes ("shear"/"normal") both OFF --
+        # Shear Force / Normal Force must still compute, since it runs its
+        # own moving-average computation, not the displayed Jerk values.
+        prepared = prepare_analysis_data(
+            snapshot, axis_mode="samples",
+            overlay_flags={"normal_force": True, "shear_force": True, "shear": False, "normal": False},
+            vref_voltage=3.3,
+            pzt_force_settings=pzt_force_settings,
+        )
+        force_labels = {trace.label for trace in prepared.force_traces}
+        self.assertIn("Normal Force [N]", force_labels)
+        self.assertIn("Shear Force L/R [N]", force_labels)
+        overlay_labels = {trace.label for trace in prepared.overlay_traces}
+        self.assertNotIn("Normal Jerk [V]", overlay_labels)
 
     def test_force_based_shear_normal_traces_skipped_on_invalid_settings(self):
         snapshot = AnalysisSourceSnapshot(

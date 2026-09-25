@@ -14,6 +14,13 @@ PZT_FORCE_DEFAULT_SETTINGS = {
     "rleak_ohm": 1_000_000.0,
     "d33_pc_per_n": 600.0,
     "noise_threshold_v": 0.01,
+    # Shear Force / Normal Force run their own independent RC integrators
+    # (see build_force_based_shear_normal_traces) on a moving-AVERAGE signal
+    # rather than PZT Channel Force's moving-SUM, so the same volt/newton
+    # thresholds don't scale the same way. Default to the shared values
+    # above so nothing changes until these are explicitly diverged.
+    "shear_force_noise_threshold_v": 0.01,
+    "normal_force_noise_threshold_v": 0.01,
     "quiet_duration_s": 2.0,
     "noise_sigma_multiplier": 5.0,
     "mux_timing_mode": "auto",
@@ -35,7 +42,11 @@ PZT_FORCE_DEFAULT_SETTINGS = {
     # Natural-reset event-machine tunables (PztForceChannelIntegrator).
     "force_zero_band_fraction": 0.1,
     "force_zero_band_min_n": 0.02,
+    "shear_force_zero_band_min_n": 0.02,
+    "normal_force_zero_band_min_n": 0.02,
     "force_zero_min_event_peak_n": 0.05,
+    "shear_force_zero_min_event_peak_n": 0.05,
+    "normal_force_zero_min_event_peak_n": 0.05,
     # At quiet-hold expiry, the residual must have declined to within this
     # fraction of the event's own peak before it is released/zeroed; a
     # residual still near peak is presumed a held press whose voltage has
@@ -57,6 +68,8 @@ ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS = {
     **PZT_FORCE_DEFAULT_SETTINGS,
     "d33_pc_per_n": 120.0,
     "noise_threshold_v": 0.05,
+    "shear_force_noise_threshold_v": 0.05,
+    "normal_force_noise_threshold_v": 0.05,
     "quiet_duration_s": 0.5,
     "noise_sigma_multiplier": 8.0,
     "off_mux_leak_enabled": False,
@@ -64,6 +77,8 @@ ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS = {
     "stuck_force_quiet_hold_s": 0.5,
     "stuck_force_decay_tau_s": 0.5,
     "force_zero_band_min_n": 0.05,
+    "shear_force_zero_band_min_n": 0.05,
+    "normal_force_zero_band_min_n": 0.05,
 }
 
 PZT_FORCE_CAPACITANCE_UNITS = ("pF", "nF", "F")
