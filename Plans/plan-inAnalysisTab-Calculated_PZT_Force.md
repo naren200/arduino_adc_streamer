@@ -41,7 +41,7 @@ The two force sources are independent and may be displayed simultaneously for co
 Add a new toggle:
 
 ```text
-Calculate PZT Force
+PZT Channel Force
 ```
 
 When disabled:
@@ -76,10 +76,10 @@ The Display sub-tab shall be scrollable so control lists and plots can exceed th
 The existing Force graph shall become a combined graph capable of displaying:
 
 - Measured Force (if available)
-- Calculated Force - PZT 1
-- Calculated Force - PZT 2
+- PZT Channel Force - PZT 1
+- PZT Channel Force - PZT 2
 - ...
-- Calculated Force - PZT N
+- PZT Channel Force - PZT N
 
 Each trace shall have:
 

@@ -16,6 +16,7 @@ from data_processing.analysis_workbench import (
     _build_offline_stream_index_map,
     _load_filtered_snapshot,
     _owner_analysis_timing_metadata,
+    build_force_based_shear_normal_traces,
     build_in_memory_snapshot,
     build_overlay_traces,
     build_snapshot_from_archive,
@@ -27,12 +28,14 @@ from data_processing.analysis_workbench import (
     reorder_circular_capture,
     resolve_analysis_pzt_mux_leak_dt_s,
 )
+from data_processing.normal_force_calculator import NormalForceCalculator
 from data_processing.pzt_force_calculation import (
     calculate_pzt_force_from_settings,
     calculate_pzt_force_from_voltage,
     estimate_pzt_quiet_baseline,
     pzt_capacitance_to_farads,
 )
+from data_processing.shear_detector import ShearDetector
 
 
 class OfflineStreamIndexMapTests(unittest.TestCase):
@@ -424,7 +427,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual([trace.label for trace in prepared.force_traces], ["Calculated Force - PZT6_C [N]"])
+        self.assertEqual([trace.label for trace in prepared.force_traces], ["PZT Channel Force - PZT6_C [N]"])
         self.assertEqual(len(prepared.force_traces[0].y), 3)
 
     def test_prepare_analysis_data_skips_pzt_force_when_auto_mux_timing_unavailable(self):
@@ -815,6 +818,185 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             hpf_cutoff_hz=0.0,
         )
         self.assertEqual([trace.label for trace in direct_overlays], ["Shear L/R [V]", "Shear T/B [V]"])
+
+    def test_force_based_shear_normal_traces_match_reference_integration(self):
+        # C, L, R, T, B counts across 4 rows; L/R carry an opposite-sign shear
+        # component so the reference must actually exercise shear removal.
+        data = np.asarray(
+            [
+                [200, 300, -300, 100, -100],
+                [260, 500, -420, 140, -140],
+                [260, 500, -420, 140, -140],
+                [180, 260, -260, 80, -80],
+            ],
+            dtype=np.float32,
+        )
+        snapshot = AnalysisSourceSnapshot(
+            data=data,
+            timestamps_s=np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64),
+            channel_labels=["C", "L", "R", "T", "B"],
+            metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=100.0,
+        )
+        pzt_force_settings = {
+            "enabled": True,
+            "center_capacitance_value": 150.0,
+            "outer_capacitance_value": 150.0,
+            "capacitance_unit": "pF",
+            "rleak_ohm": 1_000_000.0,
+            "d33_pc_per_n": 600.0,
+            "noise_threshold_v": 0.0,
+        }
+        vref_voltage = 3.3
+
+        # Precompute the SAME per-position accumulated-force arrays "PZT
+        # Channel Force" already produces (via calculate_pzt_force_from_settings)
+        # and pass them straight through, exactly as prepare_analysis_data does
+        # — the function under test must reuse these, never recompute them.
+        max_adc = float((2 ** 12) - 1)
+        volts_by_position = {
+            position: (data[:, index] / max_adc) * vref_voltage
+            for index, position in enumerate(["C", "L", "R", "T", "B"])
+        }
+        timestamps = snapshot.timestamps_s
+        force_by_position = {
+            position: calculate_pzt_force_from_settings(
+                volts_by_position[position], timestamps, pzt_force_settings, sensor_position=position,
+            )
+            for position in ["C", "L", "R", "T", "B"]
+        }
+
+        traces = build_force_based_shear_normal_traces(
+            snapshot,
+            snapshot.data,
+            axis_mode="samples",
+            overlay_flags={"shear_force": True, "normal_force": True},
+            vref_voltage=vref_voltage,
+            calculated_force_by_label=force_by_position,
+        )
+        by_label = {trace.label: trace for trace in traces}
+        self.assertEqual(
+            set(by_label), {"Shear Force L/R [N]", "Shear Force T/B [N]", "Normal Force [N]"}
+        )
+
+        # Hand-computed reference: split shear/normal from those SAME
+        # already-accumulated force values — mirrors
+        # pressure_force_display.py's order exactly, exactly one integration
+        # step per position, never a second one.
+        detector = ShearDetector()
+        calculator = NormalForceCalculator()
+        normal_ref, shear_lr_ref, shear_tb_ref = [], [], []
+        for row in range(data.shape[0]):
+            current_forces = {
+                position: float(force_by_position[position][row])
+                for position in ["C", "L", "R", "T", "B"]
+            }
+            shear = detector.detect(current_forces)
+            normal_ref.append(calculator.compute(shear.residual).total_force)
+            shear_lr_ref.append(shear.b_lr)
+            shear_tb_ref.append(shear.b_tb)
+
+        np.testing.assert_allclose(by_label["Normal Force [N]"].y, normal_ref, rtol=1e-6, atol=1e-12)
+        np.testing.assert_allclose(by_label["Shear Force L/R [N]"].y, shear_lr_ref, rtol=1e-6, atol=1e-12)
+        np.testing.assert_allclose(by_label["Shear Force T/B [N]"].y, shear_tb_ref, rtol=1e-6, atol=1e-12)
+
+        # Existing voltage-based Shear/Normal Pressure path is untouched by
+        # enabling the new Force overlay flags.
+        pressure_overlays = build_overlay_traces(
+            snapshot, snapshot.data, axis_mode="samples",
+            overlay_flags={"shear": True, "normal": True}, vref_voltage=vref_voltage,
+            integration_window_samples=1, hpf_cutoff_hz=0.0,
+        )
+        self.assertEqual(
+            {trace.label for trace in pressure_overlays},
+            {"Shear L/R [V]", "Shear T/B [V]", "Normal Pressure [V]"},
+        )
+
+    def test_force_based_shear_normal_traces_raises_on_empty_calculated_force(self):
+        snapshot = AnalysisSourceSnapshot(
+            data=np.asarray([[100, 100, -100, 50, -50]], dtype=np.float32),
+            timestamps_s=np.asarray([0.0], dtype=np.float64),
+            channel_labels=["C", "L", "R", "T", "B"],
+            metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=100.0,
+        )
+        # No per-channel accumulated force is available at all (e.g. genuinely
+        # invalid PZT settings upstream) — this is a real "no data" case, not
+        # the "PZT Channel Force" display checkbox being off.
+        with self.assertRaises(ValueError):
+            build_force_based_shear_normal_traces(
+                snapshot, snapshot.data, axis_mode="samples",
+                overlay_flags={"normal_force": True}, vref_voltage=3.3,
+                calculated_force_by_label={},
+            )
+
+    def test_force_based_shear_normal_traces_skipped_on_invalid_settings(self):
+        snapshot = AnalysisSourceSnapshot(
+            data=np.asarray([[100, 100, -100, 50, -50]], dtype=np.float32),
+            timestamps_s=np.asarray([0.0], dtype=np.float64),
+            channel_labels=["C", "L", "R", "T", "B"],
+            metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=100.0,
+        )
+        invalid_settings = {"enabled": True, "center_capacitance_value": 0.0}
+
+        prepared = prepare_analysis_data(
+            snapshot, axis_mode="samples",
+            overlay_flags={"normal_force": True}, vref_voltage=3.3,
+            pzt_force_settings=invalid_settings,
+        )
+        self.assertIn("Shear Force / Normal Force skipped", prepared.status)
+        self.assertNotIn("Normal Force [N]", {trace.label for trace in prepared.force_traces})
+
+    def test_force_based_shear_normal_traces_independent_of_pzt_channel_force_display_toggle(self):
+        snapshot = AnalysisSourceSnapshot(
+            data=np.asarray(
+                [[200, 300, -300, 100, -100], [260, 500, -420, 140, -140]], dtype=np.float32
+            ),
+            timestamps_s=np.asarray([0.0, 0.01], dtype=np.float64),
+            channel_labels=["C", "L", "R", "T", "B"],
+            metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=100.0,
+        )
+        pzt_force_settings = {
+            "enabled": True,
+            "mux_timing_mode": "continuous",
+            "center_capacitance_value": 150.0,
+            "outer_capacitance_value": 150.0,
+            "capacitance_unit": "pF",
+            "rleak_ohm": 1_000_000.0,
+            "d33_pc_per_n": 600.0,
+            "noise_threshold_v": 0.0,
+        }
+        # With "PZT Channel Force" enabled, Normal Force and the per-channel
+        # PZT Channel Force traces are both present.
+        prepared = prepare_analysis_data(
+            snapshot, axis_mode="samples",
+            overlay_flags={"normal_force": True}, vref_voltage=3.3,
+            pzt_force_settings=pzt_force_settings,
+        )
+        force_labels = {trace.label for trace in prepared.force_traces}
+        self.assertIn("Normal Force [N]", force_labels)
+        self.assertIn("PZT Channel Force - C [N]", force_labels)
+
+        # With "PZT Channel Force" disabled, Normal Force still computes and
+        # displays (it only needed the underlying accumulated-force
+        # computation, not the display checkbox) — but the raw per-channel
+        # "PZT Channel Force - ..." traces are correctly hidden, since that
+        # checkbox still controls their own display.
+        disabled_settings = dict(pzt_force_settings, enabled=False)
+        prepared_disabled = prepare_analysis_data(
+            snapshot, axis_mode="samples",
+            overlay_flags={"normal_force": True}, vref_voltage=3.3,
+            pzt_force_settings=disabled_settings,
+        )
+        disabled_force_labels = {trace.label for trace in prepared_disabled.force_traces}
+        self.assertIn("Normal Force [N]", disabled_force_labels)
+        self.assertNotIn("PZT Channel Force - C [N]", disabled_force_labels)
 
     def test_prepare_analysis_data_builds_integration_for_generic_channel_labels(self):
         snapshot = AnalysisSourceSnapshot(

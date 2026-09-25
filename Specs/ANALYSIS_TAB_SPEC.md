@@ -33,7 +33,7 @@ Analysis is disabled while runtime acquisition is active and re-enabled after ca
 - Optional processing/display toggles: Spectrum-compatible filter, shear, normal pressure, integration, calculated PZT force, and marker.
 - PZT force settings: capacitance, leak resistance, d33, fallback noise threshold, quiet-window duration, noise multiplier, MUX leakage timing mode, manual MUX connected time, optional off-MUX leakage resistance, and a Calculate Vmid + Noise action.
 - Analysis image export controls: select Raw signals, Integrated signals, Shear / Normal, and/or Force plots and save them as PNG images.
-- Calculated-force traces use the same plot color as their source raw signal trace. For example, if `PZT3_L` is green in Raw signals, `Calculated Force - PZT3_L [N]` is also green in Force.
+- Calculated-force traces use the same plot color as their source raw signal trace. For example, if `PZT3_L` is green in Raw signals, `PZT Channel Force - PZT3_L [N]` is also green in Force.
 - Display controls, channel checklists, force-trace checklists, and image-export controls are width-stable and must remain visible inside the Analysis scroll area. Long calculated-force labels are displayed in a compact force-trace list instead of forcing horizontal overflow.
 - Marker: mouse readout reports nearest displayed values for visible signal, integration, derived, and force traces. Marker readout text is elided to the visible status-label width and keeps the full text in a tooltip, so moving the marker cannot resize or horizontally shift the Analysis layout.
 

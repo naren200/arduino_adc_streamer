@@ -288,7 +288,7 @@ class AnalysisExportMetadataTests(unittest.TestCase):
             csv_path="C:/captures/analysis.csv",
             x_axis_label="Time",
             x_axis_units="ms",
-            exported_traces=["CH0", "Calculated Force - CH0 [N]"],
+            exported_traces=["CH0", "PZT Channel Force - CH0 [N]"],
         )
 
         self.assertEqual(metadata["configuration"], source_metadata["configuration"])
@@ -305,7 +305,7 @@ class AnalysisExportMetadataTests(unittest.TestCase):
             },
         )
         self.assertNotIn("calculated_vmid_noise", metadata["analysis_export"])
-        self.assertEqual(metadata["analysis_export"]["csv"]["exported_traces"], ["CH0", "Calculated Force - CH0 [N]"])
+        self.assertEqual(metadata["analysis_export"]["csv"]["exported_traces"], ["CH0", "PZT Channel Force - CH0 [N]"])
 
 
 @unittest.skipUnless(SCIPY_FILTERS_AVAILABLE, "SciPy not available")

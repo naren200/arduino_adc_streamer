@@ -35,6 +35,8 @@ from data_processing.signal_integrator import SignalIntegrator
 
 ANALYSIS_TIMESTAMP_COLUMNS = {"timestamp", "timestamp_s"}
 ANALYSIS_FORCE_COLUMNS = {"force_x", "force_z", "force_x_n", "force_z_n"}
+_PZT_CHANNEL_FORCE_LABEL_PREFIX = "PZT Channel Force - "
+_PZT_CHANNEL_FORCE_LABEL_SUFFIX = " [N]"
 
 
 @dataclass(slots=True)
@@ -346,6 +348,7 @@ def prepare_analysis_data(
         traces.append(AnalysisTrace(label=label, x=x_base[:, column], y=y_values, group="signal"))
 
     force_traces = build_force_traces(snapshot, axis_mode)
+    calculated_force_by_label: dict[str, np.ndarray] = {}
     try:
         pzt_leak_dt_s, pzt_timing_status = resolve_analysis_pzt_mux_leak_dt_s(
             snapshot,
@@ -355,21 +358,47 @@ def prepare_analysis_data(
             snapshot,
             pzt_force_settings or {},
         )
-        force_traces.extend(
-            build_calculated_pzt_force_traces(
-                snapshot,
-                x_base,
-                time_base_s,
-                voltage_by_label,
-                pzt_force_settings or {},
-                leak_dt_s=pzt_leak_dt_s,
-                pre_sample_decay_dt_s_by_label=pzt_pre_sample_decay_by_label,
-            )
+        pzt_channel_force_traces = build_calculated_pzt_force_traces(
+            snapshot,
+            x_base,
+            time_base_s,
+            voltage_by_label,
+            pzt_force_settings or {},
+            leak_dt_s=pzt_leak_dt_s,
+            pre_sample_decay_dt_s_by_label=pzt_pre_sample_decay_by_label,
         )
+        # "PZT Channel Force" (settings["enabled"]) only controls whether
+        # these 5 raw per-channel curves are DISPLAYED; the computation
+        # itself always runs so Shear Force / Normal Force (below) can
+        # consume it even when this checkbox is off.
+        if bool((pzt_force_settings or {}).get("enabled", False)):
+            force_traces.extend(pzt_channel_force_traces)
+        # Reused verbatim by build_force_based_shear_normal_traces below so
+        # Shear Force / Normal Force consume the EXACT SAME per-channel
+        # accumulated-force arrays "PZT Channel Force" computes (displayed or
+        # not), rather than recomputing (and re-resolving MUX timing) a
+        # second time.
+        calculated_force_by_label = {
+            trace.label.removeprefix(_PZT_CHANNEL_FORCE_LABEL_PREFIX).removesuffix(_PZT_CHANNEL_FORCE_LABEL_SUFFIX): trace.y
+            for trace in pzt_channel_force_traces
+        }
         if pzt_timing_status:
             status_parts.append(pzt_timing_status)
     except Exception as exc:
         status_parts.append(f"PZT force skipped: {exc}")
+    try:
+        force_traces.extend(
+            build_force_based_shear_normal_traces(
+                snapshot,
+                data,
+                axis_mode=axis_mode,
+                overlay_flags=overlay_flags or {},
+                vref_voltage=vref_voltage,
+                calculated_force_by_label=calculated_force_by_label,
+            )
+        )
+    except Exception as exc:
+        status_parts.append(f"Shear Force / Normal Force skipped: {exc}")
     overlays = build_overlay_traces(
         snapshot,
         data,
@@ -393,9 +422,14 @@ def build_calculated_pzt_force_traces(
     leak_dt_s=None,
     pre_sample_decay_dt_s_by_label: Mapping[str, float] | None = None,
 ) -> list[AnalysisTrace]:
-    if not bool(settings.get("enabled", False)):
-        return []
+    """Compute per-channel PZT force traces unconditionally.
 
+    The "PZT Channel Force" checkbox (``settings["enabled"]``) no longer
+    gates computation here — Shear Force / Normal Force needs these
+    per-channel accumulated-force arrays even when the checkbox is off, since
+    that checkbox now only controls whether the caller displays these raw
+    per-channel traces. See ``prepare_analysis_data``.
+    """
     channel_calibration = settings.get("channel_calibration", {})
     if not isinstance(channel_calibration, Mapping):
         channel_calibration = {}
@@ -414,17 +448,23 @@ def build_calculated_pzt_force_traces(
         calibration = channel_calibration.get(label, {})
         if not isinstance(calibration, Mapping):
             calibration = {}
+        # noise_threshold_v is intentionally NOT taken from per-channel
+        # calibration: that value is only ever refreshed by clicking
+        # "Calculate Baseline" (gui/analysis_panel.py), so passing it here
+        # would silently freeze Shear/Normal Force against the live
+        # noise-threshold spinbox the moment baseline calibration has run
+        # once. vmid_v has no live UI override, so it keeps using the
+        # per-channel calibration estimate.
         force_n = calculate_pzt_force_from_settings(
             voltage_by_label[label],
             time_s,
             settings,
             sensor_position=_pzt_sensor_position(label),
             vmid_v=_optional_float(calibration.get("vmid_v")),
-            noise_threshold_v=_optional_float(calibration.get("noise_threshold_v")),
             leak_dt_s=leak_dt_s,
             pre_sample_decay_dt_s=(pre_sample_decay_dt_s_by_label or {}).get(label),
         )
-        traces.append(AnalysisTrace(f"Calculated Force - {label} [N]", x_values, force_n, "force"))
+        traces.append(AnalysisTrace(f"{_PZT_CHANNEL_FORCE_LABEL_PREFIX}{label}{_PZT_CHANNEL_FORCE_LABEL_SUFFIX}", x_values, force_n, "force"))
     return traces
 
 
@@ -747,25 +787,10 @@ def build_overlay_traces(
     if not any(bool(overlay_flags.get(key, False)) for key in ("shear", "normal")):
         return overlays
 
-    position_channels = _position_channel_map(snapshot)
-    if not all(position in position_channels for position in SHEAR_SENSOR_POSITIONS):
-        if snapshot.samples_per_sweep < len(SHEAR_SENSOR_POSITIONS):
-            return overlays
-        position_channels = {
-            position: (
-                index,
-                snapshot.channel_labels[index] if index < len(snapshot.channel_labels) else position,
-            )
-            for index, position in enumerate(SHEAR_SENSOR_POSITIONS)
-        }
-
-    volts_by_position = {
-        position: counts_to_volts(data[:, column], vref_voltage)
-        for position, (column, _label) in position_channels.items()
-        if column < data.shape[1]
-    }
-    if not all(position in volts_by_position for position in SHEAR_SENSOR_POSITIONS):
+    resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
+    if resolved_positions is None:
         return overlays
+    _position_channels, volts_by_position = resolved_positions
 
     # Shear/normal use a causal median baseline (matching the calibration
     # notebook's shear pipeline) rather than the HPF-based SignalIntegrator
@@ -798,6 +823,104 @@ def build_overlay_traces(
     if overlay_flags.get("normal", False):
         overlays.append(AnalysisTrace("Normal Pressure [V]", x, np.asarray(normal, dtype=np.float64), "derived"))
     return overlays
+
+
+def _resolve_shear_position_channels_and_volts(
+    snapshot: AnalysisSourceSnapshot, data: np.ndarray, vref_voltage: float,
+) -> tuple[dict[str, tuple[int, str]], dict[str, np.ndarray]] | None:
+    """Resolve C/L/R/T/B channel columns and raw voltage, or None if unavailable."""
+    position_channels = _position_channel_map(snapshot)
+    if not all(position in position_channels for position in SHEAR_SENSOR_POSITIONS):
+        if snapshot.samples_per_sweep < len(SHEAR_SENSOR_POSITIONS):
+            return None
+        position_channels = {
+            position: (
+                index,
+                snapshot.channel_labels[index] if index < len(snapshot.channel_labels) else position,
+            )
+            for index, position in enumerate(SHEAR_SENSOR_POSITIONS)
+        }
+
+    volts_by_position = {
+        position: counts_to_volts(data[:, column], vref_voltage)
+        for position, (column, _label) in position_channels.items()
+        if column < data.shape[1]
+    }
+    if not all(position in volts_by_position for position in SHEAR_SENSOR_POSITIONS):
+        return None
+    return position_channels, volts_by_position
+
+
+def build_force_based_shear_normal_traces(
+    snapshot: AnalysisSourceSnapshot,
+    data: np.ndarray,
+    *,
+    axis_mode: str,
+    overlay_flags: Mapping[str, bool],
+    vref_voltage: float,
+    calculated_force_by_label: Mapping[str, np.ndarray],
+) -> list[AnalysisTrace]:
+    """Reconstruct Shear Force / Normal Force with the Pressure Map's own method.
+
+    Mirrors ``PressureForceDisplayEngine.process_sample`` in
+    ``pressure_force_display.py`` exactly: each position's PZT force is
+    already integrated (the SAME per-channel ``accumulated_force_n`` arrays
+    "PZT Channel Force" computes and displays, passed in verbatim via
+    ``calculated_force_by_label`` — never recomputed here), and only then is
+    ``ShearDetector``/``NormalForceCalculator`` applied to those
+    already-accumulated force values. Shear and Normal are stateless,
+    instantaneous combinators here too — there is exactly one integration
+    step per position, never a second one for shear or normal. This depends
+    only on ``calculated_force_by_label`` being available (the caller always
+    computes it, independent of the "PZT Channel Force" display checkbox)
+    and on all five C/L/R/T/B positions being resolvable — NOT on
+    ``pzt_force_settings["enabled"]``, which only controls whether the raw
+    per-channel traces are displayed elsewhere.
+    """
+    if not any(bool(overlay_flags.get(key, False)) for key in ("shear_force", "normal_force")):
+        return []
+
+    resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
+    if resolved_positions is None:
+        raise ValueError("Shear Force / Normal Force requires all five C/L/R/T/B channels")
+    position_channels, _volts_by_position = resolved_positions
+
+    force_by_position: dict[str, np.ndarray] = {}
+    for position in SHEAR_SENSOR_POSITIONS:
+        _column, label = position_channels[position]
+        if label not in calculated_force_by_label:
+            raise ValueError(
+                f"Shear Force / Normal Force requires PZT Channel Force for position {position} ({label})"
+            )
+        force_by_position[position] = np.asarray(calculated_force_by_label[label], dtype=np.float64)
+
+    shear_detector = ShearDetector()
+    normal_calculator = NormalForceCalculator()
+    normal_force = np.zeros(snapshot.sweep_count, dtype=np.float64)
+    shear_force_lr = np.zeros(snapshot.sweep_count, dtype=np.float64)
+    shear_force_tb = np.zeros(snapshot.sweep_count, dtype=np.float64)
+    for row_index in range(snapshot.sweep_count):
+        current_forces = {
+            position: float(force_by_position[position][row_index])
+            for position in SHEAR_SENSOR_POSITIONS
+        }
+        shear = shear_detector.detect(current_forces)
+        normal_result = normal_calculator.compute(shear.residual)
+        normal_force[row_index] = normal_result.total_force
+        shear_force_lr[row_index] = shear.b_lr
+        shear_force_tb[row_index] = shear.b_tb
+
+    x_matrix, _label, _units = build_trace_x_axis(snapshot, axis_mode)
+    center_column = position_channels["C"][0]
+    x = x_matrix[:, center_column] if x_matrix.size else np.empty(0, dtype=np.float64)
+
+    traces: list[AnalysisTrace] = []
+    if overlay_flags.get("shear_force", False):
+        traces.append(AnalysisTrace("Shear Force L/R [N]", x, shear_force_lr, "force"))
+        traces.append(AnalysisTrace("Shear Force T/B [N]", x, shear_force_tb, "force"))
+    if overlay_flags.get("normal_force", False):
+        traces.append(AnalysisTrace("Normal Force [N]", x, normal_force, "force"))
+    return traces
 
 
 def build_integration_traces(

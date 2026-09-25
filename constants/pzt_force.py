@@ -49,6 +49,23 @@ PZT_FORCE_DEFAULT_SETTINGS = {
     "stuck_force_decay_tau_s": 1.0,
 }
 
+# Analysis tab defaults, overriding the shared baseline above with values
+# matched to this project's PZT5-array calibration runs. Kept separate from
+# PZT_FORCE_DEFAULT_SETTINGS so Pressure Map (gui/signal_integration_panel.py)
+# keeps its own independent defaults untouched.
+ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS = {
+    **PZT_FORCE_DEFAULT_SETTINGS,
+    "d33_pc_per_n": 120.0,
+    "noise_threshold_v": 0.05,
+    "quiet_duration_s": 0.5,
+    "noise_sigma_multiplier": 8.0,
+    "off_mux_leak_enabled": False,
+    "off_mux_rleak_ohm": None,
+    "stuck_force_quiet_hold_s": 0.5,
+    "stuck_force_decay_tau_s": 0.5,
+    "force_zero_band_min_n": 0.05,
+}
+
 PZT_FORCE_CAPACITANCE_UNITS = ("pF", "nF", "F")
 PZT_FORCE_MUX_TIMING_MODES = ("Auto", "Manual", "Infer from total sample rate", "Continuous")
 PZT_FORCE_DEFAULT_MUX_CONNECTED_TIME_S = 0.030

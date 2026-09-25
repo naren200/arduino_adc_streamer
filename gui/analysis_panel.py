@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -43,8 +44,8 @@ from pyqtgraph.exporters import ImageExporter
 
 from constants.plotting import PLOT_COLORS, PLOT_EXPORT_WIDTH
 from constants.pzt_force import (
+    ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS,
     PZT_FORCE_CAPACITANCE_UNITS,
-    PZT_FORCE_DEFAULT_SETTINGS,
     PZT_FORCE_MUX_TIMING_MODES,
 )
 from constants.ui import AnalysisLoadState
@@ -60,6 +61,7 @@ from data_processing.analysis_labels import (
 from data_processing.analysis_workbench import (
     AnalysisPreparedData,
     AnalysisSourceSnapshot,
+    _PZT_CHANNEL_FORCE_LABEL_PREFIX,
     build_in_memory_snapshot,
     build_snapshot_from_archive,
     estimate_analysis_pzt_force_calibration,
@@ -89,8 +91,10 @@ class AnalysisPanelMixin:
                 "shear": True,
                 "normal": True,
                 "integration": True,
+                "shear_force": False,
+                "normal_force": False,
             },
-            "pzt_force": {**PZT_FORCE_DEFAULT_SETTINGS, "channel_calibration": {}},
+            "pzt_force": {**ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS, "channel_calibration": {}},
             "visible_labels": {},
             "visible_force_labels": {},
             "csv_path": "",
@@ -282,13 +286,19 @@ class AnalysisPanelMixin:
         self.analysis_integration_check = QCheckBox("Integration")
         self.analysis_integration_check.stateChanged.connect(self.on_analysis_settings_changed)
         controls_layout.addWidget(self.analysis_integration_check, 1, 3)
-        self.analysis_pzt_force_check = QCheckBox("Calculate PZT Force")
+        self.analysis_pzt_force_check = QCheckBox("PZT Channel Force")
         self.analysis_pzt_force_check.stateChanged.connect(self.on_analysis_settings_changed)
         controls_layout.addWidget(self.analysis_pzt_force_check, 1, 4, 1, 2)
         self.analysis_marker_check = QCheckBox("Marker")
         self.analysis_marker_check.setChecked(True)
         self.analysis_marker_check.stateChanged.connect(self.on_analysis_marker_toggled)
         controls_layout.addWidget(self.analysis_marker_check, 1, 6, 1, 2)
+        self.analysis_shear_force_check = QCheckBox("Shear Force")
+        self.analysis_shear_force_check.stateChanged.connect(self.on_analysis_settings_changed)
+        controls_layout.addWidget(self.analysis_shear_force_check, 2, 1)
+        self.analysis_normal_force_check = QCheckBox("Normal Force")
+        self.analysis_normal_force_check.stateChanged.connect(self.on_analysis_settings_changed)
+        controls_layout.addWidget(self.analysis_normal_force_check, 2, 2)
 
         channel_row = QHBoxLayout()
         self.analysis_select_all_btn = QPushButton("All")
@@ -394,12 +404,12 @@ class AnalysisPanelMixin:
         self.analysis_pzt_center_capacitance_spin = QDoubleSpinBox()
         self.analysis_pzt_center_capacitance_spin.setRange(1e-9, 1e12)
         self.analysis_pzt_center_capacitance_spin.setDecimals(6)
-        self.analysis_pzt_center_capacitance_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["center_capacitance_value"]))
+        self.analysis_pzt_center_capacitance_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["center_capacitance_value"]))
         self.analysis_pzt_center_capacitance_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_center_capacitance_spin, 0, 1)
         self.analysis_pzt_capacitance_unit_combo = QComboBox()
         self.analysis_pzt_capacitance_unit_combo.addItems(list(PZT_FORCE_CAPACITANCE_UNITS))
-        self.analysis_pzt_capacitance_unit_combo.setCurrentText(str(PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"]))
+        self.analysis_pzt_capacitance_unit_combo.setCurrentText(str(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"]))
         self.analysis_pzt_capacitance_unit_combo.currentIndexChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_capacitance_unit_combo, 0, 2)
 
@@ -407,7 +417,7 @@ class AnalysisPanelMixin:
         self.analysis_pzt_outer_capacitance_spin = QDoubleSpinBox()
         self.analysis_pzt_outer_capacitance_spin.setRange(1e-9, 1e12)
         self.analysis_pzt_outer_capacitance_spin.setDecimals(6)
-        self.analysis_pzt_outer_capacitance_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["outer_capacitance_value"]))
+        self.analysis_pzt_outer_capacitance_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["outer_capacitance_value"]))
         self.analysis_pzt_outer_capacitance_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_outer_capacitance_spin, 0, 4)
 
@@ -415,7 +425,7 @@ class AnalysisPanelMixin:
         self.analysis_pzt_rleak_spin = QDoubleSpinBox()
         self.analysis_pzt_rleak_spin.setRange(1e-9, 1e15)
         self.analysis_pzt_rleak_spin.setDecimals(3)
-        self.analysis_pzt_rleak_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"]))
+        self.analysis_pzt_rleak_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"]))
         self.analysis_pzt_rleak_spin.setSuffix(" ohm")
         self.analysis_pzt_rleak_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_rleak_spin, 1, 1)
@@ -424,7 +434,7 @@ class AnalysisPanelMixin:
         self.analysis_pzt_d33_spin = QDoubleSpinBox()
         self.analysis_pzt_d33_spin.setRange(1e-9, 1e12)
         self.analysis_pzt_d33_spin.setDecimals(6)
-        self.analysis_pzt_d33_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["d33_pc_per_n"]))
+        self.analysis_pzt_d33_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["d33_pc_per_n"]))
         self.analysis_pzt_d33_spin.setSuffix(" pC/N")
         self.analysis_pzt_d33_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_d33_spin, 1, 3)
@@ -433,7 +443,7 @@ class AnalysisPanelMixin:
         self.analysis_pzt_noise_spin = QDoubleSpinBox()
         self.analysis_pzt_noise_spin.setRange(0.0, 1e6)
         self.analysis_pzt_noise_spin.setDecimals(6)
-        self.analysis_pzt_noise_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"]))
+        self.analysis_pzt_noise_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"]))
         self.analysis_pzt_noise_spin.setSuffix(" V")
         self.analysis_pzt_noise_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_noise_spin, 1, 5)
@@ -443,7 +453,7 @@ class AnalysisPanelMixin:
         self.analysis_pzt_quiet_duration_spin.setRange(0.0, 3600.0)
         self.analysis_pzt_quiet_duration_spin.setDecimals(3)
         self.analysis_pzt_quiet_duration_spin.setSuffix(" s")
-        self.analysis_pzt_quiet_duration_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["quiet_duration_s"]))
+        self.analysis_pzt_quiet_duration_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["quiet_duration_s"]))
         self.analysis_pzt_quiet_duration_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_quiet_duration_spin, 2, 1)
 
@@ -451,7 +461,7 @@ class AnalysisPanelMixin:
         self.analysis_pzt_noise_k_spin = QDoubleSpinBox()
         self.analysis_pzt_noise_k_spin.setRange(0.0, 100.0)
         self.analysis_pzt_noise_k_spin.setDecimals(3)
-        self.analysis_pzt_noise_k_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["noise_sigma_multiplier"]))
+        self.analysis_pzt_noise_k_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["noise_sigma_multiplier"]))
         self.analysis_pzt_noise_k_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_noise_k_spin, 2, 3)
 
@@ -471,12 +481,13 @@ class AnalysisPanelMixin:
         self.analysis_pzt_mux_connected_ms_spin.setDecimals(3)
         self.analysis_pzt_mux_connected_ms_spin.setSuffix(" ms")
         self.analysis_pzt_mux_connected_ms_spin.setValue(
-            float(PZT_FORCE_DEFAULT_SETTINGS["mux_connected_time_s"]) * 1000.0
+            float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["mux_connected_time_s"]) * 1000.0
         )
         self.analysis_pzt_mux_connected_ms_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_mux_connected_ms_spin, 3, 3)
 
         self.analysis_pzt_off_mux_leak_check = QCheckBox("Off-MUX leak")
+        self.analysis_pzt_off_mux_leak_check.setChecked(bool(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["off_mux_leak_enabled"]))
         self.analysis_pzt_off_mux_leak_check.stateChanged.connect(self.on_analysis_pzt_mux_timing_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_off_mux_leak_check, 4, 0)
 
@@ -484,7 +495,11 @@ class AnalysisPanelMixin:
         self.analysis_pzt_off_mux_rleak_spin.setRange(1e-9, 1e18)
         self.analysis_pzt_off_mux_rleak_spin.setDecimals(3)
         self.analysis_pzt_off_mux_rleak_spin.setSuffix(" ohm")
-        self.analysis_pzt_off_mux_rleak_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"]))
+        self.analysis_pzt_off_mux_rleak_spin.setValue(float(
+            ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["off_mux_rleak_ohm"]
+            if ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["off_mux_rleak_ohm"] is not None
+            else ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"]
+        ))
         self.analysis_pzt_off_mux_rleak_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_off_mux_rleak_spin, 4, 1)
 
@@ -501,7 +516,7 @@ class AnalysisPanelMixin:
         pzt_force_layout.addWidget(self.analysis_pzt_baseline_results, 5, 0, 1, 4)
 
         self.analysis_pzt_stuck_failsafe_check = QCheckBox("Auto-clear stuck force")
-        self.analysis_pzt_stuck_failsafe_check.setChecked(bool(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"]))
+        self.analysis_pzt_stuck_failsafe_check.setChecked(bool(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"]))
         self.analysis_pzt_stuck_failsafe_check.setToolTip(
             "A normal press/release already returns to exactly zero once a channel goes "
             "below the Force noise threshold. This only covers a channel that never "
@@ -515,14 +530,14 @@ class AnalysisPanelMixin:
         self.analysis_pzt_stuck_hold_spin = QDoubleSpinBox()
         self.analysis_pzt_stuck_hold_spin.setRange(0.0, 3600.0)
         self.analysis_pzt_stuck_hold_spin.setDecimals(3)
-        self.analysis_pzt_stuck_hold_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_quiet_hold_s"]))
+        self.analysis_pzt_stuck_hold_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["stuck_force_quiet_hold_s"]))
         self.analysis_pzt_stuck_hold_spin.setSuffix(" s after quiet")
         self.analysis_pzt_stuck_hold_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_stuck_hold_spin, 6, 1)
         self.analysis_pzt_stuck_tau_spin = QDoubleSpinBox()
         self.analysis_pzt_stuck_tau_spin.setRange(0.0, 3600.0)
         self.analysis_pzt_stuck_tau_spin.setDecimals(3)
-        self.analysis_pzt_stuck_tau_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_decay_tau_s"]))
+        self.analysis_pzt_stuck_tau_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["stuck_force_decay_tau_s"]))
         self.analysis_pzt_stuck_tau_spin.setSuffix(" s decay tau")
         self.analysis_pzt_stuck_tau_spin.setToolTip("0 = instant reset instead of a smooth decay.")
         self.analysis_pzt_stuck_tau_spin.valueChanged.connect(self.on_analysis_settings_changed)
@@ -536,7 +551,7 @@ class AnalysisPanelMixin:
         self.analysis_pzt_zero_floor_spin = QDoubleSpinBox()
         self.analysis_pzt_zero_floor_spin.setRange(0.0, 1e6)
         self.analysis_pzt_zero_floor_spin.setDecimals(4)
-        self.analysis_pzt_zero_floor_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"]))
+        self.analysis_pzt_zero_floor_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"]))
         self.analysis_pzt_zero_floor_spin.setSuffix(" N")
         self.analysis_pzt_zero_floor_spin.setToolTip(
             "Absolute floor (N) for the natural-zero band and the fail-safe snap band. A "
@@ -549,7 +564,7 @@ class AnalysisPanelMixin:
         self.analysis_pzt_zero_band_fraction_spin = QDoubleSpinBox()
         self.analysis_pzt_zero_band_fraction_spin.setRange(0.0, 1.0)
         self.analysis_pzt_zero_band_fraction_spin.setDecimals(3)
-        self.analysis_pzt_zero_band_fraction_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"]))
+        self.analysis_pzt_zero_band_fraction_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"]))
         self.analysis_pzt_zero_band_fraction_spin.setSuffix(" x peak")
         self.analysis_pzt_zero_band_fraction_spin.setToolTip(
             "Natural-zero band as a fraction of the current press's own peak force. The "
@@ -562,7 +577,7 @@ class AnalysisPanelMixin:
         self.analysis_pzt_min_event_peak_spin = QDoubleSpinBox()
         self.analysis_pzt_min_event_peak_spin.setRange(0.0, 1e6)
         self.analysis_pzt_min_event_peak_spin.setDecimals(4)
-        self.analysis_pzt_min_event_peak_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"]))
+        self.analysis_pzt_min_event_peak_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"]))
         self.analysis_pzt_min_event_peak_spin.setSuffix(" N")
         self.analysis_pzt_min_event_peak_spin.setToolTip(
             "A press whose own peak force never reaches this magnitude is too small to "
@@ -576,7 +591,7 @@ class AnalysisPanelMixin:
         self.analysis_pzt_quiet_release_spin = QDoubleSpinBox()
         self.analysis_pzt_quiet_release_spin.setRange(0.0, 1.0)
         self.analysis_pzt_quiet_release_spin.setDecimals(3)
-        self.analysis_pzt_quiet_release_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"]))
+        self.analysis_pzt_quiet_release_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"]))
         self.analysis_pzt_quiet_release_spin.setSuffix(" x peak")
         self.analysis_pzt_quiet_release_spin.setToolTip(
             "At quiet-hold expiry, the residual must have declined to within this fraction "
@@ -591,7 +606,7 @@ class AnalysisPanelMixin:
         self.analysis_pzt_quiet_hold_spin = QDoubleSpinBox()
         self.analysis_pzt_quiet_hold_spin.setRange(0.0, 3600.0)
         self.analysis_pzt_quiet_hold_spin.setDecimals(3)
-        self.analysis_pzt_quiet_hold_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]))
+        self.analysis_pzt_quiet_hold_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]))
         self.analysis_pzt_quiet_hold_spin.setSuffix(" s")
         self.analysis_pzt_quiet_hold_spin.setToolTip(
             "How long a channel must stay continuously quiet (below the Noise threshold) "
@@ -599,6 +614,21 @@ class AnalysisPanelMixin:
         )
         self.analysis_pzt_quiet_hold_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_quiet_hold_spin, 8, 3)
+
+        pzt_force_layout.addWidget(QLabel("Profile:"), 9, 0)
+        self.analysis_pzt_profile_combo = QComboBox()
+        self.analysis_pzt_profile_combo.setMinimumWidth(160)
+        pzt_force_layout.addWidget(self.analysis_pzt_profile_combo, 9, 1, 1, 2)
+        self.analysis_pzt_profile_load_btn = QPushButton("Load Profile")
+        self.analysis_pzt_profile_load_btn.clicked.connect(self.load_analysis_pzt_profile)
+        pzt_force_layout.addWidget(self.analysis_pzt_profile_load_btn, 9, 3)
+        self.analysis_pzt_profile_save_btn = QPushButton("Save as Profile...")
+        self.analysis_pzt_profile_save_btn.clicked.connect(self.save_analysis_pzt_profile)
+        pzt_force_layout.addWidget(self.analysis_pzt_profile_save_btn, 9, 4)
+        self.analysis_pzt_profile_delete_btn = QPushButton("Delete Profile")
+        self.analysis_pzt_profile_delete_btn.clicked.connect(self.delete_analysis_pzt_profile)
+        pzt_force_layout.addWidget(self.analysis_pzt_profile_delete_btn, 9, 5)
+        self._refresh_analysis_pzt_profile_combo()
 
         settings_root.addWidget(pzt_force_group)
 
@@ -757,48 +787,52 @@ class AnalysisPanelMixin:
             self.analysis_shear_check.setChecked(bool(overlays.get("shear", False)))
             self.analysis_normal_check.setChecked(bool(overlays.get("normal", False)))
             self.analysis_integration_check.setChecked(bool(overlays.get("integration", False)))
+            self.analysis_shear_force_check.setChecked(bool(overlays.get("shear_force", False)))
+            self.analysis_normal_force_check.setChecked(bool(overlays.get("normal_force", False)))
             pzt_force = state.get("pzt_force", {})
             self.analysis_pzt_force_check.setChecked(bool(pzt_force.get("enabled", False)))
-            legacy_capacitance = pzt_force.get("capacitance_value", PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"])
+            legacy_capacitance = pzt_force.get("capacitance_value", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"])
             self.analysis_pzt_center_capacitance_spin.setValue(float(pzt_force.get("center_capacitance_value", legacy_capacitance)))
             self.analysis_pzt_outer_capacitance_spin.setValue(float(pzt_force.get("outer_capacitance_value", legacy_capacitance)))
-            self.analysis_pzt_capacitance_unit_combo.setCurrentText(str(pzt_force.get("capacitance_unit", PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"])))
-            self.analysis_pzt_rleak_spin.setValue(float(pzt_force.get("rleak_ohm", PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])))
-            self.analysis_pzt_d33_spin.setValue(float(pzt_force.get("d33_pc_per_n", PZT_FORCE_DEFAULT_SETTINGS["d33_pc_per_n"])))
-            self.analysis_pzt_noise_spin.setValue(float(pzt_force.get("noise_threshold_v", PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"])))
-            self.analysis_pzt_quiet_duration_spin.setValue(float(pzt_force.get("quiet_duration_s", PZT_FORCE_DEFAULT_SETTINGS["quiet_duration_s"])))
-            self.analysis_pzt_noise_k_spin.setValue(float(pzt_force.get("noise_sigma_multiplier", PZT_FORCE_DEFAULT_SETTINGS["noise_sigma_multiplier"])))
-            self._set_analysis_pzt_mux_timing_mode(str(pzt_force.get("mux_timing_mode", PZT_FORCE_DEFAULT_SETTINGS["mux_timing_mode"])))
+            self.analysis_pzt_capacitance_unit_combo.setCurrentText(str(pzt_force.get("capacitance_unit", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"])))
+            self.analysis_pzt_rleak_spin.setValue(float(pzt_force.get("rleak_ohm", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])))
+            self.analysis_pzt_d33_spin.setValue(float(pzt_force.get("d33_pc_per_n", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["d33_pc_per_n"])))
+            self.analysis_pzt_noise_spin.setValue(float(pzt_force.get("noise_threshold_v", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"])))
+            self.analysis_pzt_quiet_duration_spin.setValue(float(pzt_force.get("quiet_duration_s", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["quiet_duration_s"])))
+            self.analysis_pzt_noise_k_spin.setValue(float(pzt_force.get("noise_sigma_multiplier", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["noise_sigma_multiplier"])))
+            self._set_analysis_pzt_mux_timing_mode(str(pzt_force.get("mux_timing_mode", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["mux_timing_mode"])))
             self.analysis_pzt_mux_connected_ms_spin.setValue(
-                float(pzt_force.get("mux_connected_time_s", PZT_FORCE_DEFAULT_SETTINGS["mux_connected_time_s"])) * 1000.0
+                float(pzt_force.get("mux_connected_time_s", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["mux_connected_time_s"])) * 1000.0
             )
-            self.analysis_pzt_off_mux_leak_check.setChecked(bool(pzt_force.get("off_mux_leak_enabled", False)))
-            off_mux_rleak = pzt_force.get("off_mux_rleak_ohm", PZT_FORCE_DEFAULT_SETTINGS["off_mux_rleak_ohm"])
+            self.analysis_pzt_off_mux_leak_check.setChecked(
+                bool(pzt_force.get("off_mux_leak_enabled", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["off_mux_leak_enabled"]))
+            )
+            off_mux_rleak = pzt_force.get("off_mux_rleak_ohm", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["off_mux_rleak_ohm"])
             if off_mux_rleak not in (None, ""):
                 self.analysis_pzt_off_mux_rleak_spin.setValue(float(off_mux_rleak))
             self.analysis_pzt_stuck_failsafe_check.setChecked(
-                bool(pzt_force.get("stuck_force_failsafe_enabled", PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"]))
+                bool(pzt_force.get("stuck_force_failsafe_enabled", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"]))
             )
             self.analysis_pzt_stuck_hold_spin.setValue(
-                float(pzt_force.get("stuck_force_quiet_hold_s", PZT_FORCE_DEFAULT_SETTINGS["stuck_force_quiet_hold_s"]))
+                float(pzt_force.get("stuck_force_quiet_hold_s", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["stuck_force_quiet_hold_s"]))
             )
             self.analysis_pzt_stuck_tau_spin.setValue(
-                float(pzt_force.get("stuck_force_decay_tau_s", PZT_FORCE_DEFAULT_SETTINGS["stuck_force_decay_tau_s"]))
+                float(pzt_force.get("stuck_force_decay_tau_s", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["stuck_force_decay_tau_s"]))
             )
             self.analysis_pzt_zero_floor_spin.setValue(
-                float(pzt_force.get("force_zero_band_min_n", PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"]))
+                float(pzt_force.get("force_zero_band_min_n", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"]))
             )
             self.analysis_pzt_zero_band_fraction_spin.setValue(
-                float(pzt_force.get("force_zero_band_fraction", PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"]))
+                float(pzt_force.get("force_zero_band_fraction", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"]))
             )
             self.analysis_pzt_min_event_peak_spin.setValue(
-                float(pzt_force.get("force_zero_min_event_peak_n", PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"]))
+                float(pzt_force.get("force_zero_min_event_peak_n", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"]))
             )
             self.analysis_pzt_quiet_release_spin.setValue(
-                float(pzt_force.get("quiet_hold_release_fraction", PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"]))
+                float(pzt_force.get("quiet_hold_release_fraction", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"]))
             )
             self.analysis_pzt_quiet_hold_spin.setValue(
-                float(pzt_force.get("quiet_hold_clear_s", PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]))
+                float(pzt_force.get("quiet_hold_clear_s", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]))
             )
             self._update_analysis_pzt_mux_timing_controls()
             self._update_analysis_pzt_baseline_results()
@@ -1051,8 +1085,11 @@ class AnalysisPanelMixin:
             "shear": bool(self.analysis_shear_check.isChecked()),
             "normal": bool(self.analysis_normal_check.isChecked()),
             "integration": bool(self.analysis_integration_check.isChecked()),
+            "shear_force": bool(self.analysis_shear_force_check.isChecked()),
+            "normal_force": bool(self.analysis_normal_force_check.isChecked()),
         }
-        self.analysis_state["pzt_force"] = {
+        pzt_force = dict(self.analysis_state.get("pzt_force", {}))
+        pzt_force.update({
             "enabled": bool(self.analysis_pzt_force_check.isChecked()),
             "center_capacitance_value": float(self.analysis_pzt_center_capacitance_spin.value()),
             "outer_capacitance_value": float(self.analysis_pzt_outer_capacitance_spin.value()),
@@ -1079,8 +1116,9 @@ class AnalysisPanelMixin:
             "force_zero_min_event_peak_n": float(self.analysis_pzt_min_event_peak_spin.value()),
             "quiet_hold_release_fraction": float(self.analysis_pzt_quiet_release_spin.value()),
             "quiet_hold_clear_s": float(self.analysis_pzt_quiet_hold_spin.value()),
-            "channel_calibration": dict(self.analysis_state.get("pzt_force", {}).get("channel_calibration", {})),
-        }
+            "channel_calibration": dict(pzt_force.get("channel_calibration", {})),
+        })
+        self.analysis_state["pzt_force"] = pzt_force
         self.analysis_state["visible_labels"] = {
             label: bool(check.isChecked())
             for label, check in self.analysis_channel_checks.items()
@@ -1144,6 +1182,103 @@ class AnalysisPanelMixin:
                 f"n={int(values.get('sample_count', 0))}"
             )
         self.analysis_pzt_baseline_results.setPlainText("\n".join(lines))
+
+    def _get_analysis_pzt_profiles_path(self):
+        return Path.home() / ".adc_streamer" / "analysis" / "pzt_force_profiles.json"
+
+    def _load_analysis_pzt_profiles(self) -> dict:
+        try:
+            path = self._get_analysis_pzt_profiles_path()
+            if not path.exists():
+                return {}
+            _path, payload = load_settings_payload(path, payload_key="profiles")
+            return payload if isinstance(payload, dict) else {}
+        except Exception:
+            return {}
+
+    def _save_analysis_pzt_profiles(self, profiles: dict):
+        save_settings_payload(
+            self._get_analysis_pzt_profiles_path(),
+            {"version": 1, "profiles": profiles},
+        )
+
+    def _refresh_analysis_pzt_profile_combo(self, select: str | None = None):
+        if not hasattr(self, "analysis_pzt_profile_combo"):
+            return
+        profiles = self._load_analysis_pzt_profiles()
+        self.analysis_pzt_profile_combo.blockSignals(True)
+        self.analysis_pzt_profile_combo.clear()
+        self.analysis_pzt_profile_combo.addItems(sorted(profiles))
+        if select is not None:
+            index = self.analysis_pzt_profile_combo.findText(select)
+            if index >= 0:
+                self.analysis_pzt_profile_combo.setCurrentIndex(index)
+        self.analysis_pzt_profile_combo.blockSignals(False)
+
+    def save_analysis_pzt_profile(self):
+        name, ok = QInputDialog.getText(self, "Save PZT Force Profile", "Profile name:")
+        name = name.strip()
+        if not ok or not name:
+            return
+        profiles = self._load_analysis_pzt_profiles()
+        # channel_calibration is a per-capture Vmid/noise estimate, not a
+        # portable setting, so a saved profile excludes it.
+        pzt_force = dict(self.analysis_state.get("pzt_force", {}))
+        pzt_force.pop("channel_calibration", None)
+        profiles[name] = pzt_force
+        try:
+            self._save_analysis_pzt_profiles(profiles)
+        except Exception as exc:
+            QMessageBox.warning(self, "Save Profile Failed", str(exc))
+            return
+        self._refresh_analysis_pzt_profile_combo(select=name)
+        self._set_analysis_status_text(f"Saved PZT force profile '{name}'.")
+
+    def load_analysis_pzt_profile(self):
+        if not hasattr(self, "analysis_pzt_profile_combo"):
+            return
+        name = self.analysis_pzt_profile_combo.currentText().strip()
+        if not name:
+            return
+        profiles = self._load_analysis_pzt_profiles()
+        profile = profiles.get(name)
+        if not isinstance(profile, dict):
+            QMessageBox.warning(self, "Load Profile", f"Profile '{name}' was not found.")
+            return
+        # Keep whatever per-capture calibration is already active; a
+        # settings profile doesn't carry calibration for a capture it never saw.
+        existing_calibration = dict(self.analysis_state.get("pzt_force", {}).get("channel_calibration", {}))
+        self.analysis_state["pzt_force"] = {
+            **ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS,
+            **profile,
+            "channel_calibration": existing_calibration,
+        }
+        self._apply_analysis_settings_to_widgets()
+        self.refresh_analysis_plot()
+        self.save_last_analysis_settings()
+        self._set_analysis_status_text(f"Loaded PZT force profile '{name}'.")
+
+    def delete_analysis_pzt_profile(self):
+        if not hasattr(self, "analysis_pzt_profile_combo"):
+            return
+        name = self.analysis_pzt_profile_combo.currentText().strip()
+        if not name:
+            return
+        reply = QMessageBox.question(
+            self, "Delete Profile", f"Delete PZT force profile '{name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        profiles = self._load_analysis_pzt_profiles()
+        profiles.pop(name, None)
+        try:
+            self._save_analysis_pzt_profiles(profiles)
+        except Exception as exc:
+            QMessageBox.warning(self, "Delete Profile Failed", str(exc))
+            return
+        self._refresh_analysis_pzt_profile_combo()
+        self._set_analysis_status_text(f"Deleted PZT force profile '{name}'.")
 
     def on_analysis_zoom_changed(self, *_args):
         mode = ["x", "y", "xy"][self.analysis_zoom_combo.currentIndex()]
@@ -1477,7 +1612,7 @@ class AnalysisPanelMixin:
         return PLOT_COLORS[(index + 2) % len(PLOT_COLORS)]
 
     def _analysis_calculated_force_source_label(self, trace_label: str) -> str | None:
-        prefix = "Calculated Force - "
+        prefix = "PZT Channel Force - "
         suffix = " ["
         if not trace_label.startswith(prefix):
             return None
@@ -1497,7 +1632,8 @@ class AnalysisPanelMixin:
         self.analysis_force_checks = {}
         for label in desired:
             check = QCheckBox(label)
-            check.setChecked(bool(saved_visibility.get(label, True)))
+            default_visible = not label.startswith(_PZT_CHANNEL_FORCE_LABEL_PREFIX)
+            check.setChecked(bool(saved_visibility.get(label, default_visible)))
             check.stateChanged.connect(self.on_analysis_settings_changed)
             self.analysis_force_checks[label] = check
         self._relayout_analysis_checkboxes()
@@ -2120,6 +2256,8 @@ class AnalysisPanelMixin:
             self.analysis_shear_check,
             self.analysis_normal_check,
             self.analysis_integration_check,
+            self.analysis_shear_force_check,
+            self.analysis_normal_force_check,
             self.analysis_pzt_force_check,
             self.analysis_pzt_center_capacitance_spin,
             self.analysis_pzt_outer_capacitance_spin,
