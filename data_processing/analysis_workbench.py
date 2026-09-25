@@ -117,6 +117,23 @@ def reorder_circular_capture(
     )
 
 
+def _load_filtered_snapshot(snapshot: AnalysisSourceSnapshot) -> AnalysisSourceSnapshot:
+    """Blip-filter PZT voltage columns once, here, at the I/O edge where every
+    snapshot is built (live capture, archive, CSV re-load) rather than in
+    every downstream consumer. A filter failure leaves the snapshot's raw
+    data intact with a warning, instead of failing the whole load.
+    """
+    try:
+        snapshot.data = _apply_pzt_blip_filter(snapshot, snapshot.data)
+    except Exception as exc:
+        warnings = snapshot.metadata.setdefault("analysis_warnings", [])
+        if not isinstance(warnings, list):
+            warnings = [str(warnings)]
+            snapshot.metadata["analysis_warnings"] = warnings
+        warnings.append(f"PZT blip filter skipped: {exc}")
+    return snapshot
+
+
 def build_in_memory_snapshot(owner) -> AnalysisSourceSnapshot:
     """Copy the latest retained in-memory capture from the GUI owner."""
     owner_config = getattr(owner, "config", {}) or {}
@@ -143,7 +160,7 @@ def build_in_memory_snapshot(owner) -> AnalysisSourceSnapshot:
         "source": "in_memory",
         "timing": _owner_analysis_timing_metadata(owner),
     }
-    return AnalysisSourceSnapshot(
+    snapshot = AnalysisSourceSnapshot(
         data=data,
         timestamps_s=_normalize_timestamps(timestamps, data.shape[0]),
         channel_labels=channel_labels,
@@ -155,6 +172,7 @@ def build_in_memory_snapshot(owner) -> AnalysisSourceSnapshot:
         source_id="in_memory",
         sample_rate_hz=_owner_sample_rate_hz(owner, data, timestamps),
     )
+    return _load_filtered_snapshot(snapshot)
 
 
 def build_snapshot_from_archive(owner) -> AnalysisSourceSnapshot:
@@ -188,7 +206,7 @@ def build_snapshot_from_archive(owner) -> AnalysisSourceSnapshot:
         "source": "archive",
         "timing": _owner_analysis_timing_metadata(owner),
     }
-    return AnalysisSourceSnapshot(
+    snapshot = AnalysisSourceSnapshot(
         data=data,
         timestamps_s=_normalize_timestamps(ts, data.shape[0]),
         channel_labels=channel_labels,
@@ -200,6 +218,7 @@ def build_snapshot_from_archive(owner) -> AnalysisSourceSnapshot:
         source_id="archive",
         sample_rate_hz=_owner_sample_rate_hz(owner, data, ts),
     )
+    return _load_filtered_snapshot(snapshot)
 
 
 def load_exported_csv_snapshot(csv_path, metadata_path) -> AnalysisSourceSnapshot:
@@ -269,7 +288,7 @@ def load_exported_csv_snapshot(csv_path, metadata_path) -> AnalysisSourceSnapsho
             f"CSV has {data.shape[1]}."
         )
 
-    return AnalysisSourceSnapshot(
+    snapshot = AnalysisSourceSnapshot(
         data=data,
         timestamps_s=timestamps,
         channel_labels=list(data_columns),
@@ -281,6 +300,7 @@ def load_exported_csv_snapshot(csv_path, metadata_path) -> AnalysisSourceSnapsho
         source_id=f"csv:{csv_path.resolve()}|json:{metadata_path.resolve()}",
         sample_rate_hz=_metadata_sample_rate_hz(metadata, data, timestamps),
     )
+    return _load_filtered_snapshot(snapshot)
 
 
 def prepare_analysis_data(
@@ -857,6 +877,51 @@ def _signal_display_values(label: str, values, vref_voltage: float) -> np.ndarra
 def _is_resistance_like_label(label: str) -> bool:
     normalized = str(label).strip().upper()
     return "_RS" in normalized or normalized.startswith("RS_") or normalized.startswith("RS ")
+
+
+def _median3_filter_columns(raw_columns: np.ndarray) -> np.ndarray:
+    """Offline causal median-of-3 filter, one full-capture pass (no carried state).
+
+    Mirrors ``PztBlipFilterMixin._pzt_blip_filtered_columns`` in
+    ``pzt_blip_filter.py`` so isolated single-sample spikes are rejected the
+    same way here as during live binary ingest; the analysis workbench loads
+    a whole capture at once, so there is no cross-block history to carry.
+    """
+    if raw_columns.shape[0] < 3:
+        return raw_columns.copy()
+    a, b, c = raw_columns[:-2], raw_columns[1:-1], raw_columns[2:]
+    median = (
+        a + b + c
+        - np.maximum(np.maximum(a, b), c)
+        - np.minimum(np.minimum(a, b), c)
+    )
+    filtered = raw_columns.copy()
+    filtered[2:] = median
+    return filtered
+
+
+def _apply_pzt_blip_filter(snapshot: AnalysisSourceSnapshot, data: np.ndarray) -> np.ndarray:
+    """Median-of-3 filter PZT voltage columns before they feed integration/force calc.
+
+    Excludes resistance-like (RS) columns, matching the live pipeline's
+    exclusion in ``pzt_blip_filter.py`` (RS/555 resistance readings are never
+    sampled waveforms and must not be median-filtered).
+    """
+    if data.ndim != 2 or data.shape[0] == 0:
+        return data
+    columns = [
+        column
+        for label, column in iter_analysis_signal_columns(snapshot)
+        if not _is_resistance_like_label(label)
+        and column < data.shape[1]
+        and column < snapshot.samples_per_sweep
+    ]
+    if not columns:
+        return data
+    column_indices = np.asarray(sorted(set(columns)), dtype=np.int32)
+    data = data.copy()
+    data[:, column_indices] = _median3_filter_columns(data[:, column_indices])
+    return data
 
 
 def iter_analysis_signal_columns(snapshot: AnalysisSourceSnapshot):

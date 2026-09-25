@@ -14,10 +14,12 @@ from data_processing.adc_mux_timing import calculate_adc_mux_timing_for_acquisit
 from data_processing.analysis_workbench import (
     AnalysisSourceSnapshot,
     _build_offline_stream_index_map,
+    _load_filtered_snapshot,
     _owner_analysis_timing_metadata,
     build_in_memory_snapshot,
     build_overlay_traces,
     build_snapshot_from_archive,
+    counts_to_volts,
     estimate_analysis_pzt_force_calibration,
     integrate_voltage_series_causal_median,
     load_exported_csv_snapshot,
@@ -97,9 +99,13 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         self.assertEqual(owner.finalize_calls, 1)
         self.assertEqual(snapshot.source_id, "archive")
         self.assertEqual(snapshot.metadata["source"], "archive")
+        # build_snapshot_from_archive blip-filters PZT voltage columns via
+        # _load_filtered_snapshot, so the median-of-3 filter applies to these
+        # unlabeled fallback columns: the last row's median of (10, 20, 30) /
+        # (11, 21, 31) is (20, 21), not a raw pass-through.
         np.testing.assert_array_equal(
             snapshot.data,
-            np.asarray([[10, 11], [20, 21], [30, 31]], dtype=np.float32),
+            np.asarray([[10, 11], [20, 21], [20, 21]], dtype=np.float32),
         )
         np.testing.assert_allclose(snapshot.timestamps_s, [0.0, 0.01, 0.02])
 
@@ -234,6 +240,29 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         np.testing.assert_allclose(values_by_label["PZT6_B"], [0.0])
         np.testing.assert_allclose(values_by_label["PZT6_C"], [3.3 * 2000.0 / 4095.0])
         np.testing.assert_allclose(values_by_label["PZT6_RS1"], [474.6])
+
+    def test_prepare_analysis_data_median3_filters_isolated_pzt_spike(self):
+        samples = np.asarray([100, 100, 100, 4000, 100, 100, 100], dtype=np.float32)
+        rs_samples = np.asarray([500, 500, 500, 9000, 500, 500, 500], dtype=np.float32)
+        snapshot = AnalysisSourceSnapshot(
+            data=np.stack([samples, rs_samples], axis=1),
+            timestamps_s=np.arange(7, dtype=np.float64) * 0.001,
+            channel_labels=["PZT6_B", "PZT6_RS1"],
+            metadata={"configuration": {"channels": [1, 2], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=1000.0,
+        )
+        snapshot = _load_filtered_snapshot(snapshot)
+
+        prepared = prepare_analysis_data(snapshot, vref_voltage=3.3)
+        values_by_label = {trace.label: trace.y for trace in prepared.traces}
+
+        # PZT voltage column: isolated spike is median-of-3 rejected.
+        np.testing.assert_allclose(
+            values_by_label["PZT6_B"], counts_to_volts(np.full(7, 100.0), 3.3)
+        )
+        # Resistance-like column is excluded from the filter and passes through raw.
+        np.testing.assert_allclose(values_by_label["PZT6_RS1"], rs_samples)
 
     def test_calculate_pzt_force_uses_leakage_model(self):
         force = calculate_pzt_force_from_voltage(
