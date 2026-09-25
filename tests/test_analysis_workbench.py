@@ -803,9 +803,9 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         )
 
         overlay_labels = {trace.label for trace in prepared.overlay_traces}
-        self.assertIn("Shear L/R [V]", overlay_labels)
-        self.assertIn("Shear T/B [V]", overlay_labels)
-        self.assertIn("Normal Pressure [V]", overlay_labels)
+        self.assertIn("Shear L/R Jerk [V]", overlay_labels)
+        self.assertIn("Shear T/B Jerk [V]", overlay_labels)
+        self.assertIn("Normal Jerk [V]", overlay_labels)
         self.assertIn("Integrated C [V samples]", overlay_labels)
 
         direct_overlays = build_overlay_traces(
@@ -817,7 +817,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             integration_window_samples=1,
             hpf_cutoff_hz=0.0,
         )
-        self.assertEqual([trace.label for trace in direct_overlays], ["Shear L/R [V]", "Shear T/B [V]"])
+        self.assertEqual([trace.label for trace in direct_overlays], ["Shear L/R Jerk [V]", "Shear T/B Jerk [V]"])
 
     def test_force_based_shear_normal_traces_match_reference_integration(self):
         # C, L, R, T, B counts across 4 rows; L/R carry an opposite-sign shear
@@ -901,7 +901,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         np.testing.assert_allclose(by_label["Shear Force L/R [N]"].y, shear_lr_ref, rtol=1e-6, atol=1e-12)
         np.testing.assert_allclose(by_label["Shear Force T/B [N]"].y, shear_tb_ref, rtol=1e-6, atol=1e-12)
 
-        # Existing voltage-based Shear/Normal Pressure path is untouched by
+        # Existing voltage-based Shear/Normal Jerk path is untouched by
         # enabling the new Force overlay flags.
         pressure_overlays = build_overlay_traces(
             snapshot, snapshot.data, axis_mode="samples",
@@ -910,7 +910,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         )
         self.assertEqual(
             {trace.label for trace in pressure_overlays},
-            {"Shear L/R [V]", "Shear T/B [V]", "Normal Pressure [V]"},
+            {"Shear L/R Jerk [V]", "Shear T/B Jerk [V]", "Normal Jerk [V]"},
         )
 
     def test_force_based_shear_normal_traces_raises_on_empty_calculated_force(self):

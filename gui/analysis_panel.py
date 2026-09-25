@@ -277,10 +277,10 @@ class AnalysisPanelMixin:
         self.analysis_filter_check = QCheckBox("Spectrum filter")
         self.analysis_filter_check.stateChanged.connect(self.on_analysis_settings_changed)
         controls_layout.addWidget(self.analysis_filter_check, 1, 0)
-        self.analysis_shear_check = QCheckBox("Shear")
+        self.analysis_shear_check = QCheckBox("Shear Jerk")
         self.analysis_shear_check.stateChanged.connect(self.on_analysis_settings_changed)
         controls_layout.addWidget(self.analysis_shear_check, 1, 1)
-        self.analysis_normal_check = QCheckBox("Normal pressure")
+        self.analysis_normal_check = QCheckBox("Normal Jerk")
         self.analysis_normal_check.stateChanged.connect(self.on_analysis_settings_changed)
         controls_layout.addWidget(self.analysis_normal_check, 1, 2)
         self.analysis_integration_check = QCheckBox("Integration")
@@ -672,7 +672,7 @@ class AnalysisPanelMixin:
         self.analysis_save_integration_image_check = QCheckBox("Integrated signals")
         self.analysis_save_integration_image_check.setChecked(True)
         image_export_layout.addWidget(self.analysis_save_integration_image_check, 0, 1)
-        self.analysis_save_derived_image_check = QCheckBox("Shear / Normal")
+        self.analysis_save_derived_image_check = QCheckBox("Shear / Normal Jerk")
         self.analysis_save_derived_image_check.setChecked(True)
         image_export_layout.addWidget(self.analysis_save_derived_image_check, 0, 2)
         self.analysis_save_force_image_check = QCheckBox("Force")
@@ -1498,7 +1498,7 @@ class AnalysisPanelMixin:
 
         self.analysis_signal_plot.setLabel("left", "Signals", units="V")
         self.analysis_integration_plot.setLabel("left", "Integrated", units="V samples")
-        self.analysis_derived_plot.setLabel("left", "Shear / Normal", units="V")
+        self.analysis_derived_plot.setLabel("left", "Shear / Normal Jerk", units="V")
         self.analysis_force_plot.setLabel("left", "Force", units="N")
         stacked_plots = (
             (self.analysis_signal_plot, bool(desired_signal)),

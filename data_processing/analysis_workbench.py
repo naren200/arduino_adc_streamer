@@ -818,10 +818,10 @@ def build_overlay_traces(
         normal.append(float(normal_result.total_force))
 
     if overlay_flags.get("shear", False):
-        overlays.append(AnalysisTrace("Shear L/R [V]", x, np.asarray(shear_lr, dtype=np.float64), "derived"))
-        overlays.append(AnalysisTrace("Shear T/B [V]", x, np.asarray(shear_tb, dtype=np.float64), "derived"))
+        overlays.append(AnalysisTrace("Shear L/R Jerk [V]", x, np.asarray(shear_lr, dtype=np.float64), "derived"))
+        overlays.append(AnalysisTrace("Shear T/B Jerk [V]", x, np.asarray(shear_tb, dtype=np.float64), "derived"))
     if overlay_flags.get("normal", False):
-        overlays.append(AnalysisTrace("Normal Pressure [V]", x, np.asarray(normal, dtype=np.float64), "derived"))
+        overlays.append(AnalysisTrace("Normal Jerk [V]", x, np.asarray(normal, dtype=np.float64), "derived"))
     return overlays
 
 

@@ -30,9 +30,9 @@ Analysis is disabled while runtime acquisition is active and re-enabled after ca
 - Axis selector: Time ms or Sample index.
 - Zoom selector: X only, Y only, or X and Y.
 - Channel checklist with All/None buttons.
-- Optional processing/display toggles: Spectrum-compatible filter, shear, normal pressure, integration, calculated PZT force, and marker.
+- Optional processing/display toggles: Spectrum-compatible filter, shear jerk, normal jerk, integration, calculated PZT force, and marker.
 - PZT force settings: capacitance, leak resistance, d33, fallback noise threshold, quiet-window duration, noise multiplier, MUX leakage timing mode, manual MUX connected time, optional off-MUX leakage resistance, and a Calculate Vmid + Noise action.
-- Analysis image export controls: select Raw signals, Integrated signals, Shear / Normal, and/or Force plots and save them as PNG images.
+- Analysis image export controls: select Raw signals, Integrated signals, Shear / Normal Jerk, and/or Force plots and save them as PNG images.
 - Calculated-force traces use the same plot color as their source raw signal trace. For example, if `PZT3_L` is green in Raw signals, `PZT Channel Force - PZT3_L [N]` is also green in Force.
 - Display controls, channel checklists, force-trace checklists, and image-export controls are width-stable and must remain visible inside the Analysis scroll area. Long calculated-force labels are displayed in a compact force-trace list instead of forcing horizontal overflow.
 - Marker: mouse readout reports nearest displayed values for visible signal, integration, derived, and force traces. Marker readout text is elided to the visible status-label width and keeps the full text in a tooltip, so moving the marker cannot resize or horizontally shift the Analysis layout.
@@ -45,13 +45,13 @@ Analysis is disabled while runtime acquisition is active and re-enabled after ca
 4. Convert ADC signal counts to volts using the active configured Vref.
 5. Build raw signal traces for visible channels.
 6. Optionally build integrated traces independently for each visible voltage channel using Pressure-map integration and HPF settings.
-7. Optionally build shear and normal-pressure traces from mapped R/L/C/T/B positional channels.
+7. Optionally build shear jerk and normal jerk traces from mapped R/L/C/T/B positional channels.
 8. Build measured force traces in Newtons.
 9. Optionally reconstruct calculated PZT force traces from visible voltage channels, using per-channel quiet-window Vmid/noise calibration and MUX-aware leakage timing when available.
 10. Render synchronized plots with a shared X range:
     - Raw signals.
     - Integrated signals.
-    - Shear / Normal derived traces.
+    - Shear / Normal Jerk derived traces.
     - Force traces, including measured load-cell force and calculated PZT force.
 
 ## PZT Force
@@ -176,9 +176,9 @@ The tab persists UI preferences under `~/.adc_streamer/analysis/last_used_analys
 - Invalid CSV/metadata files show actionable failures and preserve the prior valid state.
 - Channel visibility changes redraw without reloading the source.
 - Optional filtering uses the current Spectrum filter widget settings on a data copy.
-- Shear, normal pressure, and integration overlays can be independently toggled.
+- Shear Jerk, Normal Jerk, and integration overlays can be independently toggled.
 - Integration is plotted separately from raw signals, and each integrated trace uses the same color as its source raw trace.
-- Shear and normal pressure are plotted together on their own derived plot.
+- Shear Jerk and Normal Jerk are plotted together on their own derived plot.
 - Hiding a raw signal channel also hides that channel's integrated and calculated-force traces.
 - Calculated PZT force traces use the same color as their corresponding raw signal traces.
 - Measured load-cell force is displayed in Newtons.

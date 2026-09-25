@@ -351,8 +351,8 @@ The processing order shall be:
 3. Calculate PZT force
 4. Apply automatic zeroing
 5. Calculate derived Analysis signals
-    - Shear
-    - Normal Pressure
+    - Shear Jerk
+    - Normal Jerk
     - Integration
 6. Update graphs
 7. Update marker values
@@ -395,15 +395,15 @@ Both graphs shall share:
 - marker
 - cursor
 
-### Shear / Normal Graph
+### Shear / Normal Jerk Graph
 
 Displays:
 
-- Shear Left/Right [V]
-- Shear Top/Bottom [V]
-- Normal Pressure [V]
+- Shear Left/Right Jerk [V]
+- Shear Top/Bottom Jerk [V]
+- Normal Jerk [V]
 
-Shear and normal pressure require position-aware R/L/C/T/B channels. Integration does not require positional channel mapping and is calculated per visible channel independently.
+Shear and normal jerk require position-aware R/L/C/T/B channels. Integration does not require positional channel mapping and is calculated per visible channel independently.
 
 All Analysis plots shall share:
 
@@ -425,7 +425,7 @@ The Display sub-tab shall provide Analysis image export controls. The user can c
 
 - Raw signals
 - Integrated signals
-- Shear / Normal
+- Shear / Normal Jerk
 - Force
 
 Selected plots are saved as PNG images. When more than one plot is selected, the exported filenames shall include plot-specific suffixes.
@@ -447,9 +447,9 @@ The export shall contain, where available:
 #### Derived Signals
 
 - Calculated PZT Force [N]
-- Shear Left/Right [V]
-- Shear Top/Bottom [V]
-- Normal Pressure [V]
+- Shear Left/Right Jerk [V]
+- Shear Top/Bottom Jerk [V]
+- Normal Jerk [V]
 - Integration [V]
 
 Derived columns shall be appended after the original captured data.
@@ -529,7 +529,7 @@ The application shall display an informative warning while leaving the remainder
 - One calculated force trace is produced for every PZT channel.
 - Force graph is synchronized with the voltage graphs.
 - Integration graph is separate from raw voltage data and uses source-channel colors.
-- Shear and normal pressure share a separate derived graph.
+- Shear and normal jerk share a separate derived graph.
 - User can save selected Analysis plots as PNG images.
 - Force settings persist across application restarts.
 - User can calculate and view per-channel Vmid/noise estimates from the initial quiet window.
