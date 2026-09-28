@@ -15,10 +15,12 @@ from constants.serial import BUFFER_SIZE_MAX
 @dataclass(frozen=True, slots=True)
 class MCUProfile:
     mcu_name: str
+    is_testboard_7953: bool
     is_array_mcu: bool
     is_array_pzt1: bool
     is_array_dual: bool
     is_array_pzt_pzr17: bool
+    adc_lane_count: int
     supports_pzt_rs: bool
     is_pzt_rs_mode: bool
     array_operation_modes: tuple[str, ...]
@@ -35,6 +37,10 @@ class MCUProfile:
     yaxis_units_value: str | None
     buffer_size_max: int
     show_charge_discharge_labels: bool
+    show_testboard_scan_controls: bool
+    show_manual_channels: bool
+    show_repeat_buffer_controls: bool
+    show_adc_config_section: bool
     osr_label_text: str
     osr_options: tuple[str, ...]
     osr_default: str
@@ -45,19 +51,25 @@ class MCUProfile:
 def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT") -> MCUProfile:
     name = (mcu_name or "").strip()
     lower_name = name.lower()
+    is_testboard_7953 = lower_name == "pcb_testboard_7953"
     is_array_pzt_pzr17 = lower_name == "array_pzt_pzr1.7"
     supports_pzt_rs = lower_name in ("array_pzt_pzr1", "array_pzt_pzr1.7")
-    array_operation_modes = ("PZT", "PZR", "PZT_RS") if supports_pzt_rs else ("PZT", "PZR")
+    array_operation_modes = (
+        ("PZT",)
+        if is_testboard_7953
+        else ("PZT", "PZR", "PZT_RS") if supports_pzt_rs else ("PZT", "PZR")
+    )
     normalized_array_mode = (selected_array_mode or "PZT").strip().upper()
     if normalized_array_mode not in array_operation_modes:
         normalized_array_mode = "PZT"
 
     is_array_dual = lower_name.startswith("array_pzt_pzr")
-    is_array_mcu = lower_name.startswith("array")
+    is_array_mcu = lower_name.startswith("array") or is_testboard_7953
     is_pzt_rs_mode = is_array_dual and normalized_array_mode == "PZT_RS"
-    is_array_pzt1 = lower_name == "array_pzt1" or (
+    is_array_pzt1 = is_testboard_7953 or lower_name == "array_pzt1" or (
         is_array_dual and normalized_array_mode in ("PZT", "PZT_RS")
     )
+    adc_lane_count = 4 if is_testboard_7953 and normalized_array_mode == "PZT" else (2 if is_array_pzt1 else 1)
     is_teensy = "teensy" in lower_name
     is_555_mode = normalized_array_mode == "PZR" if is_array_dual else ("555" in lower_name)
     device_mode = "555" if is_555_mode else "adc"
@@ -65,10 +77,12 @@ def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT
     if is_555_mode:
         return MCUProfile(
             mcu_name=name,
+            is_testboard_7953=is_testboard_7953,
             is_array_mcu=is_array_mcu,
             is_array_pzt1=is_array_pzt1,
             is_array_dual=is_array_dual,
             is_array_pzt_pzr17=is_array_pzt_pzr17,
+            adc_lane_count=adc_lane_count,
             supports_pzt_rs=supports_pzt_rs,
             is_pzt_rs_mode=is_pzt_rs_mode,
             array_operation_modes=array_operation_modes,
@@ -85,6 +99,10 @@ def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT
             yaxis_units_value="Values",
             buffer_size_max=ANALYZER555_BUFFER_SIZE_MAX,
             show_charge_discharge_labels=True,
+            show_testboard_scan_controls=False,
+            show_manual_channels=not is_testboard_7953,
+            show_repeat_buffer_controls=not is_testboard_7953,
+            show_adc_config_section=not is_testboard_7953,
             osr_label_text="OSR (Oversampling):",
             osr_options=("2", "4", "8"),
             osr_default="2",
@@ -95,10 +113,12 @@ def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT
     if is_teensy:
         return MCUProfile(
             mcu_name=name,
+            is_testboard_7953=is_testboard_7953,
             is_array_mcu=is_array_mcu,
             is_array_pzt1=is_array_pzt1,
             is_array_dual=is_array_dual,
             is_array_pzt_pzr17=is_array_pzt_pzr17,
+            adc_lane_count=adc_lane_count,
             supports_pzt_rs=supports_pzt_rs,
             is_pzt_rs_mode=is_pzt_rs_mode,
             array_operation_modes=array_operation_modes,
@@ -115,6 +135,10 @@ def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT
             yaxis_units_value=None,
             buffer_size_max=BUFFER_SIZE_MAX,
             show_charge_discharge_labels=False,
+            show_testboard_scan_controls=is_testboard_7953,
+            show_manual_channels=not is_testboard_7953,
+            show_repeat_buffer_controls=not is_testboard_7953,
+            show_adc_config_section=not is_testboard_7953,
             osr_label_text="Averaging:",
             osr_options=("0", "1", "4", "8", "16", "32"),
             osr_default="4",
@@ -124,10 +148,12 @@ def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT
 
     return MCUProfile(
         mcu_name=name,
+        is_testboard_7953=is_testboard_7953,
         is_array_mcu=is_array_mcu,
         is_array_pzt1=is_array_pzt1,
         is_array_dual=is_array_dual,
         is_array_pzt_pzr17=is_array_pzt_pzr17,
+        adc_lane_count=adc_lane_count,
         supports_pzt_rs=supports_pzt_rs,
         is_pzt_rs_mode=is_pzt_rs_mode,
         array_operation_modes=array_operation_modes,
@@ -144,6 +170,10 @@ def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT
         yaxis_units_value=None,
         buffer_size_max=BUFFER_SIZE_MAX,
         show_charge_discharge_labels=False,
+        show_testboard_scan_controls=is_testboard_7953,
+        show_manual_channels=not is_testboard_7953,
+        show_repeat_buffer_controls=not is_testboard_7953,
+        show_adc_config_section=not is_testboard_7953,
         osr_label_text="OSR (Oversampling):",
         osr_options=("2", "4", "8"),
         osr_default="4" if is_array_mcu else "2",

@@ -61,6 +61,20 @@ class MCUProfileTests(unittest.TestCase):
         self.assertTrue(profile.osr_visible)
         self.assertEqual(profile.array_operation_modes, ("PZT", "PZR", "PZT_RS"))
 
+    def test_pcb_testboard_7953_is_a_four_lane_array_device(self):
+        profile = resolve_mcu_profile("PCB_TestBoard_7953", selected_array_mode="PZT")
+
+        self.assertTrue(profile.is_array_mcu)
+        self.assertFalse(profile.is_array_dual)
+        self.assertTrue(profile.is_array_pzt1)
+        self.assertEqual(profile.adc_lane_count, 4)
+        self.assertEqual(profile.array_operation_modes, ("PZT",))
+        self.assertFalse(profile.supports_pzt_rs)
+        self.assertFalse(profile.is_teensy)
+        self.assertFalse(profile.show_manual_channels)
+        self.assertFalse(profile.show_repeat_buffer_controls)
+        self.assertFalse(profile.show_adc_config_section)
+
 
 if __name__ == "__main__":
     unittest.main()

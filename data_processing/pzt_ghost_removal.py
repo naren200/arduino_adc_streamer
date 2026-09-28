@@ -91,17 +91,43 @@ class PztGhostRemovalMixin:
                         groups.append(columns)
             return groups
 
+        if (
+            hasattr(self, 'is_testboard_7953_mode')
+            and self.is_testboard_7953_mode()
+            and hasattr(self, 'get_testboard_adc_routes')
+        ):
+            routes = list(self.get_testboard_adc_routes())
+            groups = []
+            for adc_lane in (1, 2, 3, 4):
+                lane_route_indices = [
+                    index for index, route in enumerate(routes)
+                    if int(route[0]) == adc_lane
+                ]
+                for repeat_index in range(repeat_count):
+                    columns = [
+                        route_index * repeat_count + repeat_index
+                        for route_index in lane_route_indices
+                    ]
+                    columns = [column for column in columns if column < width]
+                    if columns:
+                        groups.append(columns)
+            return groups
+
         if hasattr(self, 'is_array_pzt1_mode') and self.is_array_pzt1_mode():
             if hasattr(self, 'get_channels_for_arduino_command'):
                 channels = list(self.get_channels_for_arduino_command())
             else:
                 channels = list(self.config.get('channels', []))
             channel_count = len(channels)
+            lane_count = max(1, int(
+                self.get_effective_channel_multiplier()
+                if hasattr(self, 'get_effective_channel_multiplier') else 2
+            ))
             groups = []
-            for mux_index in range(2):
+            for mux_index in range(lane_count):
                 for repeat_index in range(repeat_count):
                     columns = [
-                        sequence_index * repeat_count * 2 + repeat_index * 2 + mux_index
+                        sequence_index * repeat_count * lane_count + repeat_index * lane_count + mux_index
                         for sequence_index in range(channel_count)
                     ]
                     columns = [column for column in columns if column < width]

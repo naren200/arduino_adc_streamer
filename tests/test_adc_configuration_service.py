@@ -4,6 +4,7 @@ from config.adc_configuration_service import (
     ADCConfigurationRequest,
     ADCConfigurationService,
 )
+from constants.serial import ARRAY_PZT_MAX_MUX_PAIRS_PER_BLOCK
 from serial_communication.adc_connection_state import ArduinoStatus
 
 
@@ -158,8 +159,55 @@ class ADCConfigurationServiceTests(unittest.TestCase):
         self.assertEqual(result.arduino_status.channels, [1, 2])
         self.assertIn("Configuration matches: [1, 2]", result.messages)
 
+    def test_7953_sends_sparse_routes_scan_order_array_selection_and_vmid(self):
+        commands = []
+
+        def send_command(command, expected):
+            commands.append((command, expected))
+            responses = {
+                "array both": (True, "both"),
+                "scanorder array": (True, "array"),
+                "adcchannels 1:0,2:10,3:0,4:10": (True, "1:0,2:10,3:0,4:10"),
+                "vmid 15": (True, "15"),
+            }
+            return responses[command]
+
+        service = ADCConfigurationService(send_command)
+        request = build_request(
+            current_mcu="PCB_TestBoard_7953",
+            channels=[0, 10],
+            channels_to_send=[0, 10],
+            use_ground=True,
+            ground_pin=15,
+            is_array_mcu=True,
+            is_array_pzt_pzr_mode=False,
+            is_array_sensor_selection_mode=True,
+            effective_channel_multiplier=4,
+            testboard_array_selection="both",
+            testboard_scan_order="array",
+            testboard_adc_routes=[(1, 0), (2, 10), (3, 0), (4, 10)],
+            is_testboard_7953=True,
+        )
+
+        result = service.send_config_with_verification(request)
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            [command for command, _expected in commands],
+            [
+                "array both",
+                "scanorder array", "adcchannels 1:0,2:10,3:0,4:10",
+                "vmid 15",
+            ],
+        )
+        self.assertTrue(result.arduino_status.use_ground)
+        self.assertEqual(result.arduino_status.repeat, 1)
+        self.assertEqual(result.arduino_status.buffer, 1)
+        self.assertEqual(result.normalized_buffer_size, 1)
+
     def test_array_pzt_buffer_is_limited_by_mux_pair_capacity(self):
         commands = []
+        expected_sweeps = ARRAY_PZT_MAX_MUX_PAIRS_PER_BLOCK // 10
 
         def send_command(command, expected):
             commands.append((command, expected))
@@ -169,7 +217,7 @@ class ADCConfigurationServiceTests(unittest.TestCase):
                 "channels 0,1,2,3,4,5,6,7,8,9": (True, "0,1,2,3,4,5,6,7,8,9"),
                 "repeat 1": (True, "1"),
                 "ground false": (True, "false"),
-                "buffer 800": (True, "800"),
+                f"buffer {expected_sweeps}": (True, str(expected_sweeps)),
             }
             return responses[command]
 
@@ -188,8 +236,8 @@ class ADCConfigurationServiceTests(unittest.TestCase):
         result = service.send_config_with_verification(request)
 
         self.assertTrue(result.success)
-        self.assertEqual(result.normalized_buffer_size, 800)
-        self.assertIn(("buffer 800", "800"), commands)
+        self.assertEqual(result.normalized_buffer_size, expected_sweeps)
+        self.assertIn((f"buffer {expected_sweeps}", str(expected_sweeps)), commands)
 
     def test_array_dual_mux_overlap_disables_ground_sampling(self):
         commands = []

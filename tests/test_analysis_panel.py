@@ -14,10 +14,13 @@ from gui.analysis_panel import AnalysisPanelMixin
 
 class FakePlot:
     def __init__(self):
-        self.visible = None
+        self.visible = True
 
     def setVisible(self, visible):
         self.visible = bool(visible)
+
+    def isVisible(self):
+        return bool(self.visible)
 
 
 class FakeSplitter:
@@ -35,6 +38,7 @@ class FakeSplitter:
 class AnalysisPlotVisibilityTests(unittest.TestCase):
     def setUp(self):
         self.harness = AnalysisPanelMixin()
+        self.addCleanup(self.harness.shutdown_analysis_worker)
         self.harness.analysis_signal_plot = FakePlot()
         self.harness.analysis_integration_plot = FakePlot()
         self.harness.analysis_derived_plot = FakePlot()
@@ -53,8 +57,8 @@ class AnalysisPlotVisibilityTests(unittest.TestCase):
         self.assertFalse(self.harness.analysis_integration_plot.visible)
         self.assertFalse(self.harness.analysis_derived_plot.visible)
         self.assertFalse(self.harness.analysis_force_plot.visible)
-        self.assertEqual(self.harness.analysis_plot_splitter.minimum_height, 360)
-        self.assertEqual(self.harness.analysis_plot_splitter.sizes, [360, 0, 0, 0])
+        self.assertEqual(self.harness.analysis_plot_splitter.minimum_height, 250)
+        self.assertEqual(self.harness.analysis_plot_splitter.sizes, [250, 0, 0, 0])
 
     def test_shows_each_available_requested_plot(self):
         self.harness._update_analysis_plot_visibility(
@@ -67,8 +71,8 @@ class AnalysisPlotVisibilityTests(unittest.TestCase):
         self.assertTrue(self.harness.analysis_integration_plot.visible)
         self.assertTrue(self.harness.analysis_derived_plot.visible)
         self.assertTrue(self.harness.analysis_force_plot.visible)
-        self.assertEqual(self.harness.analysis_plot_splitter.minimum_height, 1160)
-        self.assertEqual(self.harness.analysis_plot_splitter.sizes, [360, 260, 240, 300])
+        self.assertEqual(self.harness.analysis_plot_splitter.minimum_height, 750)
+        self.assertEqual(self.harness.analysis_plot_splitter.sizes, [250, 200, 200, 100])
 
 
 class DummySpin:
@@ -180,7 +184,6 @@ class AnalysisPanelHarness(AnalysisPanelMixin):
         self.analysis_pzt_quiet_hold_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]))
         self.analysis_pzt_baseline_results = DummyTextWidget()
         self.analysis_csv_path_edit = DummyTextWidget()
-        self.analysis_metadata_path_edit = DummyTextWidget()
 
     def _get_last_analysis_settings_path(self):
         return self._settings_path
@@ -202,6 +205,7 @@ class AnalysisPztForceEventTunablesRoundTripTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             settings_path = Path(temp_dir) / "last_used_analysis_settings.json"
             harness = AnalysisPanelHarness(settings_path)
+            self.addCleanup(harness.shutdown_analysis_worker)
 
             harness.analysis_pzt_zero_floor_spin.setValue(0.05)
             harness.analysis_pzt_zero_band_fraction_spin.setValue(0.2)
@@ -220,6 +224,7 @@ class AnalysisPztForceEventTunablesRoundTripTests(unittest.TestCase):
             self.assertEqual(saved_pzt_force["quiet_hold_clear_s"], 0.3)
 
             restored = AnalysisPanelHarness(settings_path)
+            self.addCleanup(restored.shutdown_analysis_worker)
             restored.load_last_analysis_settings()
 
             self.assertEqual(restored.analysis_pzt_zero_floor_spin.value(), 0.05)
@@ -245,6 +250,7 @@ class AnalysisPztForceEventTunablesRoundTripTests(unittest.TestCase):
             settings_path.write_text(json.dumps(legacy_payload), encoding="utf-8")
 
             harness = AnalysisPanelHarness(settings_path)
+            self.addCleanup(harness.shutdown_analysis_worker)
             harness.analysis_pzt_zero_floor_spin.setValue(0.999)  # must not survive the load
 
             harness.load_last_analysis_settings()

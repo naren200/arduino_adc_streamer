@@ -11,6 +11,7 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 - `PCB1.5_SPI/`: Teensy+MG24 SPI array firmware for PCB v1.5 (DRDY-enabled path)
 - `PCB1.7_SPI/`: Teensy+MG24 SPI array firmware for PCB v1.7 (DRDY + combined PZT/RS mode)
 - `PCB1.7_with_libraries/`: library-backed PCB v1.7 sketches with the same `PZT_RS` protocol behavior
+- `PCB_TestBoard_7953/`: modular Teensy 4.1 master for four ADS7953 ADCs on two SPI buses
 
 ## Current Sketch Map
 
@@ -23,7 +24,8 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 | Teensy + MG24 SPI (PCB1.0) | Mixed PZT/PZR array pair | `PCB1.0_SPI/Teensy_SPI_Master_Array_PZT_PZR1.ino` + `PCB1.0_SPI/MG24_Dual_MUX_SPI_Slave.ino` | Legacy board revision v1.0 | `# Array_PZT_PZR1` |
 | Teensy + MG24 SPI (PCB1.5) | Mixed PZT/PZR array pair with DRDY | `PCB1.5_SPI/Teensy_SPI_Master_Array_PZT_PZR1.5_DRDY.ino` + `PCB1.5_SPI/MG24_Dual_MUX_SPI_Slave1.5_DRDY.ino` | Current board revision v1.5, DRDY-synchronized streaming | `# Array_PZT_PZR1` |
 | Teensy + MG24 SPI (PCB1.7) | Mixed PZT/PZR/RS array pair with DRDY and combined mode | `PCB1.7_SPI/Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY.ino` + `PCB1.7_SPI/MG24_Dual_MUX_SPI_Slave1.7_DRDY.ino` | PCB v1.7 with `PZT_RS` combined stream (`PZT_CH1`...`PZT_CH5`,`RS1_hold`,`RS2_hold`) per selected PZT sensor | `# Array_PZT_PZR1.7` |
-| Teensy + MG24 SPI (PCB1.7 library-backed) | Library-backed PCB v1.7 pair with DRDY and combined mode | `PCB1.7_with_libraries/Teensy/Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY_Modular.ino` + `PCB1.7_with_libraries/MG24/MG24_Dual_MUX_SPI_Slave1.7_DRDY_Modular.ino` | PCB v1.7 with the same `PZT_RS` behavior packaged as sketch-local libraries | `# Array_PZT_PZR1.7` |
+| Teensy + MG24 SPI (PCB1.7 library-backed) | Library-backed PCB v1.7 pair with DRDY and combined mode | `PCB1.7_with_libraries/Teensy/Teensy.ino` + `PCB1.7_with_libraries/MG24/MG24.ino` | PCB v1.7 with the same `PZT_RS` behavior packaged as sketch-local libraries | `# Array_PZT_PZR1.7` |
+| Teensy 4.1 + ADS7953 test board | Four ADS7953 ADCs on two SPI buses | `PCB_TestBoard_7953/PCB_TestBoard_7953.ino` | Two selectable sensor arrays with sparse lane routing and three scan orders; optional future 555/PZR module | `# PCB_TestBoard_7953` |
 
 ## Which Sketch Should You Flash
 
@@ -33,6 +35,7 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 - Use `Teensy/Teensy555_streamer/` when the GUI is being used in 555 / displacement mode.
 - Use `PCB1.7_SPI/` for PCB v1.7 hardware, including the combined `PZT_RS` mode (recommended for v1.7).
 - Use `PCB1.7_with_libraries/` when you want the PCB v1.7 pair in the library-backed sketch layout.
+- Use `PCB_TestBoard_7953/` for the Teensy 4.1 test board with four ADS7953 ADCs.
 - Use `PCB1.5_SPI/` for PCB v1.5 dual-board array hardware.
 - Use `PCB1.0_SPI/` only for legacy PCB v1.0 hardware.
 
@@ -200,6 +203,28 @@ mcu*
 help*
 ```
 
+### PCB TestBoard 7953 routing commands
+
+`PCB_TestBoard_7953` adds lane-aware commands while retaining the common frame:
+
+```text
+array 1*                       # ADC1 + ADC2
+array 2*                       # ADC3 + ADC4
+array both*                    # both physical arrays
+scanorder interleaved*         # round-robin across all enabled ADCs
+scanorder array*               # finish ADC1/2, then ADC3/4
+scanorder adc*                 # finish each ADC before the next ADC
+adcchannels 1:0,1:1,2:10*     # explicit ADC-lane/input routes
+vmid 15*                       # park each ADC on input 15 after its data read
+vmid false*                    # disable Vmid parking
+```
+
+The desktop app creates `adcchannels` from its fixed TestBoard wiring profile
+and the user's Physical Arrays + PZT Sensors selection. There is no TestBoard
+`channels`, `repeat`, or `buffer` PZT command: every route is sampled once and
+every frame contains one sweep. `ground` remains an alias for `vmid`; Vmid
+conversions are discarded and never change the binary sample count.
+
 ## Binary Block Format
 
 The standard streamer sketches emit framed binary blocks on the same port while capture is active.
@@ -224,6 +249,10 @@ Notes on sample payload meaning:
 
 - For the standard ADC streamer sketches (MG24, Teensy, PCB SPI array sketches), each `uint16` sample is a raw ADC reading.
 - For `Teensy/Teensy555_streamer/`, each `uint16` sample is instead an `Rx` resistance value in ohms (rounded and clamped to `0..65535`), not a raw ADC reading.
+- For `PCB_TestBoard_7953`, each payload word belongs to one explicitly routed
+  `ADC:channel` pair. `scanorder interleaved|array|adc` determines payload order;
+  ADC1/2 are array 1 and ADC3/4 are array 2. The host sends and mirrors the same
+  sparse route plan, so unrequested ADC inputs are not converted or transmitted.
 - The legacy `legacy/MG24/ADC_Streamer_binary_buffer/` sketch uses a shorter trailer (`avg_dt_us` only, no `block_start_us`/`block_end_us`); see `legacy/MG24/ADC_Streamer_binary_buffer/README.md` for details.
 
 ### PCB1.7 `PZT_RS` Combined Payload
@@ -263,6 +292,10 @@ Example with `channels 14,14,15*`, `repeat 2*`:
 ```text
 ch14 s1, ch14 s2, ch14 s3, ch14 s4, ch15 s1, ch15 s2
 ```
+
+For `PCB_TestBoard_7953`, the configured scan order replaces this generic
+channel order. Each route emits one sample, and each frame contains every
+active route exactly once.
 
 ## Host Integration Notes
 
