@@ -29,7 +29,6 @@ from data_processing.normal_force_calculator import NormalForceCalculator
 from data_processing.pzt_force_calculation import (
     PztChannelPhysicalParams,
     PztForceChannelIntegrator,
-    calculate_pzt_force_from_settings,
     compute_pzt_force_rate_series,
     estimate_pzt_quiet_baseline,
     pzt_capacitance_to_farads,
@@ -41,8 +40,6 @@ from data_processing.signal_integrator import SignalIntegrator
 
 ANALYSIS_TIMESTAMP_COLUMNS = {"timestamp", "timestamp_s"}
 ANALYSIS_FORCE_COLUMNS = {"force_x", "force_z", "force_x_n", "force_z_n"}
-_PZT_CHANNEL_FORCE_LABEL_PREFIX = "PZT Channel Force - "
-_PZT_CHANNEL_FORCE_LABEL_SUFFIX = " [N]"
 
 
 @dataclass(slots=True)
@@ -365,28 +362,10 @@ def prepare_analysis_data(
             snapshot,
             pzt_force_settings or {},
         )
-        pzt_channel_force_traces = build_calculated_pzt_force_traces(
-            snapshot,
-            x_base,
-            time_base_s,
-            voltage_by_label,
-            pzt_force_settings or {},
-            leak_dt_s=pzt_leak_dt_s,
-            pre_sample_decay_dt_s_by_label=pzt_pre_sample_decay_by_label,
-        )
-        # "PZT Channel Force" (settings["enabled"]) only controls whether
-        # these 5 raw per-channel curves are DISPLAYED. Shear Force / Normal
-        # Force (below) never consumes these already-accumulated arrays --
-        # it recomputes its own per-channel force RATE -- but it does reuse
-        # the same resolved MUX leak timing (pzt_leak_dt_s /
-        # pzt_pre_sample_decay_by_label, above), which is itself only ever
-        # resolved when "enabled" is set. See build_force_based_shear_normal_traces.
-        if bool((pzt_force_settings or {}).get("enabled", False)):
-            force_traces.extend(pzt_channel_force_traces)
         if pzt_timing_status:
             status_parts.append(pzt_timing_status)
     except Exception as exc:
-        status_parts.append(f"PZT force skipped: {exc}")
+        status_parts.append(f"PZT force timing skipped: {exc}")
     try:
         force_traces.extend(
             build_force_based_shear_normal_traces(
@@ -415,76 +394,17 @@ def prepare_analysis_data(
     return AnalysisPreparedData(traces, force_traces, overlays, x_label, x_units, " | ".join(status_parts))
 
 
-def build_calculated_pzt_force_traces(
-    snapshot: AnalysisSourceSnapshot,
-    x_base,
-    time_base_s,
-    voltage_by_label: Mapping[str, np.ndarray],
-    settings: Mapping[str, object],
-    *,
-    leak_dt_s=None,
-    pre_sample_decay_dt_s_by_label: Mapping[str, float] | None = None,
-) -> list[AnalysisTrace]:
-    """Compute per-channel PZT force traces unconditionally.
-
-    The "PZT Channel Force" checkbox (``settings["enabled"]``) no longer
-    gates computation here — Shear Force / Normal Force needs these
-    per-channel accumulated-force arrays even when the checkbox is off, since
-    that checkbox now only controls whether the caller displays these raw
-    per-channel traces. See ``prepare_analysis_data``.
-    """
-    channel_calibration = settings.get("channel_calibration", {})
-    if not isinstance(channel_calibration, Mapping):
-        channel_calibration = {}
-
-    traces: list[AnalysisTrace] = []
-    for label, column in iter_analysis_signal_columns(snapshot):
-        if label not in voltage_by_label:
-            continue
-        if _is_resistance_like_label(label):
-            continue
-        if column >= snapshot.samples_per_sweep:
-            continue
-
-        x_values = np.asarray(x_base[:, column], dtype=np.float64)
-        time_s = np.asarray(time_base_s[:, column], dtype=np.float64)
-        calibration = channel_calibration.get(label, {})
-        if not isinstance(calibration, Mapping):
-            calibration = {}
-        # noise_threshold_v is intentionally NOT taken from per-channel
-        # calibration: that value is only ever refreshed by clicking
-        # "Calculate Baseline" (gui/analysis_panel.py), so passing it here
-        # would silently freeze Shear/Normal Force against the live
-        # noise-threshold spinbox the moment baseline calibration has run
-        # once. vmid_v has no live UI override, so it keeps using the
-        # per-channel calibration estimate.
-        force_n = calculate_pzt_force_from_settings(
-            voltage_by_label[label],
-            time_s,
-            settings,
-            sensor_position=_pzt_sensor_position(label),
-            vmid_v=_optional_float(calibration.get("vmid_v")),
-            leak_dt_s=leak_dt_s,
-            pre_sample_decay_dt_s=(pre_sample_decay_dt_s_by_label or {}).get(label),
-        )
-        traces.append(AnalysisTrace(f"{_PZT_CHANNEL_FORCE_LABEL_PREFIX}{label}{_PZT_CHANNEL_FORCE_LABEL_SUFFIX}", x_values, force_n, "force"))
-    return traces
-
-
-def _pzt_sensor_position(label: str) -> str:
-    """Return the PZT package position encoded by an exported channel label."""
-    _prefix, _separator, suffix = str(label).rpartition("_")
-    return "C" if suffix.strip().upper() == "C" else "outer"
-
-
 def resolve_analysis_pzt_mux_leak_dt_s(
     snapshot: AnalysisSourceSnapshot,
     settings: Mapping[str, object],
 ) -> tuple[float | None, str]:
-    """Resolve MUX-connected leak exposure for calculated Analysis PZT force."""
-    if not bool(settings.get("enabled", False)):
-        return None, ""
+    """Resolve MUX-connected leak exposure for Shear Force / Normal Force.
 
+    Feeds ``_compute_shear_normal_from_channel_rate``'s per-channel RC-charge
+    rate stage. "PZT Channel Force" (the standalone per-channel display
+    feature this used to also gate/feed) has been removed; resolution is now
+    unconditional on ``settings["mux_timing_mode"]`` alone.
+    """
     mode = _normalize_pzt_mux_timing_mode(settings.get("mux_timing_mode", "auto"))
     if mode == "continuous":
         return None, "PZT MUX timing: Continuous leak uses full trace dt."
@@ -515,10 +435,9 @@ def resolve_analysis_pzt_pre_sample_decay_dt_s(
     """Return exact per-label PZT pre-sample decay from the physical MUX map.
 
     Unknown mappings intentionally receive no correction; column position is
-    not a physical ADC-input mapping.
+    not a physical ADC-input mapping. Feeds Shear Force / Normal Force;
+    unconditional now that "PZT Channel Force" no longer gates it.
     """
-    if not bool(settings.get("enabled", False)):
-        return {}
     metadata = snapshot.metadata if isinstance(snapshot.metadata, Mapping) else {}
     timing = metadata.get("timing", {}) if isinstance(metadata, Mapping) else {}
     if not isinstance(timing, Mapping):
@@ -1061,6 +980,23 @@ def _new_shear_normal_force_integrator(
     keys used by PZT Channel Force — Shear and Normal residuals differ enough
     in typical magnitude that one shared volt/newton threshold isn't right
     for both.
+
+    ``accumulate_raw=True``: the combined shear/normal jerk series fed to this
+    integrator is already a physically-converted force RATE (each channel's
+    own ``compute_pzt_force_rate_series`` output, linearly combined) — NOT a
+    voltage. Without this flag ``process_centered_sample`` would re-run the
+    RC charge-to-force formula on an already-converted value, a second
+    Farad/(Coulomb/Newton) conversion that is dimensionally wrong.
+
+    KNOWN ISSUE, not fixed here: ``shear_force_noise_threshold_v`` /
+    ``normal_force_noise_threshold_v`` / ``*_zero_band_min_n`` /
+    ``*_zero_min_event_peak_n`` in ``constants.pzt_force`` are volt-tuned
+    constants (e.g. 0.01-0.05) left over from when this stage's input was a
+    voltage. They now gate/compare against a genuine force-RATE value in
+    newtons, a different physical quantity at a different scale, and have
+    not been retuned. Until real-capture calibration determines correct
+    values, treat Shear Force / Normal Force's noise gating, natural-zero,
+    and stuck-force behavior as unvalidated.
     """
     supplied = dict(settings or {})
     resolved = {**PZT_FORCE_DEFAULT_SETTINGS, **supplied}
@@ -1082,6 +1018,7 @@ def _new_shear_normal_force_integrator(
         d33_c_per_n=d33_c_per_n,
         noise_threshold_v=_shear_normal_role_threshold(supplied, resolved, role, "noise_threshold_v"),
         off_mux_rleak_ohm=off_mux_rleak_ohm,
+        accumulate_raw=True,
         force_zero_band_fraction=float(resolved["force_zero_band_fraction"]),
         force_zero_band_min_n=_shear_normal_role_threshold(supplied, resolved, role, "force_zero_band_min_n"),
         force_zero_min_event_peak_n=_shear_normal_role_threshold(

@@ -612,3 +612,61 @@ class TestComputePztForceRateSeries:
             deltas.append(step.delta_force_n)
 
         assert rate == pytest.approx(deltas, abs=1e-12)
+
+
+class TestAccumulateRaw:
+    """``accumulate_raw=True`` is used by Shear/Normal Force's final stage,
+    whose input is already a physically-converted force (the combined output
+    of several channels' own ``compute_pzt_force_rate_series``) -- it must
+    accumulate that value directly, never re-run the RC charge-to-force
+    conversion on top of an already-converted quantity.
+    """
+
+    def test_accumulates_plain_sum_not_a_second_charge_conversion(self):
+        # Values are already "force", e.g. a combined shear/normal jerk
+        # series -- with accumulate_raw=True the accumulator must just be a
+        # running sum of these, not (C/d33)*correction*(x[n]-alpha*x[n-1]).
+        # The first sample only establishes state (matches
+        # process_centered_sample's convention for every integrator), so the
+        # running sum starts accumulating from the second sample onward.
+        values = [0.025, -0.00003, 0.001]
+        times = [0.0, 0.01, 0.02]
+        integ = PztForceChannelIntegrator(
+            **{**KWARGS, "noise_threshold_v": 0.0},
+            self_reset_enabled=False,
+            stuck_force_failsafe_enabled=False,
+            accumulate_raw=True,
+        )
+        accumulated = [
+            integ.process_centered_sample(v, t).accumulated_force_n for v, t in zip(values, times)
+        ]
+
+        expected = [0.0, values[1], values[1] + values[2]]
+        assert accumulated == pytest.approx(expected, abs=1e-12)
+
+    def test_accumulate_raw_still_runs_hysteresis_and_natural_zero(self):
+        # accumulate_raw only swaps the increment formula -- thresholding,
+        # hysteresis, and the natural-zero/reset event machine must still
+        # fire exactly as they do for a normal (charge-converted) integrator.
+        # First sample only establishes state; peak builds to 0.06 over the
+        # next two, then the fourth sample cancels the accumulator back to
+        # within its natural-zero band.
+        values = [0.03, 0.03, 0.03, -0.0598]
+        times = [0.0, 0.01, 0.02, 0.03]
+        integ = PztForceChannelIntegrator(
+            capacitance_f=150e-12,
+            rleak_ohm=1e6,
+            d33_c_per_n=600e-12,
+            noise_threshold_v=0.001,
+            force_zero_min_event_peak_n=0.02,
+            force_zero_band_min_n=0.002,
+            accumulate_raw=True,
+        )
+        results = [integ.process_centered_sample(v, t) for v, t in zip(values, times)]
+
+        assert results[0].accumulated_force_n == pytest.approx(0.0)
+        assert results[1].accumulated_force_n == pytest.approx(0.03)
+        assert results[2].accumulated_force_n == pytest.approx(0.06)
+        # Fourth sample cancels the accumulator back near zero -> natural zero.
+        assert results[3].natural_zero_occurred is True
+        assert results[3].accumulated_force_n == 0.0

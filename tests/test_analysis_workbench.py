@@ -447,36 +447,11 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         self.assertIn("vmid_v", estimates["PZT6_C"])
         self.assertIn("noise_threshold_v", estimates["PZT6_C"])
 
-    def test_prepare_analysis_data_adds_calculated_pzt_force_for_visible_voltage_channels(self):
-        snapshot = AnalysisSourceSnapshot(
-            data=np.asarray([[1000, 474.6], [1200, 475.0], [1000, 474.8]], dtype=np.float32),
-            timestamps_s=np.asarray([0.0, 0.01, 0.02], dtype=np.float64),
-            channel_labels=["PZT6_C", "PZT6_RS1"],
-            metadata={"configuration": {"channels": [1, 2], "repeat_count": 1}},
-            source_id="unit",
-            sample_rate_hz=200.0,
-        )
-
-        prepared = prepare_analysis_data(
-            snapshot,
-            visible_labels=["PZT6_C"],
-            vref_voltage=3.3,
-            pzt_force_settings={
-                "enabled": True,
-                "capacitance_value": 1.0,
-                "capacitance_unit": "nF",
-                "rleak_ohm": 1e9,
-                "d33_pc_per_n": 600.0,
-                "noise_threshold_v": 0.01,
-                "mux_timing_mode": "manual",
-                "mux_connected_time_s": 0.001,
-            },
-        )
-
-        self.assertEqual([trace.label for trace in prepared.force_traces], ["PZT Channel Force - PZT6_C [N]"])
-        self.assertEqual(len(prepared.force_traces[0].y), 3)
-
-    def test_prepare_analysis_data_skips_pzt_force_when_auto_mux_timing_unavailable(self):
+    def test_prepare_analysis_data_reports_pzt_timing_failure_without_raising(self):
+        # "PZT Channel Force" (the standalone per-channel display) is gone --
+        # only MUX leak-timing resolution remains here, feeding Shear/Normal
+        # Force. An unavailable auto-mode timing source must surface as a
+        # status message, not raise out of prepare_analysis_data.
         snapshot = AnalysisSourceSnapshot(
             data=np.asarray([[1000], [1200]], dtype=np.float32),
             timestamps_s=np.asarray([0.0, 0.01], dtype=np.float64),
@@ -491,7 +466,6 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             visible_labels=["PZT6_C"],
             vref_voltage=3.3,
             pzt_force_settings={
-                "enabled": True,
                 "capacitance_value": 1.0,
                 "capacitance_unit": "nF",
                 "rleak_ohm": 1e9,
@@ -501,8 +475,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(prepared.force_traces, [])
-        self.assertIn("PZT force skipped", prepared.status)
+        self.assertIn("PZT force timing skipped", prepared.status)
 
     def test_resolve_analysis_pzt_mux_leak_dt_prefers_metadata_timing(self):
         snapshot = AnalysisSourceSnapshot(
@@ -644,34 +617,6 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         )
 
         self.assertAlmostEqual(center_force[-1], outer_force[-1] * 2.0, places=12)
-
-    def test_analysis_force_traces_assign_center_and_outer_capacitances_by_label(self):
-        snapshot = AnalysisSourceSnapshot(
-            data=np.asarray([[0, 0], [200, 200]], dtype=np.float32),
-            timestamps_s=np.asarray([0.0, 0.01], dtype=np.float64),
-            channel_labels=["PZT6_C", "PZT6_L"],
-            metadata={"configuration": {"channels": [1, 2], "repeat_count": 1}},
-            source_id="unit",
-            sample_rate_hz=200.0,
-        )
-        prepared = prepare_analysis_data(
-            snapshot,
-            visible_labels=["PZT6_C", "PZT6_L"],
-            vref_voltage=3.3,
-            pzt_force_settings={
-                "enabled": True,
-                "center_capacitance_value": 2.0,
-                "outer_capacitance_value": 1.0,
-                "capacitance_unit": "nF",
-                "rleak_ohm": 1e12,
-                "d33_pc_per_n": 600.0,
-                "noise_threshold_v": 0.0,
-                "mux_timing_mode": "continuous",
-            },
-        )
-
-        center_force, outer_force = (trace.y[-1] for trace in prepared.force_traces)
-        np.testing.assert_allclose(center_force, outer_force * 2.0, rtol=1e-5)
 
     def test_pzt_force_settings_legacy_capacitance_applies_to_both_positions(self):
         settings = {
@@ -961,6 +906,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
                 rleak_ohm=pzt_force_settings["rleak_ohm"],
                 d33_c_per_n=pzt_force_settings["d33_pc_per_n"] * 1e-12,
                 noise_threshold_v=pzt_force_settings["noise_threshold_v"],
+                accumulate_raw=True,
             )
             for row, value in enumerate(series):
                 step = integrator.process_centered_sample(float(value), float(snapshot.timestamps_s[row]))
@@ -1294,7 +1240,11 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         self.assertIn("Shear Force / Normal Force skipped", prepared.status)
         self.assertNotIn("Normal Force [N]", {trace.label for trace in prepared.force_traces})
 
-    def test_force_based_shear_normal_traces_independent_of_pzt_channel_force_display_toggle(self):
+    def test_force_based_shear_normal_traces_no_longer_expose_pzt_channel_force(self):
+        """"PZT Channel Force" was removed as a standalone display feature --
+        Normal Force still computes and displays on its own, and no
+        "PZT Channel Force - ..." trace is ever produced, regardless of the
+        (now-unused) ``enabled`` settings key."""
         snapshot = AnalysisSourceSnapshot(
             data=np.asarray(
                 [[200, 300, -300, 100, -100], [260, 500, -420, 140, -140]], dtype=np.float32
@@ -1306,7 +1256,6 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             sample_rate_hz=100.0,
         )
         pzt_force_settings = {
-            "enabled": True,
             "mux_timing_mode": "continuous",
             "center_capacitance_value": 150.0,
             "outer_capacitance_value": 150.0,
@@ -1315,8 +1264,6 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             "d33_pc_per_n": 600.0,
             "noise_threshold_v": 0.0,
         }
-        # With "PZT Channel Force" enabled, Normal Force and the per-channel
-        # PZT Channel Force traces are both present.
         prepared = prepare_analysis_data(
             snapshot, axis_mode="samples",
             overlay_flags={"normal_force": True}, vref_voltage=3.3,
@@ -1324,22 +1271,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         )
         force_labels = {trace.label for trace in prepared.force_traces}
         self.assertIn("Normal Force [N]", force_labels)
-        self.assertIn("PZT Channel Force - C [N]", force_labels)
-
-        # With "PZT Channel Force" disabled, Normal Force still computes and
-        # displays (it only needed the underlying accumulated-force
-        # computation, not the display checkbox) — but the raw per-channel
-        # "PZT Channel Force - ..." traces are correctly hidden, since that
-        # checkbox still controls their own display.
-        disabled_settings = dict(pzt_force_settings, enabled=False)
-        prepared_disabled = prepare_analysis_data(
-            snapshot, axis_mode="samples",
-            overlay_flags={"normal_force": True}, vref_voltage=3.3,
-            pzt_force_settings=disabled_settings,
-        )
-        disabled_force_labels = {trace.label for trace in prepared_disabled.force_traces}
-        self.assertIn("Normal Force [N]", disabled_force_labels)
-        self.assertNotIn("PZT Channel Force - C [N]", disabled_force_labels)
+        self.assertFalse(any(label.startswith("PZT Channel Force") for label in force_labels))
 
     def test_prepare_analysis_data_builds_integration_for_generic_channel_labels(self):
         snapshot = AnalysisSourceSnapshot(

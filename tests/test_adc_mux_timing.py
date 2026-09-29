@@ -1,5 +1,4 @@
 import json
-from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -17,7 +16,6 @@ from data_processing.adc_mux_timing import (
 )
 from data_processing.analysis_workbench import (
     AnalysisSourceSnapshot,
-    build_calculated_pzt_force_traces,
     resolve_analysis_pzt_pre_sample_decay_dt_s,
     resolve_analysis_pzt_mux_leak_dt_s,
 )
@@ -421,33 +419,6 @@ def test_analysis_force_auto_mode_uses_calculated_sensor_connected_duration():
 
     assert leak_dt_s == pytest.approx(timing.sensor_connected_s)
     assert "t_connected_s" in status
-
-
-def test_force_calculation_receives_calculated_sensor_connected_duration():
-    timing = calculate()
-    snapshot = AnalysisSourceSnapshot(
-        data=np.asarray([[1.0], [2.0]]),
-        timestamps_s=np.asarray([0.0, 0.1]),
-        channel_labels=["PZT1_C"],
-    )
-    with patch("data_processing.analysis_workbench.calculate_pzt_force_from_settings") as force_calculation:
-        force_calculation.return_value = np.zeros(2)
-        build_calculated_pzt_force_traces(
-            snapshot,
-            np.asarray([[0.0], [0.1]]),
-            np.asarray([[0.0], [0.1]]),
-            {"PZT1_C": np.asarray([1.0, 1.1])},
-            {"enabled": True},
-            leak_dt_s=timing.sensor_connected_s,
-            pre_sample_decay_dt_s_by_label={
-                "PZT1_C": timing.decay_before_effective_sample_s(adc_input=2),
-            },
-        )
-
-    assert force_calculation.call_args.kwargs["leak_dt_s"] == pytest.approx(timing.sensor_connected_s)
-    assert force_calculation.call_args.kwargs["pre_sample_decay_dt_s"] == pytest.approx(
-        timing.decay_before_effective_sample_s(adc_input=2)
-    )
 
 
 def test_force_pre_sample_decay_uses_explicit_physical_mux_mapping():

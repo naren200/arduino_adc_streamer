@@ -227,6 +227,16 @@ class PztForceChannelIntegrator:
     d33_c_per_n: float
     noise_threshold_v: float
     off_mux_rleak_ohm: float | None = None
+    # When True, ``process_centered_sample`` skips the RC charge-to-force
+    # conversion entirely and accumulates ``sample_voltage`` verbatim --
+    # for callers whose input is already a physically-converted force
+    # (e.g. Shear/Normal Force combining several channels' own
+    # ``compute_pzt_force_rate_series`` outputs, which would otherwise be
+    # charge-converted a second time on top of an already-converted value).
+    # Every other piece of state machinery (thresholding, hysteresis,
+    # natural-zero/fallback reset, stuck-force fail-safe) is unchanged --
+    # only the per-sample increment formula is swapped out.
+    accumulate_raw: bool = False
     # When False (the live package engine, `pressure_force_display.py`), the
     # integrator still runs the full event/stuck machinery and reports its
     # conditions, but never zeroes its own accumulator; the caller decides
@@ -398,19 +408,26 @@ class PztForceChannelIntegrator:
         sample_voltage = voltage if (is_active_sample or hysteresis_active) else 0.0
 
         prior_force = self.accumulated_force_n
-        self.accumulated_force_n += float(_pzt_charge_delta_force(
-            PztChannelPhysicalParams(
-                capacitance_f=float(self.capacitance_f),
-                rleak_ohm=float(self.rleak_ohm),
-                d33_c_per_n=float(self.d33_c_per_n),
-                off_mux_rleak_ohm=None if self.off_mux_rleak_ohm is None else float(self.off_mux_rleak_ohm),
-            ),
-            self.previous_centered_voltage_v,
-            sample_voltage,
-            leak_dt_s=leak_dt,
-            wall_dt_s=wall_dt,
-            pre_sample_decay_dt_s=pre_sample_dt,
-        ))
+        if self.accumulate_raw:
+            # sample_voltage is already a physically-converted force
+            # contribution (see ``accumulate_raw`` field docstring) -- add it
+            # directly rather than re-running the charge-to-force formula.
+            increment = sample_voltage
+        else:
+            increment = float(_pzt_charge_delta_force(
+                PztChannelPhysicalParams(
+                    capacitance_f=float(self.capacitance_f),
+                    rleak_ohm=float(self.rleak_ohm),
+                    d33_c_per_n=float(self.d33_c_per_n),
+                    off_mux_rleak_ohm=None if self.off_mux_rleak_ohm is None else float(self.off_mux_rleak_ohm),
+                ),
+                self.previous_centered_voltage_v,
+                sample_voltage,
+                leak_dt_s=leak_dt,
+                wall_dt_s=wall_dt,
+                pre_sample_decay_dt_s=pre_sample_dt,
+            ))
+        self.accumulated_force_n += increment
 
         natural_zero_occurred = False
         fallback_reset_occurred = False

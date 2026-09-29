@@ -61,7 +61,6 @@ from data_processing.analysis_labels import (
 from data_processing.analysis_workbench import (
     AnalysisPreparedData,
     AnalysisSourceSnapshot,
-    _PZT_CHANNEL_FORCE_LABEL_PREFIX,
     build_in_memory_snapshot,
     build_snapshot_from_archive,
     estimate_analysis_pzt_force_calibration,
@@ -286,9 +285,6 @@ class AnalysisPanelMixin:
         self.analysis_integration_check = QCheckBox("Integration")
         self.analysis_integration_check.stateChanged.connect(self.on_analysis_settings_changed)
         controls_layout.addWidget(self.analysis_integration_check, 1, 3)
-        self.analysis_pzt_force_check = QCheckBox("PZT Channel Force")
-        self.analysis_pzt_force_check.stateChanged.connect(self.on_analysis_settings_changed)
-        controls_layout.addWidget(self.analysis_pzt_force_check, 1, 4, 1, 2)
         self.analysis_marker_check = QCheckBox("Marker")
         self.analysis_marker_check.setChecked(True)
         self.analysis_marker_check.stateChanged.connect(self.on_analysis_marker_toggled)
@@ -638,7 +634,7 @@ class AnalysisPanelMixin:
         self.analysis_shear_force_noise_spin.setSuffix(" V")
         self.analysis_shear_force_noise_spin.setToolTip(
             "Noise threshold used only by the Shear Force L/R and T/B integrators, "
-            "independent of the PZT Channel Force Noise threshold above."
+            "independent of the shared PZT Force Noise threshold above."
         )
         self.analysis_shear_force_noise_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_shear_force_noise_spin, 10, 1)
@@ -651,7 +647,7 @@ class AnalysisPanelMixin:
         self.analysis_normal_force_noise_spin.setSuffix(" V")
         self.analysis_normal_force_noise_spin.setToolTip(
             "Noise threshold used only by the Normal Force integrator, independent of "
-            "the PZT Channel Force Noise threshold above."
+            "the shared PZT Force Noise threshold above."
         )
         self.analysis_normal_force_noise_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_normal_force_noise_spin, 10, 3)
@@ -664,7 +660,7 @@ class AnalysisPanelMixin:
         self.analysis_shear_force_zero_floor_spin.setSuffix(" N")
         self.analysis_shear_force_zero_floor_spin.setToolTip(
             "Zero-band floor (N) used only by the Shear Force integrators, independent "
-            "of the PZT Channel Force Zero floor above."
+            "of the shared PZT Force Zero floor above."
         )
         self.analysis_shear_force_zero_floor_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_shear_force_zero_floor_spin, 11, 1)
@@ -677,7 +673,7 @@ class AnalysisPanelMixin:
         self.analysis_normal_force_zero_floor_spin.setSuffix(" N")
         self.analysis_normal_force_zero_floor_spin.setToolTip(
             "Zero-band floor (N) used only by the Normal Force integrator, independent "
-            "of the PZT Channel Force Zero floor above."
+            "of the shared PZT Force Zero floor above."
         )
         self.analysis_normal_force_zero_floor_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_normal_force_zero_floor_spin, 11, 3)
@@ -690,7 +686,7 @@ class AnalysisPanelMixin:
         self.analysis_shear_force_min_event_peak_spin.setSuffix(" N")
         self.analysis_shear_force_min_event_peak_spin.setToolTip(
             "Minimum event peak (N) used only by the Shear Force integrators, "
-            "independent of the PZT Channel Force Min event peak above."
+            "independent of the shared PZT Force Min event peak above."
         )
         self.analysis_shear_force_min_event_peak_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_shear_force_min_event_peak_spin, 12, 1)
@@ -703,7 +699,7 @@ class AnalysisPanelMixin:
         self.analysis_normal_force_min_event_peak_spin.setSuffix(" N")
         self.analysis_normal_force_min_event_peak_spin.setToolTip(
             "Minimum event peak (N) used only by the Normal Force integrator, "
-            "independent of the PZT Channel Force Min event peak above."
+            "independent of the shared PZT Force Min event peak above."
         )
         self.analysis_normal_force_min_event_peak_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_normal_force_min_event_peak_spin, 12, 3)
@@ -868,7 +864,6 @@ class AnalysisPanelMixin:
             self.analysis_shear_force_check.setChecked(bool(overlays.get("shear_force", False)))
             self.analysis_normal_force_check.setChecked(bool(overlays.get("normal_force", False)))
             pzt_force = state.get("pzt_force", {})
-            self.analysis_pzt_force_check.setChecked(bool(pzt_force.get("enabled", False)))
             legacy_capacitance = pzt_force.get("capacitance_value", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"])
             self.analysis_pzt_center_capacitance_spin.setValue(float(pzt_force.get("center_capacitance_value", legacy_capacitance)))
             self.analysis_pzt_outer_capacitance_spin.setValue(float(pzt_force.get("outer_capacitance_value", legacy_capacitance)))
@@ -1186,7 +1181,6 @@ class AnalysisPanelMixin:
         }
         pzt_force = dict(self.analysis_state.get("pzt_force", {}))
         pzt_force.update({
-            "enabled": bool(self.analysis_pzt_force_check.isChecked()),
             "center_capacitance_value": float(self.analysis_pzt_center_capacitance_spin.value()),
             "outer_capacitance_value": float(self.analysis_pzt_outer_capacitance_spin.value()),
             "capacitance_unit": str(self.analysis_pzt_capacitance_unit_combo.currentText()),
@@ -1708,20 +1702,7 @@ class AnalysisPanelMixin:
         return body
 
     def _analysis_force_trace_color(self, trace_label: str, index: int):
-        source_label = self._analysis_calculated_force_source_label(trace_label)
-        if source_label:
-            return self.analysis_trace_colors.get(source_label, PLOT_COLORS[index % len(PLOT_COLORS)])
         return PLOT_COLORS[(index + 2) % len(PLOT_COLORS)]
-
-    def _analysis_calculated_force_source_label(self, trace_label: str) -> str | None:
-        prefix = "PZT Channel Force - "
-        suffix = " ["
-        if not trace_label.startswith(prefix):
-            return None
-        body = trace_label[len(prefix):]
-        if suffix in body:
-            body = body.split(suffix, 1)[0]
-        return body or None
 
     def _sync_analysis_force_trace_checks(self, force_traces):
         existing = set(self.analysis_force_checks)
@@ -1734,8 +1715,7 @@ class AnalysisPanelMixin:
         self.analysis_force_checks = {}
         for label in desired:
             check = QCheckBox(label)
-            default_visible = not label.startswith(_PZT_CHANNEL_FORCE_LABEL_PREFIX)
-            check.setChecked(bool(saved_visibility.get(label, default_visible)))
+            check.setChecked(bool(saved_visibility.get(label, True)))
             check.stateChanged.connect(self.on_analysis_settings_changed)
             self.analysis_force_checks[label] = check
         self._relayout_analysis_checkboxes()
