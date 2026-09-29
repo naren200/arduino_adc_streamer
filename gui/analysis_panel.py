@@ -31,7 +31,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -63,7 +62,6 @@ from data_processing.analysis_workbench import (
     AnalysisSourceSnapshot,
     build_in_memory_snapshot,
     build_snapshot_from_archive,
-    estimate_analysis_pzt_force_calibration,
     load_exported_csv_snapshot,
     prepare_analysis_data,
 )
@@ -93,7 +91,7 @@ class AnalysisPanelMixin:
                 "shear_force": False,
                 "normal_force": False,
             },
-            "pzt_force": {**ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS, "channel_calibration": {}},
+            "pzt_force": dict(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS),
             "visible_labels": {},
             "visible_force_labels": {},
             "csv_path": "",
@@ -435,36 +433,6 @@ class AnalysisPanelMixin:
         self.analysis_pzt_d33_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_d33_spin, 1, 3)
 
-        pzt_force_layout.addWidget(QLabel("Noise:"), 1, 4)
-        self.analysis_pzt_noise_spin = QDoubleSpinBox()
-        self.analysis_pzt_noise_spin.setRange(0.0, 1e6)
-        self.analysis_pzt_noise_spin.setDecimals(6)
-        self.analysis_pzt_noise_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"]))
-        self.analysis_pzt_noise_spin.setSuffix(" V")
-        self.analysis_pzt_noise_spin.valueChanged.connect(self.on_analysis_settings_changed)
-        pzt_force_layout.addWidget(self.analysis_pzt_noise_spin, 1, 5)
-
-        pzt_force_layout.addWidget(QLabel("Quiet:"), 2, 0)
-        self.analysis_pzt_quiet_duration_spin = QDoubleSpinBox()
-        self.analysis_pzt_quiet_duration_spin.setRange(0.0, 3600.0)
-        self.analysis_pzt_quiet_duration_spin.setDecimals(3)
-        self.analysis_pzt_quiet_duration_spin.setSuffix(" s")
-        self.analysis_pzt_quiet_duration_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["quiet_duration_s"]))
-        self.analysis_pzt_quiet_duration_spin.valueChanged.connect(self.on_analysis_settings_changed)
-        pzt_force_layout.addWidget(self.analysis_pzt_quiet_duration_spin, 2, 1)
-
-        pzt_force_layout.addWidget(QLabel("k:"), 2, 2)
-        self.analysis_pzt_noise_k_spin = QDoubleSpinBox()
-        self.analysis_pzt_noise_k_spin.setRange(0.0, 100.0)
-        self.analysis_pzt_noise_k_spin.setDecimals(3)
-        self.analysis_pzt_noise_k_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["noise_sigma_multiplier"]))
-        self.analysis_pzt_noise_k_spin.valueChanged.connect(self.on_analysis_settings_changed)
-        pzt_force_layout.addWidget(self.analysis_pzt_noise_k_spin, 2, 3)
-
-        self.analysis_pzt_calculate_baseline_btn = QPushButton("Calculate Vmid + Noise")
-        self.analysis_pzt_calculate_baseline_btn.clicked.connect(self.calculate_analysis_pzt_baseline)
-        pzt_force_layout.addWidget(self.analysis_pzt_calculate_baseline_btn, 2, 4)
-
         pzt_force_layout.addWidget(QLabel("MUX timing:"), 3, 0)
         self.analysis_pzt_mux_timing_combo = QComboBox()
         self.analysis_pzt_mux_timing_combo.addItems(list(PZT_FORCE_MUX_TIMING_MODES))
@@ -506,10 +474,6 @@ class AnalysisPanelMixin:
         self.analysis_export_csv_btn = QPushButton("Export Analysis CSV")
         self.analysis_export_csv_btn.clicked.connect(self.export_analysis_csv)
         pzt_force_layout.addWidget(self.analysis_export_csv_btn, 5, 4)
-        self.analysis_pzt_baseline_results = QPlainTextEdit()
-        self.analysis_pzt_baseline_results.setReadOnly(True)
-        self.analysis_pzt_baseline_results.setMaximumHeight(160)
-        pzt_force_layout.addWidget(self.analysis_pzt_baseline_results, 5, 0, 1, 4)
 
         self.analysis_pzt_stuck_failsafe_check = QCheckBox("Auto-clear stuck force")
         self.analysis_pzt_stuck_failsafe_check.setChecked(bool(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"]))
@@ -543,19 +507,6 @@ class AnalysisPanelMixin:
         self.analysis_pzt_stuck_hold_spin.setEnabled(self.analysis_pzt_stuck_failsafe_check.isChecked())
         self.analysis_pzt_stuck_tau_spin.setEnabled(self.analysis_pzt_stuck_failsafe_check.isChecked())
 
-        pzt_force_layout.addWidget(QLabel("Zero floor:"), 7, 0)
-        self.analysis_pzt_zero_floor_spin = QDoubleSpinBox()
-        self.analysis_pzt_zero_floor_spin.setRange(0.0, 1e6)
-        self.analysis_pzt_zero_floor_spin.setDecimals(4)
-        self.analysis_pzt_zero_floor_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"]))
-        self.analysis_pzt_zero_floor_spin.setSuffix(" N")
-        self.analysis_pzt_zero_floor_spin.setToolTip(
-            "Absolute floor (N) for the natural-zero band and the fail-safe snap band. A "
-            "residual at or below this magnitude is treated as fully released."
-        )
-        self.analysis_pzt_zero_floor_spin.valueChanged.connect(self.on_analysis_settings_changed)
-        pzt_force_layout.addWidget(self.analysis_pzt_zero_floor_spin, 7, 1)
-
         pzt_force_layout.addWidget(QLabel("Zero band:"), 7, 2)
         self.analysis_pzt_zero_band_fraction_spin = QDoubleSpinBox()
         self.analysis_pzt_zero_band_fraction_spin.setRange(0.0, 1.0)
@@ -568,20 +519,6 @@ class AnalysisPanelMixin:
         )
         self.analysis_pzt_zero_band_fraction_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_zero_band_fraction_spin, 7, 3)
-
-        pzt_force_layout.addWidget(QLabel("Min event peak:"), 7, 4)
-        self.analysis_pzt_min_event_peak_spin = QDoubleSpinBox()
-        self.analysis_pzt_min_event_peak_spin.setRange(0.0, 1e6)
-        self.analysis_pzt_min_event_peak_spin.setDecimals(4)
-        self.analysis_pzt_min_event_peak_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"]))
-        self.analysis_pzt_min_event_peak_spin.setSuffix(" N")
-        self.analysis_pzt_min_event_peak_spin.setToolTip(
-            "A press whose own peak force never reaches this magnitude is too small to "
-            "distinguish 'declined' from 'held', so it is released unconditionally as soon "
-            "as it goes quiet instead of waiting for the natural-zero/quiet-release check."
-        )
-        self.analysis_pzt_min_event_peak_spin.valueChanged.connect(self.on_analysis_settings_changed)
-        pzt_force_layout.addWidget(self.analysis_pzt_min_event_peak_spin, 7, 5)
 
         pzt_force_layout.addWidget(QLabel("Quiet release:"), 8, 0)
         self.analysis_pzt_quiet_release_spin = QDoubleSpinBox()
@@ -630,11 +567,12 @@ class AnalysisPanelMixin:
         self.analysis_shear_force_noise_spin = QDoubleSpinBox()
         self.analysis_shear_force_noise_spin.setRange(0.0, 1e6)
         self.analysis_shear_force_noise_spin.setDecimals(6)
-        self.analysis_shear_force_noise_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_noise_threshold_v"]))
-        self.analysis_shear_force_noise_spin.setSuffix(" V")
+        self.analysis_shear_force_noise_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_noise_threshold_n"]))
+        self.analysis_shear_force_noise_spin.setSuffix(" N")
         self.analysis_shear_force_noise_spin.setToolTip(
-            "Noise threshold used only by the Shear Force L/R and T/B integrators, "
-            "independent of the shared PZT Force Noise threshold above."
+            "Noise threshold (N) used only by the Shear Force L/R and T/B integrators, "
+            "gating the combined force-rate signal -- a placeholder pending real-capture "
+            "calibration, not a derived/validated value."
         )
         self.analysis_shear_force_noise_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_shear_force_noise_spin, 10, 1)
@@ -643,11 +581,12 @@ class AnalysisPanelMixin:
         self.analysis_normal_force_noise_spin = QDoubleSpinBox()
         self.analysis_normal_force_noise_spin.setRange(0.0, 1e6)
         self.analysis_normal_force_noise_spin.setDecimals(6)
-        self.analysis_normal_force_noise_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_noise_threshold_v"]))
-        self.analysis_normal_force_noise_spin.setSuffix(" V")
+        self.analysis_normal_force_noise_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_noise_threshold_n"]))
+        self.analysis_normal_force_noise_spin.setSuffix(" N")
         self.analysis_normal_force_noise_spin.setToolTip(
-            "Noise threshold used only by the Normal Force integrator, independent of "
-            "the shared PZT Force Noise threshold above."
+            "Noise threshold (N) used only by the Normal Force integrator, gating the "
+            "combined force-rate signal -- a placeholder pending real-capture "
+            "calibration, not a derived/validated value."
         )
         self.analysis_normal_force_noise_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_normal_force_noise_spin, 10, 3)
@@ -659,8 +598,7 @@ class AnalysisPanelMixin:
         self.analysis_shear_force_zero_floor_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_zero_band_min_n"]))
         self.analysis_shear_force_zero_floor_spin.setSuffix(" N")
         self.analysis_shear_force_zero_floor_spin.setToolTip(
-            "Zero-band floor (N) used only by the Shear Force integrators, independent "
-            "of the shared PZT Force Zero floor above."
+            "Zero-band floor (N) used only by the Shear Force integrators."
         )
         self.analysis_shear_force_zero_floor_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_shear_force_zero_floor_spin, 11, 1)
@@ -672,8 +610,7 @@ class AnalysisPanelMixin:
         self.analysis_normal_force_zero_floor_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_zero_band_min_n"]))
         self.analysis_normal_force_zero_floor_spin.setSuffix(" N")
         self.analysis_normal_force_zero_floor_spin.setToolTip(
-            "Zero-band floor (N) used only by the Normal Force integrator, independent "
-            "of the shared PZT Force Zero floor above."
+            "Zero-band floor (N) used only by the Normal Force integrator."
         )
         self.analysis_normal_force_zero_floor_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_normal_force_zero_floor_spin, 11, 3)
@@ -685,8 +622,7 @@ class AnalysisPanelMixin:
         self.analysis_shear_force_min_event_peak_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_zero_min_event_peak_n"]))
         self.analysis_shear_force_min_event_peak_spin.setSuffix(" N")
         self.analysis_shear_force_min_event_peak_spin.setToolTip(
-            "Minimum event peak (N) used only by the Shear Force integrators, "
-            "independent of the shared PZT Force Min event peak above."
+            "Minimum event peak (N) used only by the Shear Force integrators."
         )
         self.analysis_shear_force_min_event_peak_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_shear_force_min_event_peak_spin, 12, 1)
@@ -698,8 +634,7 @@ class AnalysisPanelMixin:
         self.analysis_normal_force_min_event_peak_spin.setValue(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_zero_min_event_peak_n"]))
         self.analysis_normal_force_min_event_peak_spin.setSuffix(" N")
         self.analysis_normal_force_min_event_peak_spin.setToolTip(
-            "Minimum event peak (N) used only by the Normal Force integrator, "
-            "independent of the shared PZT Force Min event peak above."
+            "Minimum event peak (N) used only by the Normal Force integrator."
         )
         self.analysis_normal_force_min_event_peak_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_normal_force_min_event_peak_spin, 12, 3)
@@ -870,9 +805,6 @@ class AnalysisPanelMixin:
             self.analysis_pzt_capacitance_unit_combo.setCurrentText(str(pzt_force.get("capacitance_unit", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"])))
             self.analysis_pzt_rleak_spin.setValue(float(pzt_force.get("rleak_ohm", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])))
             self.analysis_pzt_d33_spin.setValue(float(pzt_force.get("d33_pc_per_n", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["d33_pc_per_n"])))
-            self.analysis_pzt_noise_spin.setValue(float(pzt_force.get("noise_threshold_v", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"])))
-            self.analysis_pzt_quiet_duration_spin.setValue(float(pzt_force.get("quiet_duration_s", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["quiet_duration_s"])))
-            self.analysis_pzt_noise_k_spin.setValue(float(pzt_force.get("noise_sigma_multiplier", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["noise_sigma_multiplier"])))
             self._set_analysis_pzt_mux_timing_mode(str(pzt_force.get("mux_timing_mode", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["mux_timing_mode"])))
             self.analysis_pzt_mux_connected_ms_spin.setValue(
                 float(pzt_force.get("mux_connected_time_s", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["mux_connected_time_s"])) * 1000.0
@@ -892,14 +824,8 @@ class AnalysisPanelMixin:
             self.analysis_pzt_stuck_tau_spin.setValue(
                 float(pzt_force.get("stuck_force_decay_tau_s", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["stuck_force_decay_tau_s"]))
             )
-            self.analysis_pzt_zero_floor_spin.setValue(
-                float(pzt_force.get("force_zero_band_min_n", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"]))
-            )
             self.analysis_pzt_zero_band_fraction_spin.setValue(
                 float(pzt_force.get("force_zero_band_fraction", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"]))
-            )
-            self.analysis_pzt_min_event_peak_spin.setValue(
-                float(pzt_force.get("force_zero_min_event_peak_n", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"]))
             )
             self.analysis_pzt_quiet_release_spin.setValue(
                 float(pzt_force.get("quiet_hold_release_fraction", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"]))
@@ -907,12 +833,19 @@ class AnalysisPanelMixin:
             self.analysis_pzt_quiet_hold_spin.setValue(
                 float(pzt_force.get("quiet_hold_clear_s", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]))
             )
-            self.analysis_shear_force_noise_spin.setValue(
-                float(pzt_force.get("shear_force_noise_threshold_v", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_noise_threshold_v"]))
-            )
-            self.analysis_normal_force_noise_spin.setValue(
-                float(pzt_force.get("normal_force_noise_threshold_v", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_noise_threshold_v"]))
-            )
+            # "*_threshold_v" is the pre-rename key from saved settings/profiles
+            # predating the fix that made this stage's input a force-rate (N)
+            # quantity instead of a voltage -- carried over as a starting
+            # point (NOT a conversion) so an old tuned number isn't silently
+            # discarded, only reinterpreted under the new key/unit.
+            self.analysis_shear_force_noise_spin.setValue(float(pzt_force.get(
+                "shear_force_noise_threshold_n",
+                pzt_force.get("shear_force_noise_threshold_v", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_noise_threshold_n"]),
+            )))
+            self.analysis_normal_force_noise_spin.setValue(float(pzt_force.get(
+                "normal_force_noise_threshold_n",
+                pzt_force.get("normal_force_noise_threshold_v", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_noise_threshold_n"]),
+            )))
             self.analysis_shear_force_zero_floor_spin.setValue(
                 float(pzt_force.get("shear_force_zero_band_min_n", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_zero_band_min_n"]))
             )
@@ -926,7 +859,6 @@ class AnalysisPanelMixin:
                 float(pzt_force.get("normal_force_zero_min_event_peak_n", ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_zero_min_event_peak_n"]))
             )
             self._update_analysis_pzt_mux_timing_controls()
-            self._update_analysis_pzt_baseline_results()
             self.analysis_csv_path_edit.setText(str(state.get("csv_path", "")))
             self.analysis_labeling_enabled_check.setChecked(bool(state.get("labeling_enabled", False)))
             self._apply_analysis_labeling_visibility()
@@ -1186,9 +1118,6 @@ class AnalysisPanelMixin:
             "capacitance_unit": str(self.analysis_pzt_capacitance_unit_combo.currentText()),
             "rleak_ohm": float(self.analysis_pzt_rleak_spin.value()),
             "d33_pc_per_n": float(self.analysis_pzt_d33_spin.value()),
-            "noise_threshold_v": float(self.analysis_pzt_noise_spin.value()),
-            "quiet_duration_s": float(self.analysis_pzt_quiet_duration_spin.value()),
-            "noise_sigma_multiplier": float(self.analysis_pzt_noise_k_spin.value()),
             "mux_timing_mode": self._analysis_pzt_mux_timing_mode(),
             "mux_connected_time_s": float(self.analysis_pzt_mux_connected_ms_spin.value()) / 1000.0,
             "mux_connected_time_source": str(self.analysis_pzt_mux_timing_status.text()),
@@ -1201,19 +1130,19 @@ class AnalysisPanelMixin:
             "stuck_force_failsafe_enabled": bool(self.analysis_pzt_stuck_failsafe_check.isChecked()),
             "stuck_force_quiet_hold_s": float(self.analysis_pzt_stuck_hold_spin.value()),
             "stuck_force_decay_tau_s": float(self.analysis_pzt_stuck_tau_spin.value()),
-            "force_zero_band_min_n": float(self.analysis_pzt_zero_floor_spin.value()),
             "force_zero_band_fraction": float(self.analysis_pzt_zero_band_fraction_spin.value()),
-            "force_zero_min_event_peak_n": float(self.analysis_pzt_min_event_peak_spin.value()),
             "quiet_hold_release_fraction": float(self.analysis_pzt_quiet_release_spin.value()),
             "quiet_hold_clear_s": float(self.analysis_pzt_quiet_hold_spin.value()),
-            "shear_force_noise_threshold_v": float(self.analysis_shear_force_noise_spin.value()),
-            "normal_force_noise_threshold_v": float(self.analysis_normal_force_noise_spin.value()),
+            "shear_force_noise_threshold_n": float(self.analysis_shear_force_noise_spin.value()),
+            "normal_force_noise_threshold_n": float(self.analysis_normal_force_noise_spin.value()),
             "shear_force_zero_band_min_n": float(self.analysis_shear_force_zero_floor_spin.value()),
             "normal_force_zero_band_min_n": float(self.analysis_normal_force_zero_floor_spin.value()),
             "shear_force_zero_min_event_peak_n": float(self.analysis_shear_force_min_event_peak_spin.value()),
             "normal_force_zero_min_event_peak_n": float(self.analysis_normal_force_min_event_peak_spin.value()),
-            "channel_calibration": dict(pzt_force.get("channel_calibration", {})),
         })
+        pzt_force.pop("shear_force_noise_threshold_v", None)
+        pzt_force.pop("normal_force_noise_threshold_v", None)
+        pzt_force.pop("channel_calibration", None)
         self.analysis_state["pzt_force"] = pzt_force
         self.analysis_state["visible_labels"] = {
             label: bool(check.isChecked())
@@ -1225,59 +1154,6 @@ class AnalysisPanelMixin:
         }
         self.refresh_analysis_plot()
         self.save_last_analysis_settings()
-
-    def calculate_analysis_pzt_baseline(self):
-        snapshot = self.analysis_snapshot
-        if snapshot is None:
-            QMessageBox.warning(self, "PZT Baseline", "Load an Analysis source before calculating Vmid and noise.")
-            return
-        visible_labels = [
-            label for label, check in self.analysis_channel_checks.items()
-            if check.isChecked()
-        ]
-        filter_settings = self.get_filter_settings_from_ui() if hasattr(self, "get_filter_settings_from_ui") else {}
-        try:
-            estimates = estimate_analysis_pzt_force_calibration(
-                snapshot,
-                visible_labels=visible_labels,
-                filter_enabled=bool(self.analysis_filter_check.isChecked()),
-                filter_settings=filter_settings,
-                vref_voltage=self.get_vref_voltage() if hasattr(self, "get_vref_voltage") else 3.3,
-                quiet_duration_s=float(self.analysis_pzt_quiet_duration_spin.value()),
-                noise_sigma_multiplier=float(self.analysis_pzt_noise_k_spin.value()),
-            )
-            pzt_force = dict(self.analysis_state.get("pzt_force", {}))
-            pzt_force["channel_calibration"] = estimates
-            pzt_force["quiet_duration_s"] = float(self.analysis_pzt_quiet_duration_spin.value())
-            pzt_force["noise_sigma_multiplier"] = float(self.analysis_pzt_noise_k_spin.value())
-            self.analysis_state["pzt_force"] = pzt_force
-            self._update_analysis_pzt_baseline_results()
-            self.refresh_analysis_plot()
-            self.save_last_analysis_settings()
-            self._set_analysis_status_text(f"PZT baseline calculated for {len(estimates)} channels.")
-        except Exception as exc:
-            QMessageBox.warning(self, "PZT Baseline Failed", str(exc))
-            self._set_analysis_status_text(f"PZT baseline failed: {exc}")
-
-    def _update_analysis_pzt_baseline_results(self):
-        if not hasattr(self, "analysis_pzt_baseline_results"):
-            return
-        calibration = self.analysis_state.get("pzt_force", {}).get("channel_calibration", {})
-        if not isinstance(calibration, dict) or not calibration:
-            self.analysis_pzt_baseline_results.setPlainText("")
-            return
-        lines = []
-        for label in sorted(calibration):
-            values = calibration.get(label, {})
-            if not isinstance(values, dict):
-                continue
-            lines.append(
-                f"{label}: Vmid={float(values.get('vmid_v', 0.0)):.4f} V, "
-                f"Noise={float(values.get('noise_threshold_v', 0.0)):.4f} V, "
-                f"sigma={float(values.get('sigma_v', 0.0)):.4f} V, "
-                f"n={int(values.get('sample_count', 0))}"
-            )
-        self.analysis_pzt_baseline_results.setPlainText("\n".join(lines))
 
     def _get_analysis_pzt_profiles_path(self):
         return Path.home() / ".adc_streamer" / "analysis" / "pzt_force_profiles.json"
@@ -1317,11 +1193,7 @@ class AnalysisPanelMixin:
         if not ok or not name:
             return
         profiles = self._load_analysis_pzt_profiles()
-        # channel_calibration is a per-capture Vmid/noise estimate, not a
-        # portable setting, so a saved profile excludes it.
-        pzt_force = dict(self.analysis_state.get("pzt_force", {}))
-        pzt_force.pop("channel_calibration", None)
-        profiles[name] = pzt_force
+        profiles[name] = dict(self.analysis_state.get("pzt_force", {}))
         try:
             self._save_analysis_pzt_profiles(profiles)
         except Exception as exc:
@@ -1341,14 +1213,7 @@ class AnalysisPanelMixin:
         if not isinstance(profile, dict):
             QMessageBox.warning(self, "Load Profile", f"Profile '{name}' was not found.")
             return
-        # Keep whatever per-capture calibration is already active; a
-        # settings profile doesn't carry calibration for a capture it never saw.
-        existing_calibration = dict(self.analysis_state.get("pzt_force", {}).get("channel_calibration", {}))
-        self.analysis_state["pzt_force"] = {
-            **ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS,
-            **profile,
-            "channel_calibration": existing_calibration,
-        }
+        self.analysis_state["pzt_force"] = {**ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS, **profile}
         self._apply_analysis_settings_to_widgets()
         self.refresh_analysis_plot()
         self.save_last_analysis_settings()
@@ -2345,9 +2210,6 @@ class AnalysisPanelMixin:
             self.analysis_pzt_capacitance_unit_combo,
             self.analysis_pzt_rleak_spin,
             self.analysis_pzt_d33_spin,
-            self.analysis_pzt_noise_spin,
-            self.analysis_pzt_quiet_duration_spin,
-            self.analysis_pzt_noise_k_spin,
             self.analysis_pzt_mux_timing_combo,
             self.analysis_pzt_mux_connected_ms_spin,
             self.analysis_pzt_off_mux_leak_check,
@@ -2358,7 +2220,6 @@ class AnalysisPanelMixin:
             self.analysis_normal_force_zero_floor_spin,
             self.analysis_shear_force_min_event_peak_spin,
             self.analysis_normal_force_min_event_peak_spin,
-            self.analysis_pzt_calculate_baseline_btn,
             self.analysis_marker_check,
             self.analysis_reset_view_btn,
             self.analysis_export_csv_btn,

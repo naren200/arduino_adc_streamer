@@ -23,14 +23,20 @@ from constants.force import X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
 from constants.plotting import IADC_RESOLUTION_BITS
 from constants.pressure_map import DEFAULT_HPF_CUTOFF_HZ, DEFAULT_INTEGRATION_WINDOW_SAMPLES
 from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS, PZT_FORCE_PIC_COULOMB_TO_COULOMB
-from constants.shear import SHEAR_SENSOR_POSITIONS
+from constants.shear import (
+    SHEAR_POSITION_BOTTOM,
+    SHEAR_POSITION_CENTER,
+    SHEAR_POSITION_LEFT,
+    SHEAR_POSITION_RIGHT,
+    SHEAR_POSITION_TOP,
+    SHEAR_SENSOR_POSITIONS,
+)
 from data_processing.adc_filter_engine import ADCFilterEngine
 from data_processing.normal_force_calculator import NormalForceCalculator
 from data_processing.pzt_force_calculation import (
     PztChannelPhysicalParams,
     PztForceChannelIntegrator,
     compute_pzt_force_rate_series,
-    estimate_pzt_quiet_baseline,
     pzt_capacitance_to_farads,
     pzt_capacitance_value_for_position,
 )
@@ -469,49 +475,6 @@ def resolve_analysis_pzt_pre_sample_decay_dt_s(
     return result
 
 
-def estimate_analysis_pzt_force_calibration(
-    snapshot: AnalysisSourceSnapshot,
-    *,
-    visible_labels: Iterable[str] | None = None,
-    filter_enabled: bool = False,
-    filter_settings: dict | None = None,
-    vref_voltage: float = 3.3,
-    quiet_duration_s: float = 2.0,
-    noise_sigma_multiplier: float = 5.0,
-) -> dict[str, dict[str, float | int]]:
-    """Estimate per-channel Vmid/noise settings from the initial quiet window."""
-    if snapshot.data.size == 0:
-        raise ValueError("No source data loaded.")
-
-    data = np.asarray(snapshot.data, dtype=np.float32)
-    if filter_enabled and filter_settings and bool(filter_settings.get("enabled", True)):
-        data = filter_offline_data(snapshot, filter_settings)
-
-    visible_set = set(snapshot.channel_labels if visible_labels is None else visible_labels)
-    time_base_s = build_trace_time_axis_seconds(snapshot)
-    estimates: dict[str, dict[str, float | int]] = {}
-    for label, column in iter_analysis_signal_columns(snapshot):
-        if label not in visible_set or column >= data.shape[1]:
-            continue
-        if _is_resistance_like_label(label):
-            continue
-        voltage_v = _signal_display_values(label, data[:, column], vref_voltage)
-        estimate = estimate_pzt_quiet_baseline(
-            voltage_v,
-            time_base_s[:, column],
-            quiet_duration_s=quiet_duration_s,
-            noise_sigma_multiplier=noise_sigma_multiplier,
-        )
-        estimates[label] = {
-            "vmid_v": float(estimate.vmid_v),
-            "noise_threshold_v": float(estimate.noise_threshold_v),
-            "mad_v": float(estimate.mad_v),
-            "sigma_v": float(estimate.sigma_v),
-            "sample_count": int(estimate.sample_count),
-        }
-    return estimates
-
-
 def build_trace_x_axis(snapshot: AnalysisSourceSnapshot, axis_mode: str) -> tuple[np.ndarray, str, str]:
     sweeps = snapshot.sweep_count
     samples = snapshot.samples_per_sweep
@@ -859,6 +822,67 @@ def _shear_normal_channel_physical_params(
     )
 
 
+# Trailing-average window (samples) used only to smooth the per-channel dF
+# fed into shear detection -- suppresses noise in the shear estimate without
+# smoothing the raw Normal Jerk signal it's subtracted from.
+SHEAR_JERK_SMOOTHING_WINDOW_SAMPLES = 6
+
+
+def _trailing_moving_average(raw: np.ndarray, window: int) -> np.ndarray:
+    """Causal trailing average of ``raw`` over up to ``window`` past samples.
+
+    Index ``i`` averages samples ``max(0, i-window+1) .. i`` -- a partial,
+    shrinking window near the start rather than a dropped/NaN warmup -- so
+    the output is always the same length as the input.
+    """
+    cumsum = np.concatenate([[0.0], np.cumsum(raw)])
+    end_idx = np.arange(len(raw))
+    start_idx = np.maximum(0, end_idx - window + 1)
+    window_counts = (end_idx - start_idx + 1).astype(np.float64)
+    return (cumsum[end_idx + 1] - cumsum[start_idx]) / window_counts
+
+
+def _shear_normal_jerk_from_rates(
+    rate_by_position: dict[str, np.ndarray], window: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Combine per-channel raw dF rates into Shear/Normal Jerk.
+
+    Shear is detected from a ``window``-sample trailing average of each
+    outer channel's raw dF (to suppress noise in the shear estimate), but
+    that smoothed shear component is subtracted from the RAW instantaneous
+    dF at each position to produce Normal Jerk -- Normal Force itself stays
+    fully instantaneous/raw, only the shear removed from it is smoothed.
+    """
+    smoothed_rate_by_position = {
+        position: _trailing_moving_average(rate_by_position[position], window)
+        for position in (SHEAR_POSITION_LEFT, SHEAR_POSITION_RIGHT, SHEAR_POSITION_TOP, SHEAR_POSITION_BOTTOM)
+    }
+
+    shear_detector = ShearDetector()
+    normal_calculator = NormalForceCalculator()
+    sample_count = len(next(iter(rate_by_position.values()))) if rate_by_position else 0
+    shear_jerk_lr = np.zeros(sample_count, dtype=np.float64)
+    shear_jerk_tb = np.zeros(sample_count, dtype=np.float64)
+    normal_jerk = np.zeros(sample_count, dtype=np.float64)
+    for row_index in range(sample_count):
+        smoothed_values = {
+            position: float(smoothed_rate_by_position[position][row_index])
+            for position in (SHEAR_POSITION_LEFT, SHEAR_POSITION_RIGHT, SHEAR_POSITION_TOP, SHEAR_POSITION_BOTTOM)
+        }
+        smoothed_values[SHEAR_POSITION_CENTER] = float(rate_by_position[SHEAR_POSITION_CENTER][row_index])
+        shear = shear_detector.detect(smoothed_values)
+        residual = {
+            position: float(rate_by_position[position][row_index]) - shear.strain_vector[position]
+            for position in SHEAR_SENSOR_POSITIONS
+        }
+        normal_result = normal_calculator.compute(residual)
+        shear_jerk_lr[row_index] = shear.b_lr
+        shear_jerk_tb[row_index] = shear.b_tb
+        normal_jerk[row_index] = normal_result.total_force
+
+    return shear_jerk_lr, shear_jerk_tb, normal_jerk
+
+
 def _compute_shear_normal_from_channel_rate(
     snapshot: AnalysisSourceSnapshot,
     data: np.ndarray,
@@ -906,22 +930,9 @@ def _compute_shear_normal_from_channel_rate(
             pre_sample_decay_dt_s=pre_sample_by_label.get(label),
         )
 
-    shear_detector = ShearDetector()
-    normal_calculator = NormalForceCalculator()
-    sample_count = len(next(iter(rate_by_position.values()))) if rate_by_position else 0
-    shear_jerk_lr = np.zeros(sample_count, dtype=np.float64)
-    shear_jerk_tb = np.zeros(sample_count, dtype=np.float64)
-    normal_jerk = np.zeros(sample_count, dtype=np.float64)
-    for row_index in range(sample_count):
-        values = {
-            position: float(rate_by_position[position][row_index])
-            for position in SHEAR_SENSOR_POSITIONS
-        }
-        shear = shear_detector.detect(values)
-        normal_result = normal_calculator.compute(shear.residual)
-        shear_jerk_lr[row_index] = shear.b_lr
-        shear_jerk_tb[row_index] = shear.b_tb
-        normal_jerk[row_index] = normal_result.total_force
+    shear_jerk_lr, shear_jerk_tb, normal_jerk = _shear_normal_jerk_from_rates(
+        rate_by_position, SHEAR_JERK_SMOOTHING_WINDOW_SAMPLES
+    )
 
     return position_channels, shear_jerk_lr, shear_jerk_tb, normal_jerk
 
@@ -941,17 +952,22 @@ def _shear_normal_role_threshold(
 ) -> float:
     """Resolve a shear/normal-specific threshold, preferring an explicit caller override.
 
-    ``role_key`` is ``{role}_force_{shared_key}`` (e.g. ``normal_force_noise_threshold_v``)
-    for the ``noise_threshold_v`` shared key, but ``{role}_{shared_key}`` (e.g.
+    ``role_key`` is ``{role}_force_{shared_key}`` (e.g. ``normal_force_noise_threshold_n``)
+    for the ``noise_threshold_n`` shared key, but ``{role}_{shared_key}`` (e.g.
     ``normal_force_zero_band_min_n``) for keys that already start with
     ``force_`` -- matching the actual key names in
     ``constants.pzt_force.PZT_FORCE_DEFAULT_SETTINGS``.
 
     Precedence: an explicitly supplied role-specific key wins; otherwise an
-    explicitly supplied legacy shared key (e.g. ``noise_threshold_v``) is
-    honored, so callers that only set the old shared key (as every existing
-    caller predating this split does) keep behaving exactly as before;
-    otherwise falls back to the role-specific default.
+    explicitly supplied legacy shared key (e.g. ``force_zero_band_min_n`` for
+    a caller that only sets the pre-split generic key) is honored; otherwise
+    falls back to the role-specific default. Note ``noise_threshold_n`` has
+    no meaningful pre-split shared-key fallback (the old shared key was named
+    ``noise_threshold_v`` and is a different, volt-scale quantity now that
+    this stage's input is force-rate) -- callers migrating an old saved
+    ``*_threshold_v`` value should do so explicitly before calling this
+    (see the Analysis panel's settings-load migration), not rely on this
+    fallback to bridge the unit change.
     """
     role_key = f"{role}_{shared_key}" if shared_key.startswith("force_") else f"{role}_force_{shared_key}"
     if role_key in supplied:
@@ -988,15 +1004,15 @@ def _new_shear_normal_force_integrator(
     RC charge-to-force formula on an already-converted value, a second
     Farad/(Coulomb/Newton) conversion that is dimensionally wrong.
 
-    KNOWN ISSUE, not fixed here: ``shear_force_noise_threshold_v`` /
-    ``normal_force_noise_threshold_v`` / ``*_zero_band_min_n`` /
-    ``*_zero_min_event_peak_n`` in ``constants.pzt_force`` are volt-tuned
-    constants (e.g. 0.01-0.05) left over from when this stage's input was a
-    voltage. They now gate/compare against a genuine force-RATE value in
-    newtons, a different physical quantity at a different scale, and have
-    not been retuned. Until real-capture calibration determines correct
-    values, treat Shear Force / Normal Force's noise gating, natural-zero,
-    and stuck-force behavior as unvalidated.
+    Units: ``shear_force_noise_threshold_n`` / ``normal_force_noise_threshold_n``
+    (renamed from the legacy ``*_threshold_v`` names — see
+    ``_legacy_shear_normal_noise_threshold_n`` for old-profile migration) and
+    ``*_zero_band_min_n`` / ``*_zero_min_event_peak_n`` in
+    ``constants.pzt_force`` are all newton-scale, matching what this
+    combined-stage integrator actually receives. The numeric defaults are
+    still placeholders pending real-capture calibration (see comments at
+    their definition) — the unit/naming mismatch is fixed, the actual
+    calibrated values are not.
     """
     supplied = dict(settings or {})
     resolved = {**PZT_FORCE_DEFAULT_SETTINGS, **supplied}
@@ -1016,7 +1032,7 @@ def _new_shear_normal_force_integrator(
         capacitance_f=capacitance_f,
         rleak_ohm=float(resolved["rleak_ohm"]),
         d33_c_per_n=d33_c_per_n,
-        noise_threshold_v=_shear_normal_role_threshold(supplied, resolved, role, "noise_threshold_v"),
+        noise_threshold_v=_shear_normal_role_threshold(supplied, resolved, role, "noise_threshold_n"),
         off_mux_rleak_ohm=off_mux_rleak_ohm,
         accumulate_raw=True,
         force_zero_band_fraction=float(resolved["force_zero_band_fraction"]),

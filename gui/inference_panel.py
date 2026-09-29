@@ -62,7 +62,7 @@ _MODEL_TYPE_LABELS = [_MODEL_TYPE_DISPLAY_NAMES.get(key, key.upper()) for key in
 _MODEL_TYPE_BY_LABEL = {label: key for key, label in zip(ARCH_REGISTRY, _MODEL_TYPE_LABELS)}
 
 _PZT_SENSOR_LABEL_RE = re.compile(r"^PZT(\d+)_[BLCRT]$")
-_FALLBACK_PZT_SENSOR_NUMBERS = ["3", "4", "5"]
+_FALLBACK_PZT_SENSOR_NUMBERS = ["1", "3", "5", "6", "7"]
 
 # Bar-chart coloring for the confidence-threshold display: a class's bar is
 # red once its probability reaches touchid_config.confidence_threshold,

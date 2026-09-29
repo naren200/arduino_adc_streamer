@@ -22,7 +22,6 @@ from data_processing.analysis_workbench import (
     build_overlay_traces,
     build_snapshot_from_archive,
     counts_to_volts,
-    estimate_analysis_pzt_force_calibration,
     integrate_voltage_series_causal_median,
     load_exported_csv_snapshot,
     prepare_analysis_data,
@@ -425,28 +424,6 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         expected_second = (1e-9 / 600e-12) * 0.2
         np.testing.assert_allclose(force, [0.0, expected_second])
 
-    def test_estimate_analysis_pzt_force_calibration_skips_resistance_channels(self):
-        snapshot = AnalysisSourceSnapshot(
-            data=np.asarray([[2048, 470.0], [2050, 471.0], [2046, 472.0]], dtype=np.float32),
-            timestamps_s=np.asarray([0.0, 0.01, 0.02], dtype=np.float64),
-            channel_labels=["PZT6_C", "PZT6_RS1"],
-            metadata={"configuration": {"channels": [1, 2], "repeat_count": 1}},
-            source_id="unit",
-            sample_rate_hz=200.0,
-        )
-
-        estimates = estimate_analysis_pzt_force_calibration(
-            snapshot,
-            visible_labels=["PZT6_C", "PZT6_RS1"],
-            vref_voltage=3.3,
-            quiet_duration_s=1.0,
-            noise_sigma_multiplier=4.0,
-        )
-
-        self.assertEqual(list(estimates), ["PZT6_C"])
-        self.assertIn("vmid_v", estimates["PZT6_C"])
-        self.assertIn("noise_threshold_v", estimates["PZT6_C"])
-
     def test_prepare_analysis_data_reports_pzt_timing_failure_without_raising(self):
         # "PZT Channel Force" (the standalone per-channel display) is gone --
         # only MUX leak-timing resolution remains here, feeding Shear/Normal
@@ -837,7 +814,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             "capacitance_unit": "pF",
             "rleak_ohm": 1_000_000.0,
             "d33_pc_per_n": 600.0,
-            "noise_threshold_v": 0.0,
+            "noise_threshold_n": 0.0,
         }
         vref_voltage = 3.3
 
@@ -885,13 +862,38 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             )
             for position in ["C", "L", "R", "T", "B"]
         }
+        # Shear is detected from a 6-sample causal trailing average of each
+        # outer channel's raw dF (partial window for the first 5 samples),
+        # but the smoothed shear removed is subtracted from the RAW
+        # instantaneous dF at each position -- Normal Jerk stays raw.
+        window = 6
+        def _trailing_average(series):
+            out = []
+            for row in range(len(series)):
+                start = max(0, row - window + 1)
+                out.append(sum(series[start:row + 1]) / (row - start + 1))
+            return out
+
+        smoothed_rate_by_position = {
+            position: _trailing_average(rate_by_position[position])
+            for position in ["L", "R", "T", "B"]
+        }
+
         detector = ShearDetector()
         calculator = NormalForceCalculator()
         normal_jerk_ref, shear_lr_jerk_ref, shear_tb_jerk_ref = [], [], []
         for row in range(len(snapshot.timestamps_s)):
-            values = {position: float(rate_by_position[position][row]) for position in ["C", "L", "R", "T", "B"]}
-            shear = detector.detect(values)
-            normal_jerk_ref.append(calculator.compute(shear.residual).total_force)
+            smoothed_values = {
+                position: float(smoothed_rate_by_position[position][row])
+                for position in ["L", "R", "T", "B"]
+            }
+            smoothed_values["C"] = float(rate_by_position["C"][row])
+            shear = detector.detect(smoothed_values)
+            residual = {
+                position: float(rate_by_position[position][row]) - shear.strain_vector[position]
+                for position in ["C", "L", "R", "T", "B"]
+            }
+            normal_jerk_ref.append(calculator.compute(residual).total_force)
             shear_lr_jerk_ref.append(shear.b_lr)
             shear_tb_jerk_ref.append(shear.b_tb)
 
@@ -905,7 +907,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
                 capacitance_f=capacitance_f,
                 rleak_ohm=pzt_force_settings["rleak_ohm"],
                 d33_c_per_n=pzt_force_settings["d33_pc_per_n"] * 1e-12,
-                noise_threshold_v=pzt_force_settings["noise_threshold_v"],
+                noise_threshold_v=pzt_force_settings["noise_threshold_n"],
                 accumulate_raw=True,
             )
             for row, value in enumerate(series):
@@ -970,7 +972,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             "capacitance_unit": "pF",
             "rleak_ohm": 1_000_000.0,
             "d33_pc_per_n": 600.0,
-            "noise_threshold_v": 0.0,
+            "noise_threshold_n": 0.0,
         }
 
         traces = build_force_based_shear_normal_traces(
@@ -1006,7 +1008,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             capacitance_f=center_capacitance_f,
             rleak_ohm=pzt_force_settings["rleak_ohm"],
             d33_c_per_n=pzt_force_settings["d33_pc_per_n"] * 1e-12,
-            noise_threshold_v=pzt_force_settings["noise_threshold_v"],
+            noise_threshold_v=pzt_force_settings["noise_threshold_n"],
         )
         naive_normal = [
             naive_integrator.process_centered_sample(float(value), float(snapshot.timestamps_s[row])).accumulated_force_n
@@ -1056,7 +1058,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             "capacitance_unit": "pF",
             "rleak_ohm": 1_000_000.0,
             "d33_pc_per_n": 600.0,
-            "noise_threshold_v": 0.05,
+            "noise_threshold_n": 0.05,
         }
 
         traces = build_force_based_shear_normal_traces(
@@ -1070,15 +1072,11 @@ class AnalysisWorkbenchTests(unittest.TestCase):
     def test_shear_normal_default_settings_match_shared_legacy_values(self):
         # The new per-role keys must default to exactly the same value as
         # their pre-existing shared counterpart, so nobody's behavior changes
-        # until they explicitly diverge shear from normal.
-        self.assertEqual(
-            PZT_FORCE_DEFAULT_SETTINGS["shear_force_noise_threshold_v"],
-            PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"],
-        )
-        self.assertEqual(
-            PZT_FORCE_DEFAULT_SETTINGS["normal_force_noise_threshold_v"],
-            PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"],
-        )
+        # until they explicitly diverge shear from normal. Noise threshold is
+        # excluded here: it was renamed *_threshold_v -> *_threshold_n when
+        # the combined-stage input changed from a voltage to a force-rate, so
+        # it intentionally no longer shares a value with the volt-scale
+        # generic "noise_threshold_v" (a different physical quantity now).
         self.assertEqual(
             PZT_FORCE_DEFAULT_SETTINGS["shear_force_zero_band_min_n"],
             PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"],
@@ -1131,8 +1129,8 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=3.3,
             pzt_force_settings={
                 **base_settings,
-                "normal_force_noise_threshold_v": 100.0,
-                "shear_force_noise_threshold_v": 0.0,
+                "normal_force_noise_threshold_n": 100.0,
+                "shear_force_noise_threshold_n": 0.0,
             },
         )
         by_label = {trace.label: trace for trace in traces}
@@ -1145,8 +1143,8 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=3.3,
             pzt_force_settings={
                 **base_settings,
-                "normal_force_noise_threshold_v": 0.0,
-                "shear_force_noise_threshold_v": 100.0,
+                "normal_force_noise_threshold_n": 0.0,
+                "shear_force_noise_threshold_n": 100.0,
             },
         )
         by_label = {trace.label: trace for trace in traces}
@@ -1155,9 +1153,9 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         self.assertTrue(np.any(by_label["Normal Force [N]"].y != 0.0))
 
     def test_shear_normal_force_threshold_falls_back_to_legacy_shared_key(self):
-        # A caller that only sets the pre-existing shared "noise_threshold_v"
-        # (every caller predating this split) must keep getting that value
-        # applied to both Normal and Shear, not the new default.
+        # A caller that only sets the generic shared "noise_threshold_n" (not
+        # either role-specific key) must keep getting that value applied to
+        # both Normal and Shear, not the role-specific default.
         snapshot = AnalysisSourceSnapshot(
             data=np.asarray(
                 [[200, 300, -300, 100, -100], [260, 500, -420, 140, -140]], dtype=np.float32
@@ -1174,7 +1172,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             "capacitance_unit": "pF",
             "rleak_ohm": 1_000_000.0,
             "d33_pc_per_n": 600.0,
-            "noise_threshold_v": 100.0,  # legacy shared key only, no new per-role keys
+            "noise_threshold_n": 100.0,  # generic shared key only, no per-role keys
         }
         traces = build_force_based_shear_normal_traces(
             snapshot, snapshot.data, axis_mode="samples",
@@ -1182,7 +1180,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             pzt_force_settings=pzt_force_settings,
         )
         by_label = {trace.label: trace for trace in traces}
-        # Threshold of 100V silences everything, matching pre-split behavior.
+        # Threshold of 100N silences everything, matching pre-split behavior.
         self.assertTrue(np.all(by_label["Normal Force [N]"].y == 0.0))
         self.assertTrue(np.all(by_label["Shear Force L/R [N]"].y == 0.0))
         self.assertTrue(np.all(by_label["Shear Force T/B [N]"].y == 0.0))
@@ -1204,7 +1202,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             "capacitance_unit": "pF",
             "rleak_ohm": 1_000_000.0,
             "d33_pc_per_n": 600.0,
-            "noise_threshold_v": 0.0,
+            "noise_threshold_n": 0.0,
         }
         # Shear/Normal Jerk display checkboxes ("shear"/"normal") both OFF --
         # Shear Force / Normal Force must still compute, since it runs its
@@ -1262,7 +1260,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             "capacitance_unit": "pF",
             "rleak_ohm": 1_000_000.0,
             "d33_pc_per_n": 600.0,
-            "noise_threshold_v": 0.0,
+            "noise_threshold_n": 0.0,
         }
         prepared = prepare_analysis_data(
             snapshot, axis_mode="samples",

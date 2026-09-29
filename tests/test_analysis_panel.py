@@ -167,9 +167,6 @@ class AnalysisPanelHarness(AnalysisPanelMixin):
         self.analysis_pzt_capacitance_unit_combo = DummyCombo(text=str(PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"]))
         self.analysis_pzt_rleak_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"]))
         self.analysis_pzt_d33_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["d33_pc_per_n"]))
-        self.analysis_pzt_noise_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"]))
-        self.analysis_pzt_quiet_duration_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["quiet_duration_s"]))
-        self.analysis_pzt_noise_k_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["noise_sigma_multiplier"]))
         self.analysis_pzt_mux_timing_combo = DummyCombo(text="Auto")
         self.analysis_pzt_mux_connected_ms_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["mux_connected_time_s"]) * 1000.0)
         self.analysis_pzt_mux_timing_status = DummyTextWidget()
@@ -178,18 +175,15 @@ class AnalysisPanelHarness(AnalysisPanelMixin):
         self.analysis_pzt_stuck_failsafe_check = DummyCheck(bool(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"]))
         self.analysis_pzt_stuck_hold_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_quiet_hold_s"]))
         self.analysis_pzt_stuck_tau_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_decay_tau_s"]))
-        self.analysis_pzt_zero_floor_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"]))
         self.analysis_pzt_zero_band_fraction_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"]))
-        self.analysis_pzt_min_event_peak_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"]))
         self.analysis_pzt_quiet_release_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"]))
         self.analysis_pzt_quiet_hold_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]))
-        self.analysis_shear_force_noise_spin = DummySpin(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_noise_threshold_v"]))
-        self.analysis_normal_force_noise_spin = DummySpin(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_noise_threshold_v"]))
+        self.analysis_shear_force_noise_spin = DummySpin(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_noise_threshold_n"]))
+        self.analysis_normal_force_noise_spin = DummySpin(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_noise_threshold_n"]))
         self.analysis_shear_force_zero_floor_spin = DummySpin(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_zero_band_min_n"]))
         self.analysis_normal_force_zero_floor_spin = DummySpin(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_zero_band_min_n"]))
         self.analysis_shear_force_min_event_peak_spin = DummySpin(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_zero_min_event_peak_n"]))
         self.analysis_normal_force_min_event_peak_spin = DummySpin(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_zero_min_event_peak_n"]))
-        self.analysis_pzt_baseline_results = DummyTextWidget()
         self.analysis_csv_path_edit = DummyTextWidget()
 
     def _get_last_analysis_settings_path(self):
@@ -200,23 +194,27 @@ class AnalysisPanelHarness(AnalysisPanelMixin):
 
 
 class AnalysisPztForceEventTunablesRoundTripTests(unittest.TestCase):
-    """Work item D3: the five natural-reset event tunables (Part D) round
-    trip through save/restore, and a legacy payload lacking them falls back
-    to the shared defaults."""
+    """The shared natural-reset event tunables round trip through
+    save/restore, and a legacy payload lacking them falls back to the shared
+    defaults. Only ``force_zero_band_fraction``, ``quiet_hold_release_fraction``,
+    and ``quiet_hold_clear_s`` remain shared/generic here -- the former
+    ``force_zero_band_min_n``/``force_zero_min_event_peak_n`` generic
+    spinboxes were removed from the Analysis tab along with "PZT Channel
+    Force" (their only consumer); Shear Force / Normal Force always use
+    their own role-specific ``shear_force_*``/``normal_force_*`` zero-band/
+    min-event-peak settings instead, covered elsewhere."""
 
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_five_event_tunables_survive_save_and_restore(self):
+    def test_shared_event_tunables_survive_save_and_restore(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             settings_path = Path(temp_dir) / "last_used_analysis_settings.json"
             harness = AnalysisPanelHarness(settings_path)
             self.addCleanup(harness.shutdown_analysis_worker)
 
-            harness.analysis_pzt_zero_floor_spin.setValue(0.05)
             harness.analysis_pzt_zero_band_fraction_spin.setValue(0.2)
-            harness.analysis_pzt_min_event_peak_spin.setValue(0.1)
             harness.analysis_pzt_quiet_release_spin.setValue(0.4)
             harness.analysis_pzt_quiet_hold_spin.setValue(0.3)
 
@@ -224,9 +222,7 @@ class AnalysisPztForceEventTunablesRoundTripTests(unittest.TestCase):
 
             payload = json.loads(settings_path.read_text(encoding="utf-8"))
             saved_pzt_force = payload["analysis_settings"]["pzt_force"]
-            self.assertEqual(saved_pzt_force["force_zero_band_min_n"], 0.05)
             self.assertEqual(saved_pzt_force["force_zero_band_fraction"], 0.2)
-            self.assertEqual(saved_pzt_force["force_zero_min_event_peak_n"], 0.1)
             self.assertEqual(saved_pzt_force["quiet_hold_release_fraction"], 0.4)
             self.assertEqual(saved_pzt_force["quiet_hold_clear_s"], 0.3)
 
@@ -234,13 +230,11 @@ class AnalysisPztForceEventTunablesRoundTripTests(unittest.TestCase):
             self.addCleanup(restored.shutdown_analysis_worker)
             restored.load_last_analysis_settings()
 
-            self.assertEqual(restored.analysis_pzt_zero_floor_spin.value(), 0.05)
             self.assertEqual(restored.analysis_pzt_zero_band_fraction_spin.value(), 0.2)
-            self.assertEqual(restored.analysis_pzt_min_event_peak_spin.value(), 0.1)
             self.assertEqual(restored.analysis_pzt_quiet_release_spin.value(), 0.4)
             self.assertEqual(restored.analysis_pzt_quiet_hold_spin.value(), 0.3)
 
-    def test_legacy_payload_missing_the_five_keys_falls_back_to_defaults(self):
+    def test_legacy_payload_missing_the_shared_keys_falls_back_to_defaults(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             settings_path = Path(temp_dir) / "legacy_analysis_settings.json"
             legacy_payload = {
@@ -249,8 +243,8 @@ class AnalysisPztForceEventTunablesRoundTripTests(unittest.TestCase):
                     "pzt_force": {
                         "enabled": True,
                         "rleak_ohm": 2_000_000.0,
-                        # The five Part-C/D tunables are absent, as an older
-                        # save predating this work item would be.
+                        # The shared tunables are absent, as an older save
+                        # predating them would be.
                     },
                 },
             }
@@ -258,25 +252,16 @@ class AnalysisPztForceEventTunablesRoundTripTests(unittest.TestCase):
 
             harness = AnalysisPanelHarness(settings_path)
             self.addCleanup(harness.shutdown_analysis_worker)
-            harness.analysis_pzt_zero_floor_spin.setValue(0.999)  # must not survive the load
+            harness.analysis_pzt_zero_band_fraction_spin.setValue(0.999)  # must not survive the load
 
             harness.load_last_analysis_settings()
 
             # The Analysis tab's own fallback defaults are
             # ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS (see gui/analysis_panel.py),
-            # not the shared PZT_FORCE_DEFAULT_SETTINGS -- they diverge for
-            # force_zero_band_min_n (0.05 vs 0.02).
-            self.assertEqual(
-                harness.analysis_pzt_zero_floor_spin.value(),
-                float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"]),
-            )
+            # not the shared PZT_FORCE_DEFAULT_SETTINGS.
             self.assertEqual(
                 harness.analysis_pzt_zero_band_fraction_spin.value(),
                 float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"]),
-            )
-            self.assertEqual(
-                harness.analysis_pzt_min_event_peak_spin.value(),
-                float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"]),
             )
             self.assertEqual(
                 harness.analysis_pzt_quiet_release_spin.value(),

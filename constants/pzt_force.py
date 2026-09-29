@@ -17,14 +17,19 @@ PZT_FORCE_DEFAULT_SETTINGS = {
     # Shear Force / Normal Force run their own independent RC integrators
     # (see build_force_based_shear_normal_traces) on the COMBINED per-channel
     # force-RATE signal (see compute_pzt_force_rate_series), not on raw
-    # volts, so the same volt-tuned threshold no longer means the same thing
-    # here as it does for PZT Channel Force's raw-voltage-gated integrator --
-    # these values are compared against a force-rate quantity now, off by
-    # roughly a factor of capacitance/d33 from a true volt threshold. Kept at
-    # the legacy volt-tuned defaults for now (unretuned) until that unit
-    # mismatch is deliberately resolved.
-    "shear_force_noise_threshold_v": 0.01,
-    "normal_force_noise_threshold_v": 0.01,
+    # volts -- unlike PZT Channel Force's raw-voltage-gated integrator, these
+    # thresholds gate a force-rate quantity in newtons, so they are named
+    # and unit-suffixed accordingly (renamed from the old *_v names; a
+    # volt-tuned value cannot be mechanically converted into this quantity,
+    # since the combined signal already mixes multiple channels' differing
+    # capacitances through ShearDetector's nonlinear opposite-sign-pair
+    # logic -- no single scalar conversion factor applies). PLACEHOLDER
+    # STARTING VALUES, not derived: chosen to sit below the zero-band-min/
+    # min-event-peak defaults below (a noise floor should gate quieter than
+    # those), consistent with the ~2x gap the old volt-tuned defaults had
+    # relative to their own zero-band-min. Requires real-capture calibration.
+    "shear_force_noise_threshold_n": 0.005,
+    "normal_force_noise_threshold_n": 0.005,
     "quiet_duration_s": 2.0,
     "noise_sigma_multiplier": 5.0,
     "mux_timing_mode": "auto",
@@ -72,8 +77,8 @@ ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS = {
     **PZT_FORCE_DEFAULT_SETTINGS,
     "d33_pc_per_n": 120.0,
     "noise_threshold_v": 0.05,
-    "shear_force_noise_threshold_v": 0.05,
-    "normal_force_noise_threshold_v": 0.05,
+    "shear_force_noise_threshold_n": 0.01,
+    "normal_force_noise_threshold_n": 0.01,
     "quiet_duration_s": 0.5,
     "noise_sigma_multiplier": 8.0,
     "off_mux_leak_enabled": False,
