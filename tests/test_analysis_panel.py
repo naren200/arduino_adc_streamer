@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 
-from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS
+from constants.pzt_force import ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS, PZT_FORCE_DEFAULT_SETTINGS
 from gui.analysis_panel import AnalysisPanelMixin
 
 
@@ -159,7 +159,8 @@ class AnalysisPanelHarness(AnalysisPanelMixin):
         self.analysis_shear_check = DummyCheck()
         self.analysis_normal_check = DummyCheck()
         self.analysis_integration_check = DummyCheck()
-        self.analysis_pzt_force_check = DummyCheck()
+        self.analysis_shear_force_check = DummyCheck()
+        self.analysis_normal_force_check = DummyCheck()
 
         self.analysis_pzt_center_capacitance_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["center_capacitance_value"]))
         self.analysis_pzt_outer_capacitance_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["outer_capacitance_value"]))
@@ -182,6 +183,12 @@ class AnalysisPanelHarness(AnalysisPanelMixin):
         self.analysis_pzt_min_event_peak_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"]))
         self.analysis_pzt_quiet_release_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"]))
         self.analysis_pzt_quiet_hold_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]))
+        self.analysis_shear_force_noise_spin = DummySpin(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_noise_threshold_v"]))
+        self.analysis_normal_force_noise_spin = DummySpin(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_noise_threshold_v"]))
+        self.analysis_shear_force_zero_floor_spin = DummySpin(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_zero_band_min_n"]))
+        self.analysis_normal_force_zero_floor_spin = DummySpin(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_zero_band_min_n"]))
+        self.analysis_shear_force_min_event_peak_spin = DummySpin(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["shear_force_zero_min_event_peak_n"]))
+        self.analysis_normal_force_min_event_peak_spin = DummySpin(float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["normal_force_zero_min_event_peak_n"]))
         self.analysis_pzt_baseline_results = DummyTextWidget()
         self.analysis_csv_path_edit = DummyTextWidget()
 
@@ -255,25 +262,29 @@ class AnalysisPztForceEventTunablesRoundTripTests(unittest.TestCase):
 
             harness.load_last_analysis_settings()
 
+            # The Analysis tab's own fallback defaults are
+            # ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS (see gui/analysis_panel.py),
+            # not the shared PZT_FORCE_DEFAULT_SETTINGS -- they diverge for
+            # force_zero_band_min_n (0.05 vs 0.02).
             self.assertEqual(
                 harness.analysis_pzt_zero_floor_spin.value(),
-                float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"]),
+                float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"]),
             )
             self.assertEqual(
                 harness.analysis_pzt_zero_band_fraction_spin.value(),
-                float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"]),
+                float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"]),
             )
             self.assertEqual(
                 harness.analysis_pzt_min_event_peak_spin.value(),
-                float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"]),
+                float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"]),
             )
             self.assertEqual(
                 harness.analysis_pzt_quiet_release_spin.value(),
-                float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"]),
+                float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"]),
             )
             self.assertEqual(
                 harness.analysis_pzt_quiet_hold_spin.value(),
-                float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]),
+                float(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]),
             )
             # An untouched pre-existing key survives alongside the defaults.
             self.assertEqual(harness.analysis_pzt_rleak_spin.value(), 2_000_000.0)

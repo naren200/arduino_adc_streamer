@@ -2340,7 +2340,6 @@ class AnalysisPanelMixin:
             self.analysis_integration_check,
             self.analysis_shear_force_check,
             self.analysis_normal_force_check,
-            self.analysis_pzt_force_check,
             self.analysis_pzt_center_capacitance_spin,
             self.analysis_pzt_outer_capacitance_spin,
             self.analysis_pzt_capacitance_unit_combo,

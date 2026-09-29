@@ -184,6 +184,7 @@ class WorkerLifecycleTests(unittest.TestCase):
             "shutdown_analysis_worker",
             "shutdown_adc_connect_worker",
             "shutdown_force_connect_worker",
+            "shutdown_touchid_worker",
         ):
             setattr(owner, method_name, lambda name=method_name: calls.append(name))
         event = SimpleNamespace(accept=lambda: calls.append("accept"))

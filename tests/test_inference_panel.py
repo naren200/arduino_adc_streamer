@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QApplication
 
 from gui.inference_panel import InferencePanelMixin
 from inference.mode import TouchIdMode
-from touchid_inference.segmentation import ActiveSampleQueue
+from touchid_inference.segmentation import WARMUP_SAMPLES, ActiveSampleQueue
 from touchid_inference.quality_gate import IdleBaseline
 
 
@@ -164,7 +164,11 @@ class ActiveSampleQueueFragIdTests(unittest.TestCase):
         )
         chunk_n = 50  # 0.05s at 1000Hz
         active_chunk = np.ones((chunk_n, 5)) * 10.0  # far above baseline -> active
-        idx = 0
+        # Start well past WARMUP_SAMPLES (segmentation.py silently drops any
+        # window starting before it) -- starting at 0 would put this whole
+        # fragment inside that exclusion zone and never emit a window at all,
+        # which is what this test is not trying to exercise.
+        idx = WARMUP_SAMPLES
         now_t = 0.0
         windows = []
         # Push several active chunks, well past one window_size_s, with no
@@ -187,7 +191,9 @@ class ActiveSampleQueueFragIdTests(unittest.TestCase):
         chunk_n = 50
         active_chunk = np.ones((chunk_n, 5)) * 10.0
         idle_chunk = np.zeros((chunk_n, 5))
-        idx = 0
+        # Start well past WARMUP_SAMPLES -- see comment in
+        # test_windows_from_same_fragment_share_frag_id.
+        idx = WARMUP_SAMPLES
         now_t = 0.0
         windows = []
 
