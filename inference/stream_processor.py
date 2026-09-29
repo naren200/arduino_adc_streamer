@@ -10,7 +10,7 @@ from the snapshot's own sample clock -- see push_chunk's docstring for why
 the two need different clocks).
 
 Owns:
-  - CausalDerivedChannels (the "integrated"/shear/normal causal derivation --
+  - CausalDerivedChannels (the "integrated"/shear-jerk/normal-jerk causal derivation --
     see texture_piezo/src/causal_derived_channels.py's module docstring for
     why feeding it in small incremental chunks or fewer/larger ones produces
     IDENTICAL numbers, which is what makes sharing this class between live
@@ -55,9 +55,9 @@ class ReadyWindow:
 
     window_adc: np.ndarray
     window_integrated: np.ndarray
-    window_shear_lr: np.ndarray
-    window_shear_tb: np.ndarray
-    window_normal: np.ndarray
+    window_shear_jerk_lr: np.ndarray
+    window_shear_jerk_tb: np.ndarray
+    window_normal_jerk: np.ndarray
     window_ts: np.ndarray
     frag_id: int | None
 
@@ -83,7 +83,7 @@ class TouchIdStreamProcessor:
         self.min_span_fill_ratio = float(min_span_fill_ratio)
         self.idle_baseline = idle_baseline
 
-        # Persistent streaming state for the "integrated"/shear/normal
+        # Persistent streaming state for the "integrated"/shear-jerk/normal-jerk
         # derived channels -- one instance for this processor's whole
         # lifetime, .process()'d on each newly-pushed chunk so its bounded
         # windowed sums and unbounded causal medians carry forward
@@ -117,9 +117,9 @@ class TouchIdStreamProcessor:
         n_pzt = len(self.pzt_columns)
         self._store_raw = np.empty((0, n_pzt))
         self._store_integrated = np.empty((0, n_pzt))
-        self._store_shear_lr = np.empty(0)
-        self._store_shear_tb = np.empty(0)
-        self._store_normal = np.empty(0)
+        self._store_shear_jerk_lr = np.empty(0)
+        self._store_shear_jerk_tb = np.empty(0)
+        self._store_normal_jerk = np.empty(0)
         self._store_ts = np.empty(0)
         self._store_base_abs = 0  # abs index of store[0]
         self._store_next_abs = 0  # abs index just past the last appended sample
@@ -149,9 +149,9 @@ class TouchIdStreamProcessor:
         integrated = np.stack([derived['integrated'][col] for col in pzt_columns], axis=1)
         self._store_raw = np.concatenate([self._store_raw, raw], axis=0)
         self._store_integrated = np.concatenate([self._store_integrated, integrated], axis=0)
-        self._store_shear_lr = np.concatenate([self._store_shear_lr, derived['shear_lr']])
-        self._store_shear_tb = np.concatenate([self._store_shear_tb, derived['shear_tb']])
-        self._store_normal = np.concatenate([self._store_normal, derived['normal']])
+        self._store_shear_jerk_lr = np.concatenate([self._store_shear_jerk_lr, derived['shear_jerk_lr']])
+        self._store_shear_jerk_tb = np.concatenate([self._store_shear_jerk_tb, derived['shear_jerk_tb']])
+        self._store_normal_jerk = np.concatenate([self._store_normal_jerk, derived['normal_jerk']])
         self._store_ts = np.concatenate([self._store_ts, np.asarray(timestamps, dtype=np.float64)])
         self._store_next_abs += len(raw)
 
@@ -175,16 +175,16 @@ class TouchIdStreamProcessor:
             return
         self._store_raw = self._store_raw[trim_n:]
         self._store_integrated = self._store_integrated[trim_n:]
-        self._store_shear_lr = self._store_shear_lr[trim_n:]
-        self._store_shear_tb = self._store_shear_tb[trim_n:]
-        self._store_normal = self._store_normal[trim_n:]
+        self._store_shear_jerk_lr = self._store_shear_jerk_lr[trim_n:]
+        self._store_shear_jerk_tb = self._store_shear_jerk_tb[trim_n:]
+        self._store_normal_jerk = self._store_normal_jerk[trim_n:]
         self._store_ts = self._store_ts[trim_n:]
         self._store_base_abs = trim_to_abs
 
     def _slice_store(self, start_abs: int, end_abs: int):
         """Slice the continuous store at an absolute (start_idx, end_idx)
         pair from ActiveSampleQueue -- returns (window_adc, window_integrated,
-        window_shear_lr, window_shear_tb, window_normal, window_ts), or None
+        window_shear_jerk_lr, window_shear_jerk_tb, window_normal_jerk, window_ts), or None
         if the range has already been trimmed out (shouldn't happen given
         _trim_store's safety margin, but guarded rather than slicing
         garbage)."""
@@ -195,9 +195,9 @@ class TouchIdStreamProcessor:
         return (
             self._store_raw[start_i:end_i],
             self._store_integrated[start_i:end_i],
-            self._store_shear_lr[start_i:end_i],
-            self._store_shear_tb[start_i:end_i],
-            self._store_normal[start_i:end_i],
+            self._store_shear_jerk_lr[start_i:end_i],
+            self._store_shear_jerk_tb[start_i:end_i],
+            self._store_normal_jerk[start_i:end_i],
             self._store_ts[start_i:end_i],
         )
 
@@ -248,9 +248,9 @@ class TouchIdStreamProcessor:
         is_window_quality's old no-op-without-a-baseline behavior)."""
         pzt_columns = self.pzt_columns
         derived_channel_samples = {f'integrated_{col}': derived['integrated'][col] for col in pzt_columns}
-        derived_channel_samples['shear_lr'] = derived['shear_lr']
-        derived_channel_samples['shear_tb'] = derived['shear_tb']
-        derived_channel_samples['normal'] = derived['normal']
+        derived_channel_samples['shear_jerk_lr'] = derived['shear_jerk_lr']
+        derived_channel_samples['shear_jerk_tb'] = derived['shear_jerk_tb']
+        derived_channel_samples['normal_jerk'] = derived['normal_jerk']
         self._buffer.push(channel_samples, timestamps)
         self._derived_buffer.push(derived_channel_samples, timestamps)
 
@@ -264,16 +264,16 @@ class TouchIdStreamProcessor:
         derived_window_adc, _derived_ts = derived_window
         n_pzt = len(pzt_columns)
         window_integrated = derived_window_adc[:, :n_pzt]
-        window_shear_lr = derived_window_adc[:, n_pzt]
-        window_shear_tb = derived_window_adc[:, n_pzt + 1]
-        window_normal = derived_window_adc[:, n_pzt + 2]
+        window_shear_jerk_lr = derived_window_adc[:, n_pzt]
+        window_shear_jerk_tb = derived_window_adc[:, n_pzt + 1]
+        window_normal_jerk = derived_window_adc[:, n_pzt + 2]
 
         return [ReadyWindow(
             window_adc=window_adc,
             window_integrated=window_integrated,
-            window_shear_lr=window_shear_lr,
-            window_shear_tb=window_shear_tb,
-            window_normal=window_normal,
+            window_shear_jerk_lr=window_shear_jerk_lr,
+            window_shear_jerk_tb=window_shear_jerk_tb,
+            window_normal_jerk=window_normal_jerk,
             window_ts=window_ts,
             frag_id=None,
         )]
@@ -318,13 +318,13 @@ class TouchIdStreamProcessor:
             if sliced is None:
                 continue
             window_adc = sliced[0]
-            window_integrated, window_shear_lr, window_shear_tb, window_normal, window_ts = sliced[1:]
+            window_integrated, window_shear_jerk_lr, window_shear_jerk_tb, window_normal_jerk, window_ts = sliced[1:]
             ready.append(ReadyWindow(
                 window_adc=window_adc,
                 window_integrated=window_integrated,
-                window_shear_lr=window_shear_lr,
-                window_shear_tb=window_shear_tb,
-                window_normal=window_normal,
+                window_shear_jerk_lr=window_shear_jerk_lr,
+                window_shear_jerk_tb=window_shear_jerk_tb,
+                window_normal_jerk=window_normal_jerk,
                 window_ts=window_ts,
                 frag_id=frag_id,
             ))

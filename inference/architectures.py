@@ -141,7 +141,7 @@ class ArchitectureRuntime:
     """Common interface every loaded architecture exposes to TextureClassifier.
 
     window_channels is (n_samples, n_pzt + 3): the raw PZT channels in
-    pzt_columns order, followed by [shear_lr, shear_tb, normal] -- the same
+    pzt_columns order, followed by [shear_jerk_lr, shear_jerk_tb, normal_jerk] -- the same
     layout pipeline.classify_window already builds for every architecture.
     Architectures that don't need it (ANN) simply ignore the argument.
     """
@@ -264,7 +264,7 @@ class _QuadPentaRuntime(ArchitectureRuntime):
         self.feature_names = _load_feature_names() if fusion_feat_names else []
 
     def _build_signal_groups(self, window_channels: np.ndarray, window_integrated: np.ndarray | None = None):
-        # window_channels: (n_samples, n_pzt + 3) = [pzt(5), shear_lr, shear_tb, normal]
+        # window_channels: (n_samples, n_pzt + 3) = [pzt(5), shear_jerk_lr, shear_jerk_tb, normal_jerk]
         # Resample (not pad/truncate -- see texture_piezo/src/data.py
         # pad_or_truncate_raw) to the exact fixed length the model was
         # trained on (07_model_v4.ipynb / 04_model_no_SIFT_complexity_v3.ipynb),

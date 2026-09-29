@@ -75,7 +75,7 @@ def _time_pipeline(fs: float, pzt_columns: list[str], n_repeats: int) -> list[fl
         derived = channels.process(chunk_by_column)
         window_integrated = np.column_stack([derived["integrated"][col] for col in pzt_columns])
         extract_window_features(
-            window_adc, window_integrated, derived["shear_lr"], derived["shear_tb"], derived["normal"], fs,
+            window_adc, window_integrated, derived["shear_jerk_lr"], derived["shear_jerk_tb"], derived["normal_jerk"], fs,
         )
         end = time.perf_counter()
         durations_ms.append((end - start) * 1000.0)

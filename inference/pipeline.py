@@ -34,9 +34,9 @@ from clip_windowing_utils_v1 import extract_window_features  # noqa: E402
 def classify_window(
     window_adc: np.ndarray,
     window_integrated: np.ndarray,
-    window_shear_lr: np.ndarray,
-    window_shear_tb: np.ndarray,
-    window_normal: np.ndarray,
+    window_shear_jerk_lr: np.ndarray,
+    window_shear_jerk_tb: np.ndarray,
+    window_normal_jerk: np.ndarray,
     fs: float,
     classifier,
 ) -> dict[str, float]:
@@ -51,18 +51,18 @@ def classify_window(
         the caller's pzt_columns.
     window_integrated: (n_samples, n_pzt) -- slice of a whole-file/whole-
         session continuous CausalDerivedChannels "integrated" output.
-    window_shear_lr/window_shear_tb/window_normal: (n_samples,) -- slices of
+    window_shear_jerk_lr/window_shear_jerk_tb/window_normal_jerk: (n_samples,) -- slices of
         the same CausalDerivedChannels output's shear/normal channels.
     classifier: a TextureClassifier (its model_type selects ANN/CNN/Quad/Penta input).
     """
     features = extract_window_features(
-        window_adc, window_integrated, window_shear_lr, window_shear_tb, window_normal, fs,
+        window_adc, window_integrated, window_shear_jerk_lr, window_shear_jerk_tb, window_normal_jerk, fs,
     )
 
     # Built for every architecture except "ann" (which ignores it) -- cheap
     # column_stack, not worth gating per model_type here when classifier.py's
     # architecture registry is what actually decides who needs it.
-    window_channels = np.column_stack([window_adc, window_shear_lr, window_shear_tb, window_normal])
+    window_channels = np.column_stack([window_adc, window_shear_jerk_lr, window_shear_jerk_tb, window_normal_jerk])
 
     return classifier.predict_proba(
         features, window_channels=window_channels, window_integrated=window_integrated)

@@ -1622,9 +1622,9 @@ class InferencePanelMixin:
         self.touchid_classify_worker.submit({
             'window_adc': window.window_adc,
             'window_integrated': window.window_integrated,
-            'window_shear_lr': window.window_shear_lr,
-            'window_shear_tb': window.window_shear_tb,
-            'window_normal': window.window_normal,
+            'window_shear_jerk_lr': window.window_shear_jerk_lr,
+            'window_shear_jerk_tb': window.window_shear_jerk_tb,
+            'window_normal_jerk': window.window_normal_jerk,
             'fs': fs,
             'classifier': self.touchid_classifier,
             'window_ts': window.window_ts,

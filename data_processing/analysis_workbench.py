@@ -846,9 +846,9 @@ def build_overlay_traces(
     )
     shear_detector = ShearDetector()
     normal_calculator = NormalForceCalculator()
-    shear_lr: list[float] = []
-    shear_tb: list[float] = []
-    normal: list[float] = []
+    shear_jerk_lr: list[float] = []
+    shear_jerk_tb: list[float] = []
+    normal_jerk: list[float] = []
 
     # integrate_voltage_series_causal_median already dropped its own leading
     # warmup samples -- every position's array is the same, already-trimmed
@@ -861,16 +861,16 @@ def build_overlay_traces(
         }
         shear = shear_detector.detect(values)
         normal_result = normal_calculator.compute(shear.residual)
-        shear_lr.append(float(shear.b_lr))
-        shear_tb.append(float(shear.b_tb))
-        normal.append(float(normal_result.total_force))
+        shear_jerk_lr.append(float(shear.b_lr))
+        shear_jerk_tb.append(float(shear.b_tb))
+        normal_jerk.append(float(normal_result.total_force))
 
     trimmed_x = _trim_x_to_moving_window_warmup(integration_window_samples, x)
     if overlay_flags.get("shear", False):
-        overlays.append(AnalysisTrace("Shear L/R Jerk [V]", trimmed_x, np.asarray(shear_lr, dtype=np.float64), "derived"))
-        overlays.append(AnalysisTrace("Shear T/B Jerk [V]", trimmed_x, np.asarray(shear_tb, dtype=np.float64), "derived"))
+        overlays.append(AnalysisTrace("Shear L/R Jerk [V]", trimmed_x, np.asarray(shear_jerk_lr, dtype=np.float64), "derived"))
+        overlays.append(AnalysisTrace("Shear T/B Jerk [V]", trimmed_x, np.asarray(shear_jerk_tb, dtype=np.float64), "derived"))
     if overlay_flags.get("normal", False):
-        overlays.append(AnalysisTrace("Normal Jerk [V]", trimmed_x, np.asarray(normal, dtype=np.float64), "derived"))
+        overlays.append(AnalysisTrace("Normal Jerk [V]", trimmed_x, np.asarray(normal_jerk, dtype=np.float64), "derived"))
     return overlays
 
 
@@ -933,9 +933,9 @@ def _compute_shear_normal_from_moving_average(
     # warmup samples -- every position's array is the same, already-trimmed
     # length, shorter than snapshot.sweep_count.
     trimmed_count = len(next(iter(averaged.values()))) if averaged else 0
-    shear_lr_avg = np.zeros(trimmed_count, dtype=np.float64)
-    shear_tb_avg = np.zeros(trimmed_count, dtype=np.float64)
-    normal_avg = np.zeros(trimmed_count, dtype=np.float64)
+    shear_jerk_lr_avg = np.zeros(trimmed_count, dtype=np.float64)
+    shear_jerk_tb_avg = np.zeros(trimmed_count, dtype=np.float64)
+    normal_jerk_avg = np.zeros(trimmed_count, dtype=np.float64)
     for row_index in range(trimmed_count):
         values = {
             position: float(np.asarray(averaged[position], dtype=np.float64)[row_index])
@@ -943,11 +943,11 @@ def _compute_shear_normal_from_moving_average(
         }
         shear = shear_detector.detect(values)
         normal_result = normal_calculator.compute(shear.residual)
-        shear_lr_avg[row_index] = shear.b_lr
-        shear_tb_avg[row_index] = shear.b_tb
-        normal_avg[row_index] = normal_result.total_force
+        shear_jerk_lr_avg[row_index] = shear.b_lr
+        shear_jerk_tb_avg[row_index] = shear.b_tb
+        normal_jerk_avg[row_index] = normal_result.total_force
 
-    return position_channels, shear_lr_avg, shear_tb_avg, normal_avg
+    return position_channels, shear_jerk_lr_avg, shear_jerk_tb_avg, normal_jerk_avg
 
 
 def _role_for_shear_normal_position(sensor_position: str) -> str:
@@ -1087,11 +1087,11 @@ def build_force_based_shear_normal_traces(
     )
     if computed is None:
         raise ValueError("Shear Force / Normal Force requires all five C/L/R/T/B channels")
-    position_channels, shear_lr_avg, shear_tb_avg, normal_avg = computed
+    position_channels, shear_jerk_lr_avg, shear_jerk_tb_avg, normal_jerk_avg = computed
 
     time_base_s = build_trace_time_axis_seconds(snapshot)
     row_time_s = time_base_s[:, 0] if time_base_s.size else np.empty(0, dtype=np.float64)
-    # shear_lr_avg/shear_tb_avg/normal_avg already dropped their own leading
+    # shear_jerk_lr_avg/shear_jerk_tb_avg/normal_jerk_avg already dropped their own leading
     # warmup samples inside _compute_shear_normal_from_moving_average -- the
     # matching time axis must drop the same count to stay aligned, so each
     # RC integrator's very first input is already a fully warmed-up average
@@ -1104,13 +1104,13 @@ def build_force_based_shear_normal_traces(
     x = _trim_x_to_moving_window_warmup(integration_window_samples, x)
 
     normal_force = _integrate_causal_series(
-        normal_avg, row_time_s, _new_shear_normal_force_integrator(pzt_force_settings, "C")
+        normal_jerk_avg, row_time_s, _new_shear_normal_force_integrator(pzt_force_settings, "C")
     )
     shear_force_lr = _integrate_causal_series(
-        shear_lr_avg, row_time_s, _new_shear_normal_force_integrator(pzt_force_settings, "L")
+        shear_jerk_lr_avg, row_time_s, _new_shear_normal_force_integrator(pzt_force_settings, "L")
     )
     shear_force_tb = _integrate_causal_series(
-        shear_tb_avg, row_time_s, _new_shear_normal_force_integrator(pzt_force_settings, "T")
+        shear_jerk_tb_avg, row_time_s, _new_shear_normal_force_integrator(pzt_force_settings, "T")
     )
 
     traces: list[AnalysisTrace] = []

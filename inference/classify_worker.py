@@ -61,9 +61,9 @@ class TouchIdClassifyWorker(QThread):
                 probs = classify_window(
                     payload["window_adc"],
                     payload["window_integrated"],
-                    payload["window_shear_lr"],
-                    payload["window_shear_tb"],
-                    payload["window_normal"],
+                    payload["window_shear_jerk_lr"],
+                    payload["window_shear_jerk_tb"],
+                    payload["window_normal_jerk"],
                     payload["fs"],
                     payload["classifier"],
                 )

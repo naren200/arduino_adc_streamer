@@ -42,7 +42,7 @@ class TextureClassifier:
     ) -> dict[str, float]:
         """
         feature_vector: (n_feat,) hand-crafted features, same for every model type.
-        window_channels: (n_samples, n_pzt + 3) raw [pzt(5), shear_lr, shear_tb, normal]
+        window_channels: (n_samples, n_pzt + 3) raw [pzt(5), shear_jerk_lr, shear_jerk_tb, normal_jerk]
             window -- required for every architecture except "ann", ignored otherwise.
         window_integrated: optional (n_samples, n_pzt) whole-file-integrated ADC
             slice -- see pipeline.classify_window. Only quad/penta use it.
