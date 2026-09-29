@@ -15,10 +15,14 @@ PZT_FORCE_DEFAULT_SETTINGS = {
     "d33_pc_per_n": 600.0,
     "noise_threshold_v": 0.01,
     # Shear Force / Normal Force run their own independent RC integrators
-    # (see build_force_based_shear_normal_traces) on a moving-AVERAGE signal
-    # rather than PZT Channel Force's moving-SUM, so the same volt/newton
-    # thresholds don't scale the same way. Default to the shared values
-    # above so nothing changes until these are explicitly diverged.
+    # (see build_force_based_shear_normal_traces) on the COMBINED per-channel
+    # force-RATE signal (see compute_pzt_force_rate_series), not on raw
+    # volts, so the same volt-tuned threshold no longer means the same thing
+    # here as it does for PZT Channel Force's raw-voltage-gated integrator --
+    # these values are compared against a force-rate quantity now, off by
+    # roughly a factor of capacitance/d33 from a true volt threshold. Kept at
+    # the legacy volt-tuned defaults for now (unretuned) until that unit
+    # mismatch is deliberately resolved.
     "shear_force_noise_threshold_v": 0.01,
     "normal_force_noise_threshold_v": 0.01,
     "quiet_duration_s": 2.0,

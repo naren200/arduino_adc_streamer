@@ -13,7 +13,13 @@ import math
 
 import pytest
 
-from data_processing.pzt_force_calculation import PztForceChannelIntegrator
+import numpy as np
+
+from data_processing.pzt_force_calculation import (
+    PztChannelPhysicalParams,
+    PztForceChannelIntegrator,
+    compute_pzt_force_rate_series,
+)
 
 KWARGS = dict(
     capacitance_f=150e-12,
@@ -514,3 +520,95 @@ def test_stuck_force_failsafe_engages_on_a_sub_floor_residual():
     assert step.stuck_decay_active
     assert step.reset_occurred
     assert integ.accumulated_force_n == 0.0
+
+
+class TestComputePztForceRateSeries:
+    """``compute_pzt_force_rate_series`` is the stateless per-channel RATE
+    stage (no thresholding, no accumulation, no event machine) extracted out
+    of ``PztForceChannelIntegrator.process_centered_sample`` for Shear/Normal
+    Force's per-channel-before-combination pipeline. These tests confirm the
+    extraction changed nothing about the underlying arithmetic.
+    """
+
+    PARAMS = PztChannelPhysicalParams(
+        capacitance_f=150e-12, rleak_ohm=1e6, d33_c_per_n=600e-12,
+    )
+
+    def test_matches_hand_computed_example(self):
+        # tau = R*C = 1.5e-4 s, far shorter than the 0.01 s sample spacing,
+        # so alpha ~= 0 and each rate sample collapses to (C/d33)*v[n] =
+        # 0.25 * v[n] -- same simplification the module docstring uses.
+        voltage = np.asarray([0.0, 0.2, -0.1, 0.05], dtype=np.float64)
+        time_s = np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64)
+
+        rate = compute_pzt_force_rate_series(voltage, time_s, self.PARAMS)
+
+        assert rate[0] == 0.0  # no previous sample
+        assert rate == pytest.approx([0.0, 0.05, -0.025, 0.0125], abs=1e-9)
+
+    def test_matches_process_centered_sample_when_event_machine_never_fires(self):
+        # A threshold of exactly 0.0 (every nonzero sample "active"),
+        # self_reset_enabled=False (no natural-zero/fallback ever zeroes the
+        # accumulator), and disabled stuck-force failsafe together guarantee
+        # process_centered_sample's nonlinear event/reset machinery never
+        # touches accumulated_force_n -- so its per-sample delta must be the
+        # same pure RC-charge recurrence compute_pzt_force_rate_series uses.
+        voltage = np.asarray([0.0, 0.2, -0.35, 0.1, 0.0, -0.05], dtype=np.float64)
+        time_s = np.asarray([0.0, 0.01, 0.02, 0.03, 0.05, 0.09], dtype=np.float64)
+
+        rate = compute_pzt_force_rate_series(voltage, time_s, self.PARAMS)
+
+        integ = PztForceChannelIntegrator(
+            capacitance_f=self.PARAMS.capacitance_f,
+            rleak_ohm=self.PARAMS.rleak_ohm,
+            d33_c_per_n=self.PARAMS.d33_c_per_n,
+            noise_threshold_v=0.0,
+            self_reset_enabled=False,
+            stuck_force_failsafe_enabled=False,
+        )
+        deltas = [integ.process_centered_sample(float(v), float(t)).delta_force_n for v, t in zip(voltage, time_s)]
+
+        assert rate == pytest.approx(deltas, abs=1e-12)
+
+    def test_first_sample_is_zero_with_no_previous_sample(self):
+        rate = compute_pzt_force_rate_series(
+            np.asarray([0.3], dtype=np.float64), np.asarray([0.0], dtype=np.float64), self.PARAMS,
+        )
+        assert rate.tolist() == [0.0]
+
+    def test_off_mux_leak_and_pre_sample_decay_match_the_stateful_integrator(self):
+        # Exercises the off-MUX leak path and pre-sample decay correction --
+        # the two knobs most likely to be silently dropped in an extraction.
+        voltage = np.asarray([0.0, 0.4, -0.2, 0.15], dtype=np.float64)
+        time_s = np.asarray([0.0, 0.01, 0.03, 0.05], dtype=np.float64)
+        leak_dt_s = np.asarray([0.004, 0.004, 0.004], dtype=np.float64)
+        pre_sample_decay_dt_s = np.asarray([0.0005, 0.0005, 0.0005], dtype=np.float64)
+
+        params = PztChannelPhysicalParams(
+            capacitance_f=150e-12, rleak_ohm=1e6, d33_c_per_n=600e-12, off_mux_rleak_ohm=5e6,
+        )
+        rate = compute_pzt_force_rate_series(
+            voltage, time_s, params, leak_dt_s=leak_dt_s, pre_sample_decay_dt_s=pre_sample_decay_dt_s,
+        )
+
+        integ = PztForceChannelIntegrator(
+            capacitance_f=params.capacitance_f,
+            rleak_ohm=params.rleak_ohm,
+            d33_c_per_n=params.d33_c_per_n,
+            noise_threshold_v=0.0,
+            off_mux_rleak_ohm=params.off_mux_rleak_ohm,
+            self_reset_enabled=False,
+            stuck_force_failsafe_enabled=False,
+        )
+        deltas = [
+            integ.process_centered_sample(float(voltage[0]), float(time_s[0])).delta_force_n
+        ]
+        for index in range(1, len(voltage)):
+            step = integ.process_centered_sample(
+                float(voltage[index]), float(time_s[index]),
+                leak_dt_s=float(leak_dt_s[index - 1]),
+                pre_sample_decay_dt_s=float(pre_sample_decay_dt_s[index - 1]),
+            )
+            deltas.append(step.delta_force_n)
+
+        assert rate == pytest.approx(deltas, abs=1e-12)

@@ -95,6 +95,96 @@ from constants.pzt_force import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class PztChannelPhysicalParams:
+    """Fixed-per-channel RC-charge physical constants (see :func:`_pzt_charge_delta_force`)."""
+
+    capacitance_f: float
+    rleak_ohm: float
+    d33_c_per_n: float
+    off_mux_rleak_ohm: float | None = None
+
+
+def _pzt_charge_delta_force(
+    params: PztChannelPhysicalParams,
+    previous_voltage_v,
+    voltage_v,
+    *,
+    leak_dt_s,
+    wall_dt_s,
+    pre_sample_decay_dt_s=0.0,
+):
+    """One RC-charge increment: ``(C/d33) * correction * (v[n] - alpha*v[n-1])``.
+
+    The sole implementation of the charge-to-force recurrence, shared by the
+    stateful per-sample :meth:`PztForceChannelIntegrator.process_centered_sample`
+    and the stateless vectorized :func:`compute_pzt_force_rate_series`. Every
+    argument may be a Python float (one sample) or a numpy array (a whole
+    series) -- the arithmetic is elementwise either way.
+    """
+    tau_on = params.rleak_ohm * params.capacitance_f
+    decay_exponent = leak_dt_s / tau_on
+    if params.off_mux_rleak_ohm is not None:
+        tau_off = params.off_mux_rleak_ohm * params.capacitance_f
+        decay_exponent = decay_exponent + np.maximum(wall_dt_s - leak_dt_s, 0.0) / tau_off
+    alpha = np.exp(-decay_exponent)
+    correction = np.exp(pre_sample_decay_dt_s / tau_on)
+    return (params.capacitance_f / params.d33_c_per_n) * correction * (voltage_v - alpha * previous_voltage_v)
+
+
+def compute_pzt_force_rate_series(
+    voltage_v,
+    time_s,
+    params: PztChannelPhysicalParams,
+    *,
+    leak_dt_s=None,
+    pre_sample_decay_dt_s=None,
+) -> np.ndarray:
+    """Vectorized, stateless per-channel RC-charge force RATE ("jerk").
+
+    Unlike :func:`calculate_pzt_force_from_voltage`, this applies no noise
+    thresholding, no hysteresis, no accumulation, and no natural-zero/reset
+    machinery -- it is pure per-sample physics, safe to combine (e.g. via
+    :class:`~data_processing.shear_detector.ShearDetector`) BEFORE any
+    nonlinear event state runs. Callers that need the full stateful pipeline
+    should use :class:`PztForceChannelIntegrator` instead. ``voltage_v`` must
+    already be baseline-centered by the caller; this never re-centers.
+
+    Returns one rate sample per input sample; the first sample has no
+    previous sample and is ``0.0``, matching
+    :meth:`PztForceChannelIntegrator.process_centered_sample`'s convention.
+    """
+    validate_pzt_force_settings(params.capacitance_f, params.rleak_ohm, params.d33_c_per_n)
+    voltage = np.asarray(voltage_v, dtype=np.float64).reshape(-1)
+    times = np.asarray(time_s, dtype=np.float64).reshape(-1)
+    rate = np.zeros(voltage.size, dtype=np.float64)
+    if voltage.size < 2:
+        return rate
+    if times.size != voltage.size:
+        raise ValueError("PZT force timestamps must match voltage samples")
+
+    wall_dt = np.diff(times)
+    if not np.all(np.isfinite(wall_dt)) or not np.all(wall_dt > 0.0):
+        raise ValueError("PZT force timestamps must be strictly increasing")
+
+    leak_intervals = _normalize_leak_intervals(leak_dt_s, voltage.size)
+    leak_dt = wall_dt if leak_intervals is None else np.clip(leak_intervals, 0.0, wall_dt)
+    pre_sample_intervals = _normalize_leak_intervals(pre_sample_decay_dt_s, voltage.size)
+    pre_sample_dt = np.zeros_like(wall_dt) if pre_sample_intervals is None else pre_sample_intervals
+    if np.any(pre_sample_dt < 0.0):
+        raise ValueError("PZT force pre_sample_decay_dt_s must not be negative")
+
+    rate[1:] = _pzt_charge_delta_force(
+        params,
+        voltage[:-1],
+        voltage[1:],
+        leak_dt_s=leak_dt,
+        wall_dt_s=wall_dt,
+        pre_sample_decay_dt_s=pre_sample_dt,
+    )
+    return rate
+
+
 @dataclass(slots=True)
 class PztQuietBaselineEstimate:
     """Robust baseline/noise estimate from a quiet voltage window."""
@@ -307,17 +397,20 @@ class PztForceChannelIntegrator:
         )
         sample_voltage = voltage if (is_active_sample or hysteresis_active) else 0.0
 
-        tau_on = float(self.rleak_ohm) * float(self.capacitance_f)
-        decay_exponent = leak_dt / tau_on
-        if self.off_mux_rleak_ohm is not None:
-            tau_off = float(self.off_mux_rleak_ohm) * float(self.capacitance_f)
-            decay_exponent += max(wall_dt - leak_dt, 0.0) / tau_off
-        alpha = float(np.exp(-decay_exponent))
-        correction = float(np.exp(pre_sample_dt / tau_on))
         prior_force = self.accumulated_force_n
-        self.accumulated_force_n += (
-            float(self.capacitance_f) / float(self.d33_c_per_n)
-        ) * correction * (sample_voltage - alpha * self.previous_centered_voltage_v)
+        self.accumulated_force_n += float(_pzt_charge_delta_force(
+            PztChannelPhysicalParams(
+                capacitance_f=float(self.capacitance_f),
+                rleak_ohm=float(self.rleak_ohm),
+                d33_c_per_n=float(self.d33_c_per_n),
+                off_mux_rleak_ohm=None if self.off_mux_rleak_ohm is None else float(self.off_mux_rleak_ohm),
+            ),
+            self.previous_centered_voltage_v,
+            sample_voltage,
+            leak_dt_s=leak_dt,
+            wall_dt_s=wall_dt,
+            pre_sample_decay_dt_s=pre_sample_dt,
+        ))
 
         natural_zero_occurred = False
         fallback_reset_occurred = False
