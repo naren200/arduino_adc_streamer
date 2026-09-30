@@ -18,14 +18,16 @@ Dependencies:
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from pathlib import Path
-from typing import Hashable
+from typing import Hashable, Mapping
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import QByteArray, QSettings, Qt, QTimer, pyqtSlot
+from PyQt6.QtCore import QByteArray, QEvent, QObject, QRect, QSettings, Qt, pyqtSlot
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -227,6 +229,34 @@ from gui.pressure_map_widget import PressureMapPackageDisplay, PressureMapWidget
 
 
 PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION = 2
+# Cap a freshly-floated pane to this fraction of its screen's available area
+# so dragging a pane off a large docked layout doesn't pop it up oversized.
+PRESSURE_MAP_FLOATING_DOCK_MAX_SCREEN_FRACTION = 0.6
+
+
+class _PressureMapDockResizeLogger(QObject):
+    """Logs every resize of a floating Pressure Map dock, for diagnosis.
+
+    Installed as an event filter rather than a method on
+    ``PressureMapPanelMixin`` itself: ``AnalysisPanelMixin`` (mixed into the
+    same ``ADCStreamerGUI``) already defines its own non-chaining
+    ``eventFilter``, and only one same-named method can win across mixins.
+    """
+
+    def __init__(self, dock: QDockWidget, *, log) -> None:
+        super().__init__(dock)
+        self._dock = dock
+        self._log = log
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt override signature
+        if event.type() == QEvent.Type.Resize and watched is self._dock and self._dock.isFloating():
+            old = event.oldSize()
+            new = event.size()
+            self._log(
+                f"Pressure Map: '{self._dock.objectName()}' resized while floating: "
+                f"{old.width()}x{old.height()} -> {new.width()}x{new.height()}."
+            )
+        return False
 
 
 class PressureMapPanelMixin:
@@ -575,7 +605,10 @@ class PressureMapPanelMixin:
         self._signal_integration_updating_plot = False
         self._rebuild_pressure_force_engine()
         self.update_pressure_map_timeline_controls()
-        self._restore_pressure_map_workspace_layout()
+        # Always start tabbed by default; a previously saved layout (including
+        # floated windows) is only applied when the user explicitly clicks
+        # "Load Saved Layout" in Settings.
+        self.reset_pressure_map_workspace_layout(save=False)
         self._connect_pressure_map_workspace_signals()
 
         return tab
@@ -597,14 +630,29 @@ class PressureMapPanelMixin:
         )
         dock.setWidget(content)
         self.pressure_map_workspace.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        logger = _PressureMapDockResizeLogger(dock, log=lambda msg: self._log_pressure_map_status(msg))
+        dock.installEventFilter(logger)
+        # Qt won't call an event filter after its QObject is garbage
+        # collected, so keep it alive for as long as the dock is.
+        self._pressure_map_dock_resize_loggers = getattr(self, "_pressure_map_dock_resize_loggers", [])
+        self._pressure_map_dock_resize_loggers.append(logger)
         return dock
 
-    def _restore_pressure_map_workspace_layout(self) -> None:
-        """Restore a compatible docked layout, or use the tabbed default."""
+    def _log_pressure_map_status(self, message: str) -> None:
+        if hasattr(self, "log_status"):
+            self.log_status(message)
+
+    def load_pressure_map_workspace_layout(self) -> bool:
+        """Apply the last explicitly-saved layout, if one exists.
+
+        Unlike the tab's default tabbed startup, this is only ever invoked
+        on demand (the "Load Saved Layout" button), never automatically.
+        Returns True if a saved layout was found and applied.
+        """
 
         workspace = getattr(self, "pressure_map_workspace", None)
         if workspace is None:
-            return
+            return False
         settings = self._pressure_map_workspace_qsettings()
         try:
             layout_version = int(settings.value("layout_version", 0))
@@ -613,19 +661,237 @@ class PressureMapPanelMixin:
         state = settings.value("dock_state") if layout_version == PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION else None
         if isinstance(state, str):
             state = QByteArray.fromBase64(state.encode("ascii"))
-        if (
-            isinstance(state, QByteArray)
-            and not state.isEmpty()
-            and workspace.restoreState(state, PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION)
-        ):
+        if not (isinstance(state, QByteArray) and not state.isEmpty()):
+            return False
+        # Read the saved floating/geometry snapshot *before* touching the
+        # workspace: restoreState() below transiently toggles docks through
+        # intermediate states as it applies the saved layout, and each
+        # toggle fires the auto-save handler, which would otherwise
+        # overwrite this very setting with a half-applied snapshot before
+        # we get a chance to read it back.
+        try:
+            floating_state = json.loads(settings.value("floating_docks", "{}") or "{}")
+        except (TypeError, ValueError):
+            floating_state = {}
+        # Suppress the drag-to-float auto-shrink/auto-save handler entirely:
+        # restoring a saved layout should reproduce the saved floating
+        # geometry exactly, not squash it back down or persist any of the
+        # transient states Qt passes through while applying it.
+        self._pressure_map_restoring_layout = True
+        try:
+            # A pane that should end up docked after this load may still be
+            # carrying a stale size floor from an earlier float -- clear it
+            # before restoreState/setFloating(False) tries to redock it, or
+            # the pane can fail to fit into the tabbed area at all.
+            self._clear_pressure_map_dock_size_floors()
+            restored = workspace.restoreState(state, PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION)
+            if restored:
+                self._apply_saved_pressure_map_floating_state(floating_state)
+        finally:
+            self._pressure_map_restoring_layout = False
+        if restored:
+            self._clamp_pressure_map_floating_docks_to_screen()
+            return True
+        return False
+
+    def _apply_saved_pressure_map_floating_state(self, floating_state: dict[str, list[int]]) -> None:
+        """Explicitly re-float/re-dock each pane per the saved snapshot.
+
+        ``QMainWindow.restoreState()`` only reliably re-applies a dock's
+        floating flag right after the window is constructed; called on an
+        already-running window (the normal case for the "Load Saved Layout"
+        button) it can silently leave a pane docked even though the saved
+        state says it was floating. Apply the floating flag and geometry
+        ourselves so loading behaves the same whether the app just started
+        or has been running for a while.
+        """
+
+        docks = (
+            ("pressure_map_display_dock", "pressure_map_jerk_display_dock"),
+            ("pressure_map_force_display_dock", "pressure_map_force_display_dock"),
+            ("pressure_map_settings_dock", "pressure_map_settings_dock"),
+        )
+        resolved = [
+            (getattr(self, dock_name, None), floating_state.get(object_name))
+            for dock_name, object_name in docks
+        ]
+        # Two passes, not interleaved: if two panes are still merged in a
+        # floating group window from a previous session, detaching every
+        # member (setFloating(False)) before re-floating any of them avoids
+        # pulling members out of that shared window one at a time, which
+        # left a later member unable to reattach.
+        for dock, _saved_geometry in resolved:
+            if dock is None:
+                continue
+            # QDockWidget's internal floating flag can desync from restoreState()
+            # on an already-running window, making a bare setFloating(True) a
+            # silent no-op. Force it through False first so the True call is
+            # always a genuine state transition.
+            dock.setFloating(False)
+        for dock, saved_geometry in resolved:
+            if dock is None or not saved_geometry:
+                continue
+            dock.setFloating(True)
+            dock.setGeometry(QRect(*saved_geometry))
+
+    def on_load_pressure_map_view_layout_clicked(self, _checked: bool = False) -> None:
+        """Apply the saved Pressure Map view layout, or report that none exists."""
+
+        loaded = self.load_pressure_map_workspace_layout()
+        if hasattr(self, "log_status"):
+            if loaded:
+                self.log_status("Pressure Map view layout loaded.")
+            else:
+                self.log_status("No saved Pressure Map view layout found.")
+
+    def _clamp_pressure_map_floating_docks_to_screen(self) -> None:
+        """Pull any restored floating dock back onto a currently connected screen.
+
+        A layout saved on a different monitor setup (e.g. an ultrawide second
+        display that is no longer attached) can restore with geometry outside
+        every current screen, which Windows silently clamps to an unusable
+        size/position. Re-fit each floating dock's saved geometry into the
+        available space of whichever screen it mostly overlaps.
+        """
+
+        docks = (
+            getattr(self, "pressure_map_display_dock", None),
+            getattr(self, "pressure_map_force_display_dock", None),
+            getattr(self, "pressure_map_settings_dock", None),
+        )
+        for dock in docks:
+            self._fit_pressure_map_dock_to_screen(dock)
+
+    def _fit_pressure_map_dock_to_screen(
+        self,
+        dock: QDockWidget | None,
+        *,
+        max_fraction: float = 1.0,
+        square: bool = False,
+    ) -> QRect | None:
+        """Clamp one floating dock's geometry to fit the screen it is on.
+
+        ``max_fraction`` additionally caps width/height to that fraction of
+        the screen's available space, so a dock that was previously sized to
+        fill a large monitor doesn't reappear oversized (or trigger a
+        Windows "Unable to set geometry" warning) the moment it is dragged
+        onto a smaller one. ``square`` shrinks the longer side down to match
+        the shorter one instead of stretching either side, so the floated
+        window opens square rather than a tall/wide rectangle.
+
+        Returns the geometry the dock ends up at (whether or not it needed
+        changing), or ``None`` if the dock isn't floating / couldn't be
+        fitted. Callers that need to pin a size floor should use this return
+        value rather than reading ``dock.size()`` afterward -- the native
+        window may not have settled to the requested geometry synchronously
+        (``AnimatedDocks`` is enabled), so a later read can be stale.
+        """
+
+        if dock is None:
+            return None
+        try:
+            if not dock.isFloating():
+                return None
+            geometry = dock.geometry()
+            screen = QGuiApplication.screenAt(geometry.center()) or QGuiApplication.primaryScreen()
+            if screen is None:
+                return None
+            available = screen.availableGeometry()
+            max_width = max(dock.minimumWidth(), int(available.width() * max_fraction))
+            max_height = max(dock.minimumHeight(), int(available.height() * max_fraction))
+            if square:
+                # Base the square side on the screen, not on the dock's
+                # geometry at the moment it floated: when a pane is undocked
+                # while still squeezed into a shared/tabbed docked area
+                # (e.g. after another pane was already pulled out), its
+                # pre-float geometry can be a sliver of its real size, which
+                # would otherwise make the floated window pop up tiny
+                # instead of a consistent size.
+                side = max(
+                    max(dock.minimumWidth(), dock.minimumHeight()),
+                    min(max_width, max_height),
+                )
+                width = height = side
+            else:
+                width = min(geometry.width(), max_width)
+                height = min(geometry.height(), max_height)
+            fitted = QRect(geometry)
+            fitted.setWidth(width)
+            fitted.setHeight(height)
+            fitted.moveLeft(max(available.left(), min(fitted.left(), available.right() - fitted.width())))
+            fitted.moveTop(max(available.top(), min(fitted.top(), available.bottom() - fitted.height())))
+            if fitted != geometry:
+                dock.setGeometry(fitted)
+            return fitted
+        except RuntimeError:
+            # The dock's underlying C++ object was already destroyed (e.g.
+            # the tab was closed before a deferred singleShot call ran).
+            return None
+
+    def _on_pressure_map_dock_top_level_changed(self, dock: QDockWidget, floating: bool) -> None:
+        """Shrink a pane to a sane size the moment it is floated/moved off-dock.
+
+        Qt initially floats a pane at its docked size, which can span an
+        entire large monitor; this re-fits it immediately.
+        """
+
+        if getattr(self, "_pressure_map_restoring_layout", False):
+            # Loading a saved layout drives docks through several
+            # intermediate floating/docked states; none of that is a real
+            # user action, so neither shrink-to-fit nor auto-save should
+            # react to it (an auto-save here would otherwise overwrite the
+            # very snapshot being loaded with a half-applied one).
             return
-        self.reset_pressure_map_workspace_layout(save=False)
+        if floating:
+            is_display_dock = dock in (
+                getattr(self, "pressure_map_display_dock", None),
+                getattr(self, "pressure_map_force_display_dock", None),
+            )
+            fitted = self._fit_pressure_map_dock_to_screen(
+                dock,
+                max_fraction=PRESSURE_MAP_FLOATING_DOCK_MAX_SCREEN_FRACTION,
+                square=is_display_dock,
+            )
+            # Some later, unrelated event -- e.g. dragging a *different*
+            # floating pane, which never fires this signal at all -- can
+            # still shrink this window afterward through Qt's own dock
+            # layout bookkeeping. Rather than chase every event that might
+            # trigger it, pin a floor so nothing can push it smaller than
+            # the size just computed. Cleared before any redock (reset,
+            # or a Load that ends up docking this pane) via
+            # _clear_pressure_map_dock_size_floors.
+            #
+            # Read from the rect _fit_pressure_map_dock_to_screen just
+            # computed and applied, not dock.size(): with AnimatedDocks
+            # enabled the native window isn't guaranteed to have settled to
+            # the requested geometry synchronously, so a size read here
+            # could still reflect the pre-fit (e.g. brand-new, -1x-1) size.
+            if fitted is not None:
+                dock.setMinimumSize(fitted.width(), fitted.height())
+                if hasattr(self, "log_status"):
+                    self.log_status(
+                        f"Pressure Map: floated '{dock.objectName()}' to "
+                        f"{fitted.width()}x{fitted.height()}; size floor set."
+                    )
+        else:
+            # Restore normal flexibility so the default tabbed/docked layout
+            # isn't held open at the old floating size.
+            dock.setMinimumSize(0, 0)
+        self.save_pressure_map_workspace_layout()
 
     def _pressure_map_workspace_qsettings(self) -> QSettings:
         return QSettings("ArduinoADCStreamer", "PressureMapWorkspace")
 
-    def save_pressure_map_workspace_layout(self) -> None:
-        """Persist docked layout without restoring stale floating-window geometry."""
+    def save_pressure_map_workspace_layout(self, *, force: bool = False) -> None:
+        """Persist the docked/floating layout.
+
+        By default (``force=False``, used by the automatic save-on-change
+        signals) a layout is only persisted while every pane is docked, since
+        auto-saving mid-drag or mid-float can capture transient geometry.
+        Pass ``force=True`` (used by the explicit "Save View Layout" button)
+        to snapshot the current arrangement as-is, including any floated
+        windows, so it can be restored later.
+        """
 
         workspace = getattr(self, "pressure_map_workspace", None)
         if workspace is None:
@@ -635,6 +901,8 @@ class PressureMapPanelMixin:
             ("pressure_map_force_display_dock", "pressure_map_force_display_dock"),
             ("pressure_map_settings_dock", "pressure_map_settings_dock"),
         )
+        any_floating = False
+        floating_state: dict[str, list[int]] = {}
         for dock_name, object_name in docks:
             dock = getattr(self, dock_name, None)
             if dock is None:
@@ -643,13 +911,61 @@ class PressureMapPanelMixin:
             # Reassert it after a pane is floated or regrouped on Windows.
             dock.setObjectName(object_name)
             if dock.isFloating():
-                return
+                any_floating = True
+                geometry = dock.geometry()
+                floating_state[object_name] = [
+                    geometry.x(),
+                    geometry.y(),
+                    geometry.width(),
+                    geometry.height(),
+                ]
+        if any_floating and not force:
+            return
         settings = self._pressure_map_workspace_qsettings()
         settings.setValue("layout_version", PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION)
         settings.setValue(
             "dock_state",
             workspace.saveState(PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION),
         )
+        # QMainWindow.restoreState() is unreliable at re-floating a dock on
+        # an already-running window (it only reliably applies floating state
+        # right after a window is constructed), so the floating/geometry
+        # data needed to actually undock a pane on load is tracked
+        # separately and applied explicitly in load_pressure_map_workspace_layout.
+        #
+        # Only the explicit "Save View Layout" click (force=True) may write
+        # this key. The automatic save-on-change path only ever runs while
+        # every pane is docked (see the early return above), so writing it
+        # there would silently erase a previously saved floating snapshot
+        # the moment the user redocks anything -- long before "Load Saved
+        # Layout" is ever clicked.
+        if force:
+            settings.setValue("floating_docks", json.dumps(floating_state))
+
+    def on_save_pressure_map_view_layout_clicked(self, _checked: bool = False) -> None:
+        """Save a snapshot of the current tab/dock/window arrangement to restore later."""
+
+        self.save_pressure_map_workspace_layout(force=True)
+        if hasattr(self, "log_status"):
+            self.log_status("Pressure Map view layout saved.")
+
+    def _clear_pressure_map_dock_size_floors(self) -> None:
+        """Zero out the "don't shrink me" minimum set when a pane floats.
+
+        Must be called before re-docking a pane (reset, or a Load that
+        ends up docking a previously-floating pane): a dock pinned at, say,
+        931x931 physically cannot fit into a tabbed area, which is what
+        made a pane fail to reattach after being floated.
+        """
+
+        for dock_name in (
+            "pressure_map_display_dock",
+            "pressure_map_force_display_dock",
+            "pressure_map_settings_dock",
+        ):
+            dock = getattr(self, dock_name, None)
+            if dock is not None:
+                dock.setMinimumSize(0, 0)
 
     def reset_pressure_map_workspace_layout(self, _checked: bool = False, *, save: bool = True) -> None:
         """Return the Pressure Map workspace to its original tabbed arrangement."""
@@ -660,8 +976,16 @@ class PressureMapPanelMixin:
         settings_dock = getattr(self, "pressure_map_settings_dock", None)
         if workspace is None or jerk_dock is None or force_dock is None or settings_dock is None:
             return
-        for dock in (jerk_dock, force_dock, settings_dock):
+        self._clear_pressure_map_dock_size_floors()
+        docks = (jerk_dock, force_dock, settings_dock)
+        # Detach every pane from whatever it's currently in -- including a
+        # merged floating group window -- before re-adding any of them.
+        # Interleaving detach-then-readd one at a time pulls members out of
+        # a shared group window mid-loop, which can leave a later member
+        # unable to reattach.
+        for dock in docks:
             dock.setFloating(False)
+        for dock in docks:
             workspace.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
         workspace.tabifyDockWidget(jerk_dock, force_dock)
         workspace.tabifyDockWidget(force_dock, settings_dock)
@@ -681,7 +1005,9 @@ class PressureMapPanelMixin:
             dock.visibilityChanged.connect(
                 lambda visible, name=dock_name: self.on_pressure_map_workspace_visibility_changed(name, visible)
             )
-            dock.topLevelChanged.connect(lambda _floating: self.save_pressure_map_workspace_layout())
+            dock.topLevelChanged.connect(
+                lambda floating, dock=dock: self._on_pressure_map_dock_top_level_changed(dock, floating)
+            )
             dock.dockLocationChanged.connect(lambda _area: self.save_pressure_map_workspace_layout())
 
     def on_pressure_map_workspace_visibility_changed(self, dock_name: str, visible: bool) -> None:
@@ -1141,6 +1467,68 @@ class PressureMapPanelMixin:
             "quiet_hold_clear_s": self._spin_float("force_pzt_quiet_hold_spin", float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"])),
         }
 
+    def _apply_pzt_force_settings_to_widgets(self, settings: Mapping[str, object]) -> None:
+        """Force every PZT Force widget to reflect ``settings`` without re-triggering a rebuild."""
+        widget_names = (
+            "force_pzt_center_capacitance_spin", "force_pzt_outer_capacitance_spin",
+            "force_pzt_capacitance_unit_combo", "force_pzt_rleak_spin", "force_pzt_d33_spin",
+            "force_pzt_noise_spin", "force_pzt_off_mux_check", "force_pzt_off_mux_rleak_spin",
+            "force_display_max_n_spin", "force_arrow_gain_spin", "force_arrow_threshold_spin",
+            "force_pzt_stuck_failsafe_check", "force_pzt_stuck_hold_spin", "force_pzt_stuck_tau_spin",
+            "force_pzt_zero_floor_spin", "force_pzt_zero_band_fraction_spin",
+            "force_pzt_min_event_peak_spin", "force_pzt_quiet_release_spin", "force_pzt_quiet_hold_spin",
+        )
+        widgets = [getattr(self, name, None) for name in widget_names]
+        for widget in widgets:
+            if widget is not None and hasattr(widget, "blockSignals"):
+                widget.blockSignals(True)
+        try:
+            self._set_spin_value("force_pzt_center_capacitance_spin", settings, "center_capacitance_value", float)
+            self._set_spin_value("force_pzt_outer_capacitance_spin", settings, "outer_capacitance_value", float)
+            self._set_combo_value("force_pzt_capacitance_unit_combo", settings, "capacitance_unit")
+            self._set_spin_value("force_pzt_rleak_spin", settings, "rleak_ohm", float)
+            self._set_spin_value("force_pzt_d33_spin", settings, "d33_pc_per_n", float)
+            self._set_spin_value("force_pzt_noise_spin", settings, "noise_threshold_v", float)
+            self._set_check_value("force_pzt_off_mux_check", settings, "off_mux_leak_enabled")
+            self._set_spin_value("force_pzt_off_mux_rleak_spin", settings, "off_mux_rleak_ohm", float)
+            self._set_spin_value("force_display_max_n_spin", settings, "display_max_force_n", float)
+            self._set_spin_value("force_arrow_gain_spin", settings, "force_arrow_gain_mm_per_n", float)
+            self._set_spin_value("force_arrow_threshold_spin", settings, "force_arrow_min_threshold_n", float)
+            self._set_check_value("force_pzt_stuck_failsafe_check", settings, "stuck_force_failsafe_enabled")
+            self._set_spin_value("force_pzt_stuck_hold_spin", settings, "stuck_force_quiet_hold_s", float)
+            self._set_spin_value("force_pzt_stuck_tau_spin", settings, "stuck_force_decay_tau_s", float)
+            self._set_spin_value("force_pzt_zero_floor_spin", settings, "force_zero_band_min_n", float)
+            self._set_spin_value("force_pzt_zero_band_fraction_spin", settings, "force_zero_band_fraction", float)
+            self._set_spin_value("force_pzt_min_event_peak_spin", settings, "force_zero_min_event_peak_n", float)
+            self._set_spin_value("force_pzt_quiet_release_spin", settings, "quiet_hold_release_fraction", float)
+            self._set_spin_value("force_pzt_quiet_hold_spin", settings, "quiet_hold_clear_s", float)
+        finally:
+            for widget in widgets:
+                if widget is not None and hasattr(widget, "blockSignals"):
+                    widget.blockSignals(False)
+
+    def _warn_pzt_force_settings_rejected(self, reason: str) -> None:
+        """Surface a rejected PZT Force settings change loudly - never swallow it."""
+        message = (
+            "The PZT Force settings you entered are physically invalid and were "
+            f"rejected. Reverted to the last working configuration.\n\nReason: {reason}"
+        )
+        if hasattr(self, "force_display_status_label"):
+            self.force_display_status_label.setText(
+                "⚠ Force settings rejected — reverted to last working configuration"
+            )
+        if hasattr(self, "log_status"):
+            self.log_status(f"ERROR: PZT Force settings rejected - {reason}")
+        QMessageBox.warning(self, "Invalid PZT Force Settings", message)
+
+    def _on_force_worker_error(self, message: str) -> None:
+        """The force-integration worker halted itself rather than die silently."""
+        if hasattr(self, "force_display_status_label"):
+            self.force_display_status_label.setText(f"⚠ {message}")
+        if hasattr(self, "log_status"):
+            self.log_status(f"ERROR: {message}")
+        QMessageBox.critical(self, "Force Display Stopped", message)
+
     def on_pzt_force_settings_changed(self, _value: object | None = None) -> None:
         try:
             for widget in self._pressure_map_display_widgets():
@@ -1209,22 +1597,38 @@ class PressureMapPanelMixin:
             return 0.0025
         return max(1e-12, float(settings["noise_threshold_v"]) * capacitance_f / d33_c_per_n)
 
-    def _rebuild_pressure_force_engine(self) -> None:
-        if not hasattr(self, "pressure_map_geometry"):
-            return
-        new_engine = PressureForceDisplayEngine(
+    def _build_pzt_force_engine(self, settings: Mapping[str, object]) -> PressureForceDisplayEngine:
+        engine = PressureForceDisplayEngine(
             geometry=self.pressure_map_geometry,
-            settings=self._pzt_force_settings(),
+            settings=settings,
             normal_force_calculator=self.normal_force_calculator,
             shear_detector=self.shear_detector,
             pressure_map_array_generator=self.pressure_map_array_generator,
         )
+        engine.self_test()
+        return engine
+
+    def _rebuild_pressure_force_engine(self) -> None:
+        if not hasattr(self, "pressure_map_geometry"):
+            return
+        candidate_settings = self._pzt_force_settings()
+        try:
+            new_engine = self._build_pzt_force_engine(candidate_settings)
+            accepted_settings = candidate_settings
+        except (ValueError, KeyError, TypeError) as exc:
+            fallback_settings = getattr(self, "_last_good_pzt_force_settings", None) or dict(PZT_FORCE_DEFAULT_SETTINGS)
+            new_engine = self._build_pzt_force_engine(fallback_settings)
+            accepted_settings = fallback_settings
+            self._apply_pzt_force_settings_to_widgets(fallback_settings)
+            self._warn_pzt_force_settings_rejected(str(exc))
+        self._last_good_pzt_force_settings = dict(accepted_settings)
         self.pressure_force_engine = new_engine
         self._pressure_force_last_processed_sweep_count = int(getattr(self, "sweep_count", 0))
         worker = getattr(self, "_force_worker", None)
         if worker is None:
             self._force_worker = ForceBlockWorker(new_engine)
             self._force_worker.result_ready.connect(lambda r: self._on_force_result_ready(r))
+            self._force_worker.worker_error.connect(self._on_force_worker_error)
             self._force_worker.start()
         else:
             worker.swap_engine(new_engine)
@@ -1288,10 +1692,33 @@ class PressureMapPanelMixin:
             block, times, first_sweep_id, avg_sample_time_us, complete_packages
         )
 
+    def _cached_display_channel_specs(self) -> list:
+        """Return channel specs, refreshed once per force-dispatch cycle.
+
+        ``get_display_channel_specs()`` derives purely from configuration and
+        is otherwise unchanged for the ~30 sweeps between force dispatches, so
+        rebuilding it on every sweep is redundant work. Reusing the last
+        dispatch's cadence bounds staleness to one dispatch interval after a
+        config change, with no separate invalidation flag to keep in sync.
+        """
+        last_dispatch = getattr(self, "_force_last_dispatch_time", None)
+        cache = getattr(self, "_force_display_specs_cache", None)
+        if (
+            cache is not None
+            and last_dispatch is not None
+            and getattr(self, "_force_display_specs_cache_dispatch_time", None) == last_dispatch
+        ):
+            return cache
+        specs = self.get_display_channel_specs()
+        self._force_display_specs_cache = specs
+        self._force_display_specs_cache_dispatch_time = last_dispatch
+        return specs
+
     def _resolve_force_complete_packages(self, block: np.ndarray) -> dict:
         """Return packages that have all five shear positions covered."""
+        specs = self._cached_display_channel_specs()
         specs_by_package: dict[str, dict[str, dict]] = {}
-        for spec_index, spec in enumerate(self.get_display_channel_specs()):
+        for spec_index, spec in enumerate(specs):
             position = self._get_shear_position_for_display_spec(spec, spec_index)
             sample_indices = [
                 int(index) for index in spec.get("sample_indices", [])
@@ -1616,6 +2043,22 @@ class PressureMapPanelMixin:
         )
         self.shear_load_settings_btn.clicked.connect(self.on_load_shear_settings_clicked)
         actions.addWidget(self.shear_load_settings_btn)
+
+        self.pressure_map_save_layout_btn = QPushButton("Save View Layout")
+        self.pressure_map_save_layout_btn.setToolTip(
+            "Save a snapshot of the current Jerk Display, Force Display, and Settings "
+            "arrangement (including floated/undocked windows) so it is restored on the next launch."
+        )
+        self.pressure_map_save_layout_btn.clicked.connect(self.on_save_pressure_map_view_layout_clicked)
+        actions.addWidget(self.pressure_map_save_layout_btn)
+
+        self.pressure_map_load_layout_btn = QPushButton("Load Saved Layout")
+        self.pressure_map_load_layout_btn.setToolTip(
+            "Apply the last saved Jerk Display, Force Display, and Settings arrangement "
+            "(including floated/undocked windows). Only changes the layout when clicked."
+        )
+        self.pressure_map_load_layout_btn.clicked.connect(self.on_load_pressure_map_view_layout_clicked)
+        actions.addWidget(self.pressure_map_load_layout_btn)
 
         self.pressure_map_reset_layout_btn = QPushButton("Reset View Layout")
         self.pressure_map_reset_layout_btn.setToolTip(
