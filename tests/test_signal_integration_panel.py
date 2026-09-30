@@ -1632,6 +1632,10 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             restored._pressure_map_workspace_settings_path = source._pressure_map_workspace_settings_path
             restored_tab = restored.create_signal_integration_tab()
 
+            # The tab always starts tabbed by default; the saved layout is
+            # only applied when explicitly requested via "Load Saved Layout".
+            self.assertTrue(restored.load_pressure_map_workspace_layout())
+
             self.assertEqual(
                 restored.pressure_map_workspace.dockWidgetArea(
                     restored.pressure_map_force_display_dock
