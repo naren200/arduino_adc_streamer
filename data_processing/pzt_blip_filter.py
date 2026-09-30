@@ -1,29 +1,50 @@
-"""Causal median-of-3 blip filtering for PZT ADC voltage columns during binary ingest.
+"""Causal median-of-N blip filtering for PZT ADC voltage columns during binary ingest.
 
 Rejects isolated single-sample spikes the same way the 555/PZR firmware's own
 ``pzr_median3`` rejects isolated one-pair spikes on its resistance readings:
-for three consecutive raw samples the middle-ranked value is kept, so a lone
-outlier is always out-voted by its two neighbours. Runs after PZT ghost
-removal, on the same PZT voltage columns identified by
-``PztGhostRemovalMixin._get_pzt_ghost_groups`` (RS/555 resistance columns are
-never sampled waveforms and must not be median-filtered).
+for each window of ``N`` (odd, default 3) consecutive raw samples the
+middle-ranked value is kept, so a lone outlier is always out-voted by the
+rest of the window. Runs after PZT ghost removal, on the same PZT voltage
+columns identified by ``PztGhostRemovalMixin._get_pzt_ghost_groups`` (RS/555
+resistance columns are never sampled waveforms and must not be
+median-filtered).
 
-Each column's filtered value only ever depends on its own two immediately
-preceding raw samples, so the state carried across blocks is two rows per
-filtered column, not a growing history.
+Each column's filtered value only ever depends on its own ``N - 1``
+immediately preceding raw samples, so the state carried across blocks is
+``N - 1`` rows per filtered column, not a growing history.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
+from constants.pzt_blip_filter import (
+    PZT_BLIP_FILTER_DEFAULT_ENABLED,
+    PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES,
+    normalize_pzt_blip_filter_window,
+)
+
 
 class PztBlipFilterMixin:
-    """Owns per-column causal median-of-3 state for PZT ADC voltage columns."""
+    """Owns per-column causal median-of-N state for PZT ADC voltage columns."""
 
     def _init_pzt_blip_filter_state(self) -> None:
-        self._pzt_blip_filter_history: np.ndarray | None = None  # shape (2, len(columns))
+        self.pzt_blip_filter_enabled = PZT_BLIP_FILTER_DEFAULT_ENABLED
+        self.pzt_blip_filter_window_samples = PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES
+        self._pzt_blip_filter_history: np.ndarray | None = None  # shape (window - 1, len(columns))
         self._pzt_blip_filter_history_len = 0
+
+    def set_pzt_blip_filter_enabled(self, enabled: bool) -> None:
+        self.pzt_blip_filter_enabled = bool(enabled)
+
+    def set_pzt_blip_filter_window_samples(self, window_samples: int) -> None:
+        window = normalize_pzt_blip_filter_window(window_samples)
+        if window != getattr(self, "pzt_blip_filter_window_samples", None):
+            self.pzt_blip_filter_window_samples = window
+            # History is sized to the old window; a size change can never be
+            # blended in, so drop it rather than reinterpret stale rows.
+            self._pzt_blip_filter_history = None
+            self._pzt_blip_filter_history_len = 0
 
     def begin_pzt_blip_filter_capture(self) -> None:
         """Drop carried-over history so a new capture never blends across the boundary."""
@@ -39,10 +60,12 @@ class PztBlipFilterMixin:
         voltage columns (only RS/other slots may differ between the display
         and archive representations), so the stateful filter must run exactly
         once per block on those columns; running it twice would consume the
-        two-row carry-over history twice for what is the same signal.
+        carry-over history twice for what is the same signal.
         """
         block = np.asarray(block_data, dtype=np.float32).copy()
         archive = np.asarray(archive_data, dtype=np.float32).copy()
+        if not getattr(self, "pzt_blip_filter_enabled", PZT_BLIP_FILTER_DEFAULT_ENABLED):
+            return block, archive
         if block.ndim != 2 or block.shape[0] == 0:
             return block, archive
 
@@ -61,42 +84,40 @@ class PztBlipFilterMixin:
         return block, archive
 
     def _pzt_blip_filtered_columns(self, raw_columns: np.ndarray) -> np.ndarray:
-        """Median-of-3 filter every column of ``raw_columns`` (rows = samples)."""
+        """Causal median-of-N filter every column of ``raw_columns`` (rows = samples)."""
+        window = normalize_pzt_blip_filter_window(
+            getattr(self, "pzt_blip_filter_window_samples", PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES)
+        )
+        carry = window - 1
         column_count = raw_columns.shape[1]
         history = self._pzt_blip_filter_history
         history_len = self._pzt_blip_filter_history_len
-        if history is None or history.shape[1] != column_count:
-            history = np.zeros((2, column_count), dtype=np.float32)
+        if history is None or history.shape != (carry, column_count):
+            history = np.zeros((carry, column_count), dtype=np.float32)
             history_len = 0
 
-        prefix = history[2 - history_len:] if history_len else history[:0]
+        prefix = history[carry - history_len:] if history_len else history[:0]
         extended = np.concatenate([prefix, raw_columns], axis=0)
 
-        if extended.shape[0] >= 3:
-            a, b, c = extended[:-2], extended[1:-1], extended[2:]
-            # Sum-minus-max-minus-min selects the middle-ranked value without
-            # a sort, matching np.median's exact-middle-element output for 3
-            # samples.
-            median = (
-                a + b + c
-                - np.maximum(np.maximum(a, b), c)
-                - np.minimum(np.minimum(a, b), c)
-            )
+        if extended.shape[0] >= window:
+            windows = np.lib.stride_tricks.sliding_window_view(extended, window, axis=0)
+            median = np.median(windows, axis=-1)
             filtered = raw_columns.copy()
-            offset = 2 - history_len
+            offset = carry - history_len
             filtered[offset:] = median
         else:
             # Not enough samples (across this block + carried history) for a
             # single full window yet; pass raw values through unfiltered.
             filtered = raw_columns.copy()
 
-        tail = extended[-2:]
-        if tail.shape[0] < 2:
-            padded = np.zeros((2, column_count), dtype=np.float32)
-            padded[2 - tail.shape[0]:] = tail
+        tail = extended[-carry:] if carry else extended[:0]
+        if tail.shape[0] < carry:
+            padded = np.zeros((carry, column_count), dtype=np.float32)
+            if tail.shape[0]:
+                padded[carry - tail.shape[0]:] = tail
             self._pzt_blip_filter_history = padded
         else:
             self._pzt_blip_filter_history = tail.copy()
-        self._pzt_blip_filter_history_len = min(2, extended.shape[0])
+        self._pzt_blip_filter_history_len = min(carry, extended.shape[0])
 
         return filtered

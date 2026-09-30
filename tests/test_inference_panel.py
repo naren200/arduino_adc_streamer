@@ -262,6 +262,19 @@ class TouchIdModeGuardTests(unittest.TestCase):
             harness.on_touchid_run_on_source_clicked()
         warn.assert_called_once()
 
+    def test_replay_refused_while_analysis_source_still_loading(self):
+        # AnalysisSourceLoadWorker parses a CSV load on a background thread
+        # (see analysis_panel._on_analysis_source_load_result); without this
+        # guard, clicking Run while that's in flight would silently replay
+        # a stale/absent analysis_snapshot instead of telling the user to wait.
+        harness = TouchIdHarness()
+        harness.analysis_snapshot = object()  # a previous load's snapshot, still present
+        harness._analysis_source_loading = True
+        with patch('gui.inference_panel.QMessageBox.warning') as warn:
+            harness.on_touchid_run_on_source_clicked()
+        warn.assert_called_once()
+        self.assertEqual(harness.touchid_mode, TouchIdMode.NORMAL)
+
     def test_sync_timer_state_refuses_to_start_while_replaying(self):
         harness = TouchIdHarness()
         harness.is_capturing = True

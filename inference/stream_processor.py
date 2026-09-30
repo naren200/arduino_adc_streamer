@@ -42,6 +42,7 @@ from .buffer import RollingBuffer
 sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
 from causal_derived_channels import CausalDerivedChannels  # noqa: E402
 import data as data_mod  # noqa: E402
+from touchid_inference.config import ONSET_SKIP_S  # noqa: E402
 from touchid_inference.quality_gate import IdleBaseline, MICRO_CHUNK_S  # noqa: E402
 from touchid_inference.segmentation import ActiveSampleQueue  # noqa: E402
 
@@ -75,6 +76,7 @@ class TouchIdStreamProcessor:
         span_stale_timeout_s: float,
         min_span_fill_ratio: float,
         idle_baseline: IdleBaseline | None,
+        onset_skip_s: float = ONSET_SKIP_S,
     ) -> None:
         self.pzt_columns = list(pzt_columns)
         self.window_size_s = float(window_size_s)
@@ -82,6 +84,7 @@ class TouchIdStreamProcessor:
         self.span_stale_timeout_s = float(span_stale_timeout_s)
         self.min_span_fill_ratio = float(min_span_fill_ratio)
         self.idle_baseline = idle_baseline
+        self.onset_skip_s = float(onset_skip_s)
 
         # Persistent streaming state for the "integrated"/shear-jerk/normal-jerk
         # derived channels -- one instance for this processor's whole
@@ -95,6 +98,15 @@ class TouchIdStreamProcessor:
         # load_calibration_csv path uses (via the batch causal_median_filter_3
         # wrapper), so live/replay raw is despiked identically to offline raw.
         self._raw_filter = {col: data_mod._CausalMedian3() for col in self.pzt_columns}
+        # Fail-fast marker: push_chunk's settle trim assumes filter_raw()
+        # already ran on this tick's channel_samples (filter-then-trim is
+        # the enforced order everywhere else via preprocess_capture_start;
+        # filter_raw can't be folded into that same call here since its
+        # output also feeds the Signal Stream plot and idle-baseline
+        # accumulation, not just push_chunk) -- catch a caller that forgets
+        # the call or reorders it, instead of silently letting an unfiltered
+        # blip slip through.
+        self._raw_filtered_this_tick = False
 
         n_pzt = len(self.pzt_columns)
         # Fixed-grid fallback path (used only while idle_baseline is None).
@@ -137,6 +149,7 @@ class TouchIdStreamProcessor:
             window_size_s=self.window_size_s,
             hop_size_s=self.hop_size_s,
             baseline=self.idle_baseline,
+            onset_skip_s=self.onset_skip_s,
         )
         self._chunk_cursor_abs = self._store_next_abs
 
@@ -208,10 +221,12 @@ class TouchIdStreamProcessor:
         before channel_samples is used for anything else (the Signal Stream
         plot, idle-baseline accumulation, AND push_chunk) -- callers must not
         filter twice."""
-        return {
+        filtered = {
             col: np.array([self._raw_filter[col].push(v) for v in np.asarray(channel_samples[col]).reshape(-1)])
             for col in self.pzt_columns
         }
+        self._raw_filtered_this_tick = True
+        return filtered
 
     def push_chunk(
         self, channel_samples: dict, timestamps: np.ndarray, fs: float, now_t: float,
@@ -233,12 +248,64 @@ class TouchIdStreamProcessor:
         expire sees the same real-time deltas the algorithm would have
         seen live for that exact recording, reproducing identical
         segmentation decisions.
+
+        The first data_mod.CAUSAL_MEDIAN_WARMUP_S of any stream's derived
+        channels are dropped here, before either windowing branch sees them
+        -- CausalDerivedChannels.process() itself never trims (batch and
+        streaming must return bit-identical, un-opinionated output), so
+        withholding the still-invalid leading samples is this caller's job,
+        the same as analysis_workbench.py's batch trim. The session's first
+        data_mod.CAPTURE_START_SETTLE_S is dropped the same way (mux/analog
+        settling at the very start of a session, unrelated to the causal-
+        median warmup above) -- whichever of the two warmups is longer wins,
+        via a single samples_seen-relative cutoff.
         """
-        derived = self.derived_channels.process(channel_samples)
+        if not self._raw_filtered_this_tick:
+            raise RuntimeError(
+                "push_chunk called without a matching filter_raw() call this tick -- "
+                "the capture-start settle trim assumes raw was already blip-filtered"
+            )
+        self._raw_filtered_this_tick = False
+
+        samples_seen_before = self.derived_channels.samples_seen
+        derived = self.derived_channels.process(channel_samples, sample_rate_hz=fs)
+        warmup_sample_count = max(
+            self.derived_channels.warmup_sample_count,
+            data_mod.capture_start_settle_sample_count(fs),
+        )
+        warmup_remaining = max(0, warmup_sample_count - samples_seen_before)
+
+        timestamps = np.asarray(timestamps).reshape(-1)
+        drop_count = min(len(timestamps), warmup_remaining)
+        if drop_count:
+            channel_samples, derived, timestamps = self._drop_leading_warmup_samples(
+                channel_samples, derived, timestamps, drop_count
+            )
+            if timestamps.size == 0:
+                return []
 
         if self.idle_baseline is None:
             return self._push_chunk_fixed_grid(channel_samples, derived, timestamps, fs)
         return self._push_chunk_active_queue(channel_samples, derived, timestamps, fs, now_t)
+
+    @staticmethod
+    def _drop_leading_warmup_samples(
+        channel_samples: dict, derived: dict, timestamps: np.ndarray, drop_count: int,
+    ) -> tuple[dict, dict, np.ndarray]:
+        """Drop the same leading `drop_count` samples from raw, derived, and
+        timestamps together so every array a caller might zip stays aligned."""
+        trimmed_channel_samples = {
+            col: np.asarray(values).reshape(-1)[drop_count:] for col, values in channel_samples.items()
+        }
+        trimmed_derived = {
+            "integrated": {
+                col: np.asarray(values)[drop_count:] for col, values in derived["integrated"].items()
+            },
+            "shear_jerk_lr": np.asarray(derived["shear_jerk_lr"])[drop_count:],
+            "shear_jerk_tb": np.asarray(derived["shear_jerk_tb"])[drop_count:],
+            "normal_jerk": np.asarray(derived["normal_jerk"])[drop_count:],
+        }
+        return trimmed_channel_samples, trimmed_derived, timestamps[drop_count:]
 
     def _push_chunk_fixed_grid(
         self, channel_samples: dict, derived: dict, timestamps: np.ndarray, fs: float,

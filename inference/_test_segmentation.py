@@ -224,6 +224,7 @@ def _drive_stream_processor(samples, rel_s, fs, config, idle_baseline):
     while idx < n:
         end = min(idx + hop_n, n)
         channel_samples = {col: samples[idx:end, i] for i, col in enumerate(PZT_COLUMNS)}
+        channel_samples = processor.filter_raw(channel_samples)
         now_t = end / fs
         windows.extend(processor.push_chunk(channel_samples, rel_s[idx:end], fs, now_t=now_t))
         idx = end

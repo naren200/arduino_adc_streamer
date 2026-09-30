@@ -21,6 +21,7 @@ from file_operations.settings_persistence import load_settings_payload, save_set
 sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
 from clip_windowing_utils_v1 import CHANNEL_LABELS  # noqa: E402
 from touchid_inference.quality_gate import DEFAULT_K  # noqa: E402
+from touchid_inference.config import ONSET_SKIP_S  # noqa: E402
 
 # texture_piezo's channel-suffix order (B/L/C/R/T) for one PZT sensor board,
 # independent of which physical sensor number it's wired up as -- see
@@ -86,6 +87,8 @@ class InferenceConfig:
     confidence_threshold: float = 0.6  # bar-chart gray/red cutoff + latched "last detected" gate, user-adjustable
     idle_gate_k: float = DEFAULT_K  # quality_gate.chunk_is_active band-width multiplier, user-adjustable --
                                      # higher = only stronger-than-idle-noise signals get inferenced
+    onset_skip_s: float = ONSET_SKIP_S  # ActiveSampleQueue's fresh-onset settling-transient skip, user-adjustable --
+                                         # NOT re-applied when a touch merely resumes after a brief dip
     model_type: str = DEFAULT_MODEL_TYPE  # "ann" | "cnn" | "quad" | "penta" — which architecture is active
     # Every model path below is discovered from TEXTURE_PIEZO_MODELS at
     # instantiation, never hardcoded to a filename: each defaults to the
@@ -235,6 +238,7 @@ def save_touchid_settings(config: InferenceConfig) -> Path:
             "guilty_clip_filter_enabled": config.guilty_clip_filter_enabled,
             "confidence_threshold": config.confidence_threshold,
             "idle_gate_k": config.idle_gate_k,
+            "onset_skip_s": config.onset_skip_s,
             "model_type": config.model_type,
             "model_version": model_version_of(config),
             "model_checkpoint": model_checkpoint_of(config),
@@ -276,6 +280,8 @@ def load_touchid_settings(config: InferenceConfig | None = None) -> InferenceCon
             config.confidence_threshold = payload["confidence_threshold"]
         if "idle_gate_k" in payload:
             config.idle_gate_k = payload["idle_gate_k"]
+        if "onset_skip_s" in payload:
+            config.onset_skip_s = payload["onset_skip_s"]
         if "model_type" in payload and payload["model_type"] in model_discovery.ARCH_STEM_PREFIXES:
             config.model_type = payload["model_type"]
         version = payload.get("model_version")

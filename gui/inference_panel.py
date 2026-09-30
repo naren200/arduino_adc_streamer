@@ -202,6 +202,10 @@ class InferencePanelMixin:
         # Populated only while touchid_mode is REPLAYING -- see
         # on_touchid_run_on_source_clicked.
         self.touchid_replay_results: list[tuple] = []
+        # The idle baseline actually used by the current/last replay -- may
+        # differ from touchid_idle_baseline when the replayed source has its
+        # own "baseline"-labeled region(s); see _touchid_file_idle_baseline.
+        self._touchid_replay_idle_baseline = None
 
         # Snapshot object (identity, not value) + raw predictions from the
         # most recently completed 'Run on Analysis Source' replay -- lets
@@ -609,21 +613,26 @@ class InferencePanelMixin:
 
         return tab
 
-    def _touchid_new_processor(self, derived_channels=None) -> TouchIdStreamProcessor:
+    def _touchid_new_processor(self, derived_channels=None, idle_baseline=None) -> TouchIdStreamProcessor:
         """Build a fresh TouchIdStreamProcessor at the current config/idle
         baseline. Pass `derived_channels` to carry an existing
         CausalDerivedChannels instance's causal state (bounded sums, causal
         medians) forward into the new processor instead of starting it fresh
         -- used by _rebuild_touchid_buffers (see its docstring for why a
         window/hop resize is NOT a discontinuity in the underlying raw
-        sample stream, unlike a sensor switch or a new idle baseline)."""
+        sample stream, unlike a sensor switch or a new idle baseline). Pass
+        `idle_baseline` to override self.touchid_idle_baseline for this one
+        processor -- used by on_touchid_run_on_source_clicked to prefer a
+        replay source's own "baseline"-labeled samples over the live/global
+        one."""
         processor = TouchIdStreamProcessor(
             pzt_columns=self.touchid_config.pzt_columns,
             window_size_s=self.touchid_config.window_size_s,
             hop_size_s=self.touchid_config.hop_size_s,
             span_stale_timeout_s=self.touchid_config.span_stale_timeout_s,
             min_span_fill_ratio=self.touchid_config.min_span_fill_ratio,
-            idle_baseline=self.touchid_idle_baseline,
+            idle_baseline=idle_baseline if idle_baseline is not None else self.touchid_idle_baseline,
+            onset_skip_s=self.touchid_config.onset_skip_s,
         )
         if derived_channels is not None:
             processor.derived_channels = derived_channels
@@ -992,7 +1001,11 @@ class InferencePanelMixin:
         whatever's loaded in the Analysis tab (in-memory cache or a loaded
         CSV -- whichever its Source selector currently points at;
         analysis_snapshot is populated the same way regardless of source,
-        see analysis_panel.load_analysis_source), reusing the EXACT SAME
+        see analysis_panel.load_analysis_source; a CSV load runs on
+        AnalysisSourceLoadWorker's background thread, so this checks
+        _analysis_source_loading first -- without it, a click while a large
+        CSV is still parsing would silently replay the previous snapshot
+        (or nothing) instead of the one the user just asked to load), reusing the EXACT SAME
         TouchIdStreamProcessor + TouchIdClassifyWorker classes as live
         streaming so the resulting numbers are identical to what live would
         have produced for the same raw samples -- see
@@ -1009,6 +1022,12 @@ class InferencePanelMixin:
                 'Cannot start a replay while an idle baseline capture is in progress.'
                 if self.touchid_mode == TouchIdMode.CAPTURING_BASELINE
                 else 'A replay is already in progress.',
+            )
+            return
+        if getattr(self, '_analysis_source_loading', False):
+            QMessageBox.warning(
+                self, 'TouchID',
+                'The Analysis source is still loading -- wait for it to finish before running a replay.',
             )
             return
         snapshot = getattr(self, 'analysis_snapshot', None)
@@ -1057,8 +1076,25 @@ class InferencePanelMixin:
         # whatever live session state exists), using the CURRENT
         # touchid_config/touchid_idle_baseline: the baseline is a property
         # of the sensor/hardware, not of live-vs-replay, so reusing the live
-        # session's baseline here is correct.
-        self.touchid_processor = self._touchid_new_processor()
+        # session's baseline here is correct -- UNLESS the loaded file has
+        # its own "baseline"-labeled region(s) (Analysis tab labeling), in
+        # which case that's a more representative noise floor for this
+        # specific recording session and takes priority; see
+        # _touchid_file_idle_baseline. That per-file baseline is used only
+        # for this replay -- it is never persisted, so it can't clobber the
+        # live-captured global baseline.
+        replay_baseline = self._touchid_file_idle_baseline(snapshot, channel_indices, fs)
+        self._touchid_replay_idle_baseline = replay_baseline
+        self.touchid_processor = self._touchid_new_processor(idle_baseline=replay_baseline)
+        if replay_baseline is not None and replay_baseline is not self.touchid_idle_baseline:
+            self._update_touchid_idle_gate_label(
+                f"using this file's own 'baseline' label ({replay_baseline.captured_duration_s:.1f}s)"
+            )
+            if hasattr(self, 'log_status'):
+                self.log_status(
+                    "TouchID: replay using idle baseline fit from this file's 'baseline' label "
+                    f'({replay_baseline.captured_duration_s:.1f}s)'
+                )
         self._touchid_reset_region_coloring()
         self._clear_touchid_stream_curves()
         self._touchid_clear_inference_regions()
@@ -1321,6 +1357,8 @@ class InferencePanelMixin:
         # processor, same reasoning as a sensor switch, so live streaming
         # resumes clean rather than carrying replay's causal state forward.
         self.touchid_processor = self._touchid_new_processor()
+        self._touchid_replay_idle_baseline = None
+        self._update_touchid_idle_gate_label()
         self._touchid_reset_region_coloring()
         self._touchid_reset_read_cursor()
         self._clear_touchid_stream_curves()
@@ -1340,6 +1378,31 @@ class InferencePanelMixin:
         except Exception as e:
             if hasattr(self, 'log_status'):
                 self.log_status(f'Warning: could not save TouchID settings: {e}')
+
+    def _touchid_file_idle_baseline(self, snapshot, channel_indices: list[int], fs: float):
+        """If the Analysis tab's currently loaded labels for this source
+        contain one or more "baseline"-labeled regions, fit a k-sigma idle
+        baseline from their concatenated raw PZT samples and return it;
+        otherwise return self.touchid_idle_baseline (the live/persisted
+        one) unchanged. A file's own idle-labeled recording reflects that
+        specific session's noise floor more accurately than a baseline
+        captured on a different day/rig, so it takes priority when present."""
+        segments = getattr(self, 'analysis_label_segments', None) or []
+        baseline_segments = [seg for seg in segments if seg.get('class') == 'baseline']
+        if not baseline_segments:
+            return self.touchid_idle_baseline
+
+        timestamps = snapshot.timestamps_s
+        chunks = []
+        for seg in baseline_segments:
+            mask = (timestamps >= seg['start_s']) & (timestamps < seg['end_s'])
+            if mask.any():
+                chunks.append(snapshot.data[mask][:, channel_indices])
+        if not chunks:
+            return self.touchid_idle_baseline
+
+        samples = np.concatenate(chunks, axis=0)
+        return fit_idle_baseline(samples, self.touchid_config.pzt_columns, fs, k=self.touchid_config.idle_gate_k)
 
     def _update_touchid_idle_gate_label(self, extra: str | None = None):
         if not hasattr(self, 'touchid_idle_gate_label'):

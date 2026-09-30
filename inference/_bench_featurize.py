@@ -72,7 +72,7 @@ def _time_pipeline(fs: float, pzt_columns: list[str], n_repeats: int) -> list[fl
         channels = CausalDerivedChannels(pzt_columns=pzt_columns)
         start = time.perf_counter()
         chunk_by_column = {col: window_adc[:, j] for j, col in enumerate(pzt_columns)}
-        derived = channels.process(chunk_by_column)
+        derived = channels.process(chunk_by_column, sample_rate_hz=fs)
         window_integrated = np.column_stack([derived["integrated"][col] for col in pzt_columns])
         extract_window_features(
             window_adc, window_integrated, derived["shear_jerk_lr"], derived["shear_jerk_tb"], derived["normal_jerk"], fs,
