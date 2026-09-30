@@ -10,7 +10,6 @@ live acquisition buffers or filter runtime.
 from __future__ import annotations
 
 import csv
-import heapq
 import json
 from dataclasses import dataclass, field
 from dataclasses import asdict, is_dataclass
@@ -22,7 +21,15 @@ import numpy as np
 from constants.force import X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
 from constants.plotting import IADC_RESOLUTION_BITS
 from constants.pressure_map import DEFAULT_HPF_CUTOFF_HZ, DEFAULT_INTEGRATION_WINDOW_SAMPLES
-from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS, PZT_FORCE_PIC_COULOMB_TO_COULOMB
+from constants.pzt_blip_filter import (
+    PZT_BLIP_FILTER_DEFAULT_ENABLED,
+    PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES,
+    normalize_pzt_blip_filter_window,
+)
+from constants.pzt_force import (
+    PZT_FORCE_DEFAULT_SETTINGS,
+    PZT_FORCE_PIC_COULOMB_TO_COULOMB,
+)
 from constants.shear import (
     SHEAR_POSITION_BOTTOM,
     SHEAR_POSITION_CENTER,
@@ -42,6 +49,16 @@ from data_processing.pzt_force_calculation import (
 )
 from data_processing.shear_detector import ShearDetector
 from data_processing.signal_integrator import SignalIntegrator
+
+# texture_piezo is a sibling checkout, not a vendored copy of this repo (see
+# inference/_paths.py) -- reuse its own sys.path wiring instead of adding a
+# second one here.
+from inference._paths import TEXTURE_PIEZO_SRC  # noqa: F401  (import side effect: puts texture_piezo/src on sys.path)
+from data import (  # noqa: E402
+    IncrementalMedian,
+    preprocess_capture_start,
+    total_warmup_sample_count,
+)
 
 
 ANALYSIS_TIMESTAMP_COLUMNS = {"timestamp", "timestamp_s"}
@@ -128,14 +145,23 @@ def reorder_circular_capture(
     )
 
 
-def _load_filtered_snapshot(snapshot: AnalysisSourceSnapshot) -> AnalysisSourceSnapshot:
+def _load_filtered_snapshot(
+    snapshot: AnalysisSourceSnapshot,
+    *,
+    enabled: bool = PZT_BLIP_FILTER_DEFAULT_ENABLED,
+    window: int = PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES,
+) -> AnalysisSourceSnapshot:
     """Blip-filter PZT voltage columns once, here, at the I/O edge where every
     snapshot is built (live capture, archive, CSV re-load) rather than in
     every downstream consumer. A filter failure leaves the snapshot's raw
     data intact with a warning, instead of failing the whole load.
     """
+    if not enabled:
+        return snapshot
     try:
-        snapshot.data = _apply_pzt_blip_filter(snapshot, snapshot.data)
+        snapshot.data = _apply_pzt_blip_filter(
+            snapshot, snapshot.data, normalize_pzt_blip_filter_window(window),
+        )
     except Exception as exc:
         warnings = snapshot.metadata.setdefault("analysis_warnings", [])
         if not isinstance(warnings, list):
@@ -183,7 +209,11 @@ def build_in_memory_snapshot(owner) -> AnalysisSourceSnapshot:
         source_id="in_memory",
         sample_rate_hz=_owner_sample_rate_hz(owner, data, timestamps),
     )
-    return _load_filtered_snapshot(snapshot)
+    return _load_filtered_snapshot(
+        snapshot,
+        enabled=bool(getattr(owner, "pzt_blip_filter_enabled", PZT_BLIP_FILTER_DEFAULT_ENABLED)),
+        window=getattr(owner, "pzt_blip_filter_window_samples", PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES),
+    )
 
 
 def build_snapshot_from_archive(owner) -> AnalysisSourceSnapshot:
@@ -229,10 +259,20 @@ def build_snapshot_from_archive(owner) -> AnalysisSourceSnapshot:
         source_id="archive",
         sample_rate_hz=_owner_sample_rate_hz(owner, data, ts),
     )
-    return _load_filtered_snapshot(snapshot)
+    return _load_filtered_snapshot(
+        snapshot,
+        enabled=bool(getattr(owner, "pzt_blip_filter_enabled", PZT_BLIP_FILTER_DEFAULT_ENABLED)),
+        window=getattr(owner, "pzt_blip_filter_window_samples", PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES),
+    )
 
 
-def load_exported_csv_snapshot(csv_path, metadata_path) -> AnalysisSourceSnapshot:
+def load_exported_csv_snapshot(
+    csv_path,
+    metadata_path,
+    *,
+    blip_filter_enabled: bool = PZT_BLIP_FILTER_DEFAULT_ENABLED,
+    blip_filter_window_samples: int = PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES,
+) -> AnalysisSourceSnapshot:
     """Load an app-exported CSV plus its JSON metadata sidecar."""
     csv_path = Path(csv_path)
     metadata_path = Path(metadata_path)
@@ -311,7 +351,40 @@ def load_exported_csv_snapshot(csv_path, metadata_path) -> AnalysisSourceSnapsho
         source_id=f"csv:{csv_path.resolve()}|json:{metadata_path.resolve()}",
         sample_rate_hz=_metadata_sample_rate_hz(metadata, data, timestamps),
     )
-    return _load_filtered_snapshot(snapshot)
+    def _blip_filter(values: np.ndarray) -> np.ndarray:
+        # Pass-through when disabled -- preprocess_capture_start must still
+        # be called (not skipped) so the settle trim keeps happening.
+        if not blip_filter_enabled:
+            return values
+        try:
+            return _apply_pzt_blip_filter(
+                snapshot, values, normalize_pzt_blip_filter_window(blip_filter_window_samples),
+            )
+        except Exception as exc:
+            warnings = snapshot.metadata.setdefault("analysis_warnings", [])
+            if not isinstance(warnings, list):
+                warnings = [str(warnings)]
+                snapshot.metadata["analysis_warnings"] = warnings
+            warnings.append(f"PZT blip filter skipped: {exc}")
+            return values
+
+    # data_mod.preprocess_capture_start is the sole authority for the
+    # blip-filter-then-settle-trim ORDER and the trim count -- shared with
+    # drag_detection_utils_v1.load_calibration_csv and
+    # TouchIdStreamProcessor.push_chunk, so this can't drift out of sequence
+    # again the way it already did once (see its docstring for what broke).
+    snapshot.data, settle_count = preprocess_capture_start(
+        snapshot.data, snapshot.sample_rate_hz, blip_filter=_blip_filter,
+    )
+    if settle_count > 0:
+        snapshot.timestamps_s = snapshot.timestamps_s[settle_count:]
+        if snapshot.force_x_n.size:
+            snapshot.force_x_n = snapshot.force_x_n[settle_count:]
+        if snapshot.force_z_n.size:
+            snapshot.force_z_n = snapshot.force_z_n[settle_count:]
+        if snapshot.force_timestamps_s.size:
+            snapshot.force_timestamps_s = snapshot.force_timestamps_s[settle_count:]
+    return snapshot
 
 
 def prepare_analysis_data(
@@ -581,38 +654,24 @@ def filter_offline_data(snapshot: AnalysisSourceSnapshot, filter_settings: dict)
 
 
 def _expanding_median(values: np.ndarray) -> np.ndarray:
-    """Causal (past-only) running median, one output per input sample.
+    """Causal (past-only) running median.
 
-    Uses a two-heap running-median so the whole series is O(n log n) rather
-    than the O(n^2) cost of recomputing ``np.median`` at every index.
+    Delegates to texture_piezo's ``data.IncrementalMedian`` -- the single
+    shared two-heap implementation TouchID's live/offline paths already use
+    (see ``inference/stream_processor.py``) -- instead of a second,
+    independently maintained copy of the same algorithm.
     """
-    lower: list[float] = []  # max-heap, stored negated
-    upper: list[float] = []  # min-heap
-    out = np.empty(len(values), dtype=np.float64)
-
-    for i, value in enumerate(values):
-        value = float(value)
-        if lower and value <= -lower[0]:
-            heapq.heappush(lower, -value)
-        else:
-            heapq.heappush(upper, value)
-
-        if len(lower) > len(upper) + 1:
-            heapq.heappush(upper, -heapq.heappop(lower))
-        elif len(upper) > len(lower):
-            heapq.heappush(lower, -heapq.heappop(upper))
-
-        out[i] = -lower[0] if len(lower) > len(upper) else (-lower[0] + upper[0]) / 2.0
-
-    return out
+    return IncrementalMedian().push_many(np.asarray(values, dtype=np.float64))
 
 
 def integrate_voltage_series_causal_median(
     voltage_by_key: Mapping,
     *,
     integration_window_samples: int,
+    sample_rate_hz: float = 0.0,
     mode: str = "sum",
-) -> dict:
+    return_centered: bool = False,
+) -> dict | tuple[dict, dict]:
     """Shear/normal integration path: causal median baseline removal + a
     moving rectangular reduction, mirroring the calibration notebook's shear
     pipeline (``_causal_median_baseline`` in ``calibration_utils.py``)
@@ -627,27 +686,40 @@ def integrate_voltage_series_causal_median(
     integral -- so it can be fed through exactly one downstream RC-charge
     integration afterward without double-integrating.
 
-    The first ``window - 1`` indices of a moving window are never a genuine
-    full window (fewer real samples summed/averaged than every later index),
-    so this function drops them from its own output entirely rather than
-    returning a partial-window value -- every caller gets already-warmed-up
-    data with no separate trimming step of their own. Callers that plot this
-    against a shared x/time axis must drop the same ``window - 1`` leading
-    samples from that axis; use :func:`moving_window_warmup_count`.
+    Two independent warmup sources are dropped from this function's own
+    output, via ``data.total_warmup_sample_count`` (the same helper
+    TouchID's ``CausalDerivedChannels`` uses, so the two paths can't drift
+    apart): the moving-sum window's own fill time (``window - 1`` samples)
+    and the causal median's own convergence time (an early transient's
+    samples dominate a still-small running population -- see
+    ``data.CAUSAL_MEDIAN_WARMUP_S``). Every caller gets already-warmed-up
+    data with no separate trimming step of their own; callers that plot
+    this against a shared x/time axis must drop the same leading samples
+    from that axis, via :func:`_causal_median_warmup_count`.
+
+    ``return_centered=True`` additionally returns the per-key, already-
+    warmup-trimmed ``raw - _expanding_median(raw)`` array computed
+    internally (pre-moving-window) as a second dict, so callers that need
+    to visualize/verify baseline removal use the EXACT SAME centered array
+    fed into this function's moving-window reduction, instead of a second,
+    independently recomputed ``_expanding_median`` call.
     """
     if mode not in ("sum", "average"):
         raise ValueError(f"unsupported integrate_voltage_series_causal_median mode '{mode}'")
     window = max(1, int(integration_window_samples))
-    warmup = window - 1
+    warmup = _causal_median_warmup_count(sample_rate_hz, window)
     result: dict = {}
+    centered_by_key: dict = {}
     for key, raw_values in voltage_by_key.items():
         raw = np.asarray(raw_values, dtype=np.float64).reshape(-1)
         if raw.size == 0:
             result[key] = np.empty(0, dtype=np.float64)
+            centered_by_key[key] = np.empty(0, dtype=np.float64)
             continue
 
         baseline = _expanding_median(raw)
         centered = raw - baseline
+        centered_by_key[key] = centered[warmup:]
 
         cumsum = np.concatenate([[0.0], np.cumsum(centered)])
         end_idx = np.arange(len(centered))
@@ -660,7 +732,23 @@ def integrate_voltage_series_causal_median(
             values = window_sum
         result[key] = values[warmup:]
 
+    if return_centered:
+        return result, centered_by_key
     return result
+
+
+def _causal_median_warmup_count(sample_rate_hz: float, integration_window_samples: int = 0) -> int:
+    """Leading samples a causal-median-baselined series must drop.
+
+    Thin wrapper around ``data.total_warmup_sample_count`` -- the single
+    source of truth for this number, shared with TouchID -- that fails soft
+    (returns the window-only warmup) when ``sample_rate_hz`` isn't known,
+    matching this file's existing convention for an unavailable overlay
+    sample rate (see ``_overlay_sample_rate_hz``).
+    """
+    if sample_rate_hz <= 0.0:
+        return max(0, int(integration_window_samples) - 1)
+    return total_warmup_sample_count(sample_rate_hz, integration_window_samples)
 
 
 def moving_window_warmup_count(integration_window_samples: int) -> int:
@@ -697,7 +785,10 @@ def build_overlay_traces(
     integration_window_samples: int,
     hpf_cutoff_hz: float,
 ) -> list[AnalysisTrace]:
-    if not any(bool(overlay_flags.get(key, False)) for key in ("shear", "normal", "integration")):
+    if not any(
+        bool(overlay_flags.get(key, False))
+        for key in ("shear", "normal", "integration", "baseline_removed")
+    ):
         return []
 
     visible_set = set(snapshot.channel_labels if visible_labels is None else visible_labels)
@@ -718,7 +809,7 @@ def build_overlay_traces(
             )
         )
 
-    if not any(bool(overlay_flags.get(key, False)) for key in ("shear", "normal")):
+    if not any(bool(overlay_flags.get(key, False)) for key in ("shear", "normal", "baseline_removed")):
         return overlays
 
     resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
@@ -730,10 +821,29 @@ def build_overlay_traces(
     # notebook's shear pipeline) rather than the HPF-based SignalIntegrator
     # used for the generic "Integration" overlay trace below — a Butterworth
     # high-pass filter here washed out the slow shear response.
-    integrated = integrate_voltage_series_causal_median(
+    sample_rate_hz = _overlay_sample_rate_hz(snapshot)
+    integrated, centered_by_position = integrate_voltage_series_causal_median(
         volts_by_position,
         integration_window_samples=integration_window_samples,
+        sample_rate_hz=sample_rate_hz,
+        return_centered=True,
     )
+
+    trimmed_x = x[_causal_median_warmup_count(sample_rate_hz, integration_window_samples):]
+    if overlay_flags.get("baseline_removed", False):
+        for position in SHEAR_SENSOR_POSITIONS:
+            overlays.append(
+                AnalysisTrace(
+                    f"{position} Baseline Removed [V]",
+                    trimmed_x,
+                    np.asarray(centered_by_position[position], dtype=np.float64),
+                    "derived",
+                )
+            )
+
+    if not any(bool(overlay_flags.get(key, False)) for key in ("shear", "normal")):
+        return overlays
+
     shear_detector = ShearDetector()
     normal_calculator = NormalForceCalculator()
     shear_jerk_lr: list[float] = []
@@ -755,7 +865,6 @@ def build_overlay_traces(
         shear_jerk_tb.append(float(shear.b_tb))
         normal_jerk.append(float(normal_result.total_force))
 
-    trimmed_x = _trim_x_to_moving_window_warmup(integration_window_samples, x)
     if overlay_flags.get("shear", False):
         overlays.append(AnalysisTrace("Shear L/R Jerk [V]", trimmed_x, np.asarray(shear_jerk_lr, dtype=np.float64), "derived"))
         overlays.append(AnalysisTrace("Shear T/B Jerk [V]", trimmed_x, np.asarray(shear_jerk_tb, dtype=np.float64), "derived"))
@@ -901,13 +1010,13 @@ def _compute_shear_normal_from_channel_rate(
     :func:`~data_processing.pzt_force_calculation.compute_pzt_force_rate_series`
     using THAT position's own capacitance (center vs outer -- this is what
     fixes Normal Force silently mixing the two) and MUX leak timing. This
-    stage is stateless: no noise thresholding, no hysteresis, no
-    accumulation, no natural-zero/reset. Only once these five physically
-    comparable rate series exist are they combined via
-    ``ShearDetector``/``NormalForceCalculator`` -- the nonlinear event/reset
-    machine never runs per-channel, only once afterward on the combined
-    result in ``build_force_based_shear_normal_traces``. Returns ``None``
-    when the five C/L/R/T/B positions aren't resolvable.
+    stage is otherwise stateless: no hysteresis, no accumulation, no
+    natural-zero/reset. Only once these five physically comparable rate
+    series exist are they combined via ``ShearDetector``/
+    ``NormalForceCalculator`` -- the nonlinear event/reset machine never runs
+    per-channel, only once afterward on the combined result in
+    ``build_force_based_shear_normal_traces``. Returns ``None`` when the five
+    C/L/R/T/B positions aren't resolvable.
     """
     resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
     if resolved_positions is None:
@@ -1110,6 +1219,20 @@ def build_force_based_shear_normal_traces(
     center_column = position_channels["C"][0]
     x = x_matrix[:, center_column] if x_matrix.size else np.empty(0, dtype=np.float64)
 
+    # _compute_shear_normal_from_channel_rate's per-position causal median
+    # (via _expanding_median) needs data.CAUSAL_MEDIAN_WARMUP_S of real
+    # samples to converge -- drop the still-invalid leading jerk samples
+    # BEFORE they reach the stateful Force integrator below, not after: that
+    # integrator is a causal accumulator, so a warmup-contaminated sample
+    # would otherwise get folded into its running force state even if the
+    # display were trimmed afterward.
+    warmup = _causal_median_warmup_count(_overlay_sample_rate_hz(snapshot))
+    shear_jerk_lr = shear_jerk_lr[warmup:]
+    shear_jerk_tb = shear_jerk_tb[warmup:]
+    normal_jerk = normal_jerk[warmup:]
+    row_time_s = row_time_s[warmup:]
+    x = x[warmup:]
+
     normal_force = _integrate_causal_series(
         normal_jerk, row_time_s, _new_shear_normal_force_integrator(pzt_force_settings, "C")
     )
@@ -1155,8 +1278,13 @@ def build_integration_traces(
         hpf_cutoff_hz=hpf_cutoff_hz,
         channel_map=list(voltage_by_label),
     )
-    # integrate_voltage_series already dropped its own leading warmup samples.
-    trimmed_x = _trim_x_to_moving_window_warmup(integration_window_samples, x)
+    # integrate_voltage_series already dropped its own leading warmup samples
+    # (total_warmup_sample_count, not just the window-fill count) -- match it
+    # here so the x-axis stays aligned with the y-values.
+    sample_rate_hz = _overlay_sample_rate_hz(snapshot)
+    warmup = total_warmup_sample_count(sample_rate_hz, integration_window_samples) if sample_rate_hz > 0 \
+        else moving_window_warmup_count(integration_window_samples)
+    trimmed_x = x[warmup:]
     return [
         AnalysisTrace(
             f"Integrated {label} [V samples]",
@@ -1181,8 +1309,14 @@ def integrate_voltage_series(
     ``SignalIntegrator`` every call, never carried across calls the way live
     streaming usage of ``SignalIntegrator`` is), so -- like
     ``integrate_voltage_series_causal_median`` -- it drops its own leading
-    ``moving_window_warmup_count(integration_window_samples)`` outputs before
-    returning, rather than emitting partial-window values from a cold start.
+    warmup outputs before returning, rather than emitting partial-window
+    values from a cold start. Uses ``total_warmup_sample_count`` (the same
+    warmup the jerk-overlay traces already trim), not just
+    ``moving_window_warmup_count`` -- the window-fill count alone left this
+    trace's own baseline still visibly converging after the window filled,
+    since the underlying HPF/baseline needs the same convergence time as
+    every other derived-channel trace, just like the jerk overlays already
+    account for.
     """
     keys = list(voltage_by_key)
     integrator = SignalIntegrator(
@@ -1199,7 +1333,8 @@ def integrate_voltage_series(
         )
     except Exception:
         result = _fallback_integrated(voltage_by_key, int(integration_window_samples))
-    warmup = moving_window_warmup_count(integration_window_samples)
+    warmup = total_warmup_sample_count(sample_rate_hz, integration_window_samples) if sample_rate_hz > 0 \
+        else moving_window_warmup_count(integration_window_samples)
     return {key: np.asarray(values, dtype=np.float64)[warmup:] for key, values in result.items()}
 
 
@@ -1219,29 +1354,28 @@ def _is_resistance_like_label(label: str) -> bool:
     return "_RS" in normalized or normalized.startswith("RS_") or normalized.startswith("RS ")
 
 
-def _median3_filter_columns(raw_columns: np.ndarray) -> np.ndarray:
-    """Offline causal median-of-3 filter, one full-capture pass (no carried state).
+def _median_filter_columns(raw_columns: np.ndarray, window: int) -> np.ndarray:
+    """Offline causal median-of-N filter, one full-capture pass (no carried state).
 
     Mirrors ``PztBlipFilterMixin._pzt_blip_filtered_columns`` in
     ``pzt_blip_filter.py`` so isolated single-sample spikes are rejected the
     same way here as during live binary ingest; the analysis workbench loads
     a whole capture at once, so there is no cross-block history to carry.
     """
-    if raw_columns.shape[0] < 3:
+    window = normalize_pzt_blip_filter_window(window)
+    if raw_columns.shape[0] < window:
         return raw_columns.copy()
-    a, b, c = raw_columns[:-2], raw_columns[1:-1], raw_columns[2:]
-    median = (
-        a + b + c
-        - np.maximum(np.maximum(a, b), c)
-        - np.minimum(np.minimum(a, b), c)
-    )
+    windows = np.lib.stride_tricks.sliding_window_view(raw_columns, window, axis=0)
+    median = np.median(windows, axis=-1)
     filtered = raw_columns.copy()
-    filtered[2:] = median
+    filtered[window - 1:] = median
     return filtered
 
 
-def _apply_pzt_blip_filter(snapshot: AnalysisSourceSnapshot, data: np.ndarray) -> np.ndarray:
-    """Median-of-3 filter PZT voltage columns before they feed integration/force calc.
+def _apply_pzt_blip_filter(
+    snapshot: AnalysisSourceSnapshot, data: np.ndarray, window: int,
+) -> np.ndarray:
+    """Median-of-N filter PZT voltage columns before they feed integration/force calc.
 
     Excludes resistance-like (RS) columns, matching the live pipeline's
     exclusion in ``pzt_blip_filter.py`` (RS/555 resistance readings are never
@@ -1260,7 +1394,7 @@ def _apply_pzt_blip_filter(snapshot: AnalysisSourceSnapshot, data: np.ndarray) -
         return data
     column_indices = np.asarray(sorted(set(columns)), dtype=np.int32)
     data = data.copy()
-    data[:, column_indices] = _median3_filter_columns(data[:, column_indices])
+    data[:, column_indices] = _median_filter_columns(data[:, column_indices], window)
     return data
 
 

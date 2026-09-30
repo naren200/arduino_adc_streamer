@@ -159,6 +159,7 @@ class AnalysisPanelHarness(AnalysisPanelMixin):
         self.analysis_shear_check = DummyCheck()
         self.analysis_normal_check = DummyCheck()
         self.analysis_integration_check = DummyCheck()
+        self.analysis_baseline_removed_check = DummyCheck()
         self.analysis_shear_force_check = DummyCheck()
         self.analysis_normal_force_check = DummyCheck()
 
@@ -273,6 +274,36 @@ class AnalysisPztForceEventTunablesRoundTripTests(unittest.TestCase):
             )
             # An untouched pre-existing key survives alongside the defaults.
             self.assertEqual(harness.analysis_pzt_rleak_spin.value(), 2_000_000.0)
+
+
+class AnalysisBaselineRemovedOverlayRoundTripTests(unittest.TestCase):
+    """The "Baseline Removed" overlay checkbox round trips through
+    save/restore the same way the existing shear/normal/integration overlay
+    checks do (see ``overlays`` in ``_init_analysis_state`` and its
+    load/save wiring in ``gui/analysis_panel.py``)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_baseline_removed_check_survives_save_and_restore(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "last_used_analysis_settings.json"
+            harness = AnalysisPanelHarness(settings_path)
+            self.addCleanup(harness.shutdown_analysis_worker)
+
+            harness.analysis_baseline_removed_check.setChecked(True)
+            harness.on_analysis_settings_changed()
+
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            saved_overlays = payload["analysis_settings"]["overlays"]
+            self.assertTrue(saved_overlays["baseline_removed"])
+
+            restored = AnalysisPanelHarness(settings_path)
+            self.addCleanup(restored.shutdown_analysis_worker)
+            restored.load_last_analysis_settings()
+
+            self.assertTrue(restored.analysis_baseline_removed_check.isChecked())
 
 
 if __name__ == "__main__":

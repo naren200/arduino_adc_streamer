@@ -14,6 +14,7 @@ from data_processing.adc_mux_timing import calculate_adc_mux_timing_for_acquisit
 from data_processing.analysis_workbench import (
     AnalysisSourceSnapshot,
     _build_offline_stream_index_map,
+    _causal_median_warmup_count,
     _expanding_median,
     _load_filtered_snapshot,
     _owner_analysis_timing_metadata,
@@ -39,6 +40,29 @@ from data_processing.pzt_force_calculation import (
     pzt_capacitance_to_farads,
 )
 from data_processing.shear_detector import ShearDetector
+
+
+def _prepend_causal_median_warmup(data: np.ndarray, timestamps_s: np.ndarray, sample_rate_hz: float):
+    """Pad a tiny synthetic capture with a quiet preamble long enough to
+    clear the causal-median warmup (see _causal_median_warmup_count) that
+    build_force_based_shear_normal_traces now drops in production, so a
+    hand-computed reference can be built over the same total series the
+    function under test actually sees, then compared tail-to-tail.
+
+    The preamble repeats the capture's own first row (already a settled,
+    unchanging value) and extends timestamps backward at the same spacing --
+    it must not itself introduce any transient for the causal median to
+    react to.
+    """
+    warmup = _causal_median_warmup_count(sample_rate_hz)
+    if warmup == 0:
+        return data, timestamps_s, warmup
+    dt = 1.0 / sample_rate_hz
+    preamble_data = np.repeat(data[:1], warmup, axis=0)
+    preamble_ts = timestamps_s[0] - dt * np.arange(warmup, 0, -1)
+    padded_data = np.concatenate([preamble_data, data], axis=0).astype(data.dtype, copy=False)
+    padded_timestamps = np.concatenate([preamble_ts, timestamps_s])
+    return padded_data, padded_timestamps, warmup
 
 
 class OfflineStreamIndexMapTests(unittest.TestCase):
@@ -620,18 +644,22 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             temp_path = Path(temp_dir)
             csv_path = temp_path / "capture.csv"
             metadata_path = temp_path / "capture_metadata.json"
+            # A leading dummy row is dropped by the capture-start settle trim
+            # (data_mod.capture_start_settle_sample_count) before this test's
+            # assertions look at the remaining two real rows.
             csv_path.write_text(
                 "Timestamp,CH1,CH2,Force_X_N,Force_Z_N\n"
-                "00:00:00.000000,1,2,0.5,1.5\n"
-                "00:00:00.010000,3,4,0.6,1.6\n",
+                "00:00:00.000000,99,99,9.9,9.9\n"
+                "00:00:00.010000,1,2,0.5,1.5\n"
+                "00:00:00.020000,3,4,0.6,1.6\n",
                 encoding="utf-8",
             )
             metadata_path.write_text(
                 json.dumps(
                     {
                         "configuration": {"channels": [1, 2], "repeat_count": 1},
-                        "capture_duration_seconds": 0.01,
-                        "timing": {"arduino_sample_rate_hz": 200.0},
+                        "capture_duration_seconds": 0.02,
+                        "timing": {"arduino_sample_rate_hz": 2.0},
                     }
                 ),
                 encoding="utf-8",
@@ -641,7 +669,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
 
             self.assertEqual(snapshot.channel_labels, ["CH1", "CH2"])
             self.assertEqual(snapshot.data.shape, (2, 2))
-            np.testing.assert_allclose(snapshot.timestamps_s, [0.0, 0.01])
+            np.testing.assert_allclose(snapshot.timestamps_s, [0.01, 0.02])
             np.testing.assert_allclose(snapshot.force_x_n, [0.5, 0.6])
 
     def test_load_exported_csv_snapshot_tolerates_legacy_col_placeholders_and_metadata_mismatch(self):
@@ -649,8 +677,12 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             temp_path = Path(temp_dir)
             csv_path = temp_path / "legacy_array.csv"
             metadata_path = temp_path / "legacy_array_metadata.json"
+            # A leading dummy row is dropped by the capture-start settle trim
+            # (data_mod.capture_start_settle_sample_count) before this test's
+            # assertions look at the remaining two real rows.
             csv_path.write_text(
                 "Timestamp,PZT3_B,Col1,PZT3_L,Col3,PZT3_C,Col5,PZT3_R,Col7,PZT3_T,Col9,Force_X_N,Force_Z_N\n"
+                "13:29:44.970000,9999.0,9999.0,9999.0,9999.0,9999.0,9999.0,9999.0,9999.0,9999.0,9999.0,0.0,0.0\n"
                 "13:29:44.971321,2045.0,2046.0,2043.0,2047.0,2047.0,2047.0,2040.0,2046.0,2049.0,2047.0,0.0,0.0\n"
                 "13:29:44.971931,2047.0,2046.0,2046.0,2049.0,2048.0,2048.0,2040.0,2046.0,2049.0,2047.0,0.0,0.0\n",
                 encoding="utf-8",
@@ -664,7 +696,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
                             "buffer_total_samples": 20,
                         },
                         "capture_duration_seconds": 0.01,
-                        "timing": {"arduino_sample_rate_hz": 1000.0},
+                        "timing": {"arduino_sample_rate_hz": 2.0},
                     }
                 ),
                 encoding="utf-8",
@@ -682,18 +714,22 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             temp_path = Path(temp_dir)
             csv_path = temp_path / "legacy_force.csv"
             metadata_path = temp_path / "legacy_force_metadata.json"
+            # A leading dummy row is dropped by the capture-start settle trim
+            # (data_mod.capture_start_settle_sample_count) before this test's
+            # assertions look at the remaining two real rows.
             csv_path.write_text(
                 "Timestamp,CH1,Force_X,Force_Z\n"
-                f"00:00:00.000000,1,{2.0 * X_FORCE_SENSOR_TO_NEWTON},{3.0 * Z_FORCE_SENSOR_TO_NEWTON}\n"
-                f"00:00:00.010000,2,{4.0 * X_FORCE_SENSOR_TO_NEWTON},{5.0 * Z_FORCE_SENSOR_TO_NEWTON}\n",
+                "00:00:00.000000,0,0,0\n"
+                f"00:00:00.010000,1,{2.0 * X_FORCE_SENSOR_TO_NEWTON},{3.0 * Z_FORCE_SENSOR_TO_NEWTON}\n"
+                f"00:00:00.020000,2,{4.0 * X_FORCE_SENSOR_TO_NEWTON},{5.0 * Z_FORCE_SENSOR_TO_NEWTON}\n",
                 encoding="utf-8",
             )
             metadata_path.write_text(
                 json.dumps(
                     {
                         "configuration": {"channels": [1], "repeat_count": 1},
-                        "capture_duration_seconds": 0.01,
-                        "timing": {"arduino_sample_rate_hz": 100.0},
+                        "capture_duration_seconds": 0.02,
+                        "timing": {"arduino_sample_rate_hz": 2.0},
                     }
                 ),
                 encoding="utf-8",
@@ -709,8 +745,12 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             temp_path = Path(temp_dir)
             csv_path = temp_path / "array.csv"
             metadata_path = temp_path / "array_metadata.json"
+            # A leading dummy row is dropped by the capture-start settle trim
+            # (data_mod.capture_start_settle_sample_count) before this test's
+            # assertions look at the remaining two real rows.
             csv_path.write_text(
                 "PZT6_B,PZT6_L,PZT6_C,PZT6_R,PZT6_T,PZT6_RS1,PZT6_RS2,Force_X,Force_Z\n"
+                "9999,9999,9999,9999,9999,9999,9999,0,0\n"
                 "2046,2052,2039,2049,2044,474.6,455.42,0,0\n"
                 "2044,2052,2038,2050,2044,474.6,455.42,0,0\n",
                 encoding="utf-8",
@@ -724,7 +764,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
                             "buffer_total_samples": 7,
                         },
                         "capture_duration_seconds": 0.01,
-                        "timing": {"arduino_sample_rate_hz": 20833.333333333332},
+                        "timing": {"arduino_sample_rate_hz": 2.0},
                     }
                 ),
                 encoding="utf-8",
@@ -743,6 +783,49 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             ])
             self.assertEqual(snapshot.data.shape, (2, 7))
             np.testing.assert_allclose(snapshot.force_x_n, [0.0, 0.0])
+
+    def test_load_exported_csv_snapshot_filters_blip_before_settle_trim(self):
+        """Regression test for the ordering bug: a blip planted right where
+        the settle-trim boundary lands must still be removed by the blip
+        filter, because filtering runs on the FULL raw capture first and the
+        settle-trim only afterward. Under the old (buggy) order -- trim
+        first, then filter the already-trimmed array -- this exact blip
+        would land inside the causal median filter's own always-unfiltered
+        first (window - 1) samples and survive, which is the bug the user
+        actually saw in the Analysis tab's Raw Signal panel."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            csv_path = temp_path / "blip_at_trim_boundary.csv"
+            metadata_path = temp_path / "blip_at_trim_boundary_metadata.json"
+            # fs=3.0 -> settle_count = ceil(0.4 * 3.0) = 2, so rows 0-1 are
+            # discarded and row 2 (the blip) becomes the new first row.
+            # window=3 (default) needs one full window of real neighbors on
+            # both sides to median-out row 2's blip -- rows 0,1,2 supply that
+            # only if filtering sees the FULL 5-row array, not the trimmed one.
+            csv_path.write_text(
+                "Timestamp,PZT3_B,PZT3_L,PZT3_C,PZT3_R,PZT3_T,Force_X_N,Force_Z_N\n"
+                "00:00:00.000000,2048,2048,2048,2048,2048,0.0,0.0\n"
+                "00:00:00.333000,2048,2048,2048,2048,2048,0.0,0.0\n"
+                "00:00:00.666000,9999,9999,9999,9999,9999,0.0,0.0\n"
+                "00:00:01.000000,2048,2048,2048,2048,2048,0.0,0.0\n"
+                "00:00:01.333000,2048,2048,2048,2048,2048,0.0,0.0\n",
+                encoding="utf-8",
+            )
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1},
+                        "capture_duration_seconds": 1.333,
+                        "timing": {"arduino_sample_rate_hz": 3.0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            snapshot = load_exported_csv_snapshot(csv_path, metadata_path)
+
+            self.assertEqual(snapshot.data.shape, (3, 5))
+            self.assertTrue(np.all(snapshot.data < 3000.0), snapshot.data)
 
     def test_prepare_analysis_data_builds_requested_overlays(self):
         snapshot = AnalysisSourceSnapshot(
@@ -787,6 +870,116 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         )
         self.assertEqual([trace.label for trace in direct_overlays], ["Shear L/R Jerk [V]", "Shear T/B Jerk [V]"])
 
+    def test_baseline_removed_overlay_tracks_drift_and_keeps_pulses(self):
+        # Slow drift (a level shift the causal expanding median gradually
+        # catches up to, since it's a median over ALL past samples, not a
+        # moving window) across all rows, plus one sharp pulse -- the
+        # baseline-removed overlay should collapse the drifted region back
+        # toward zero once the median has caught up, while still showing
+        # the pulse clearly.
+        # _expanding_median is a median over ALL past samples (no decay), so
+        # it only "catches up" to a level shift once samples at the new
+        # level outnumber everything seen before, including the warmup
+        # preamble this helper prepends -- use a long-enough hold at the
+        # new level, well before the pulse, for that crossover to happen.
+        sample_count = 200
+        pulse_index = 150
+        counts = np.full((sample_count, 5), 1600.0, dtype=np.float32)
+        counts[5:, :] = 1900.0  # level shift the expanding median must absorb
+        counts[pulse_index, :] += 600.0
+
+        data, timestamps_s, _warmup = _prepend_causal_median_warmup(
+            counts, np.arange(sample_count, dtype=np.float64) * 0.01, sample_rate_hz=100.0,
+        )
+        snapshot = AnalysisSourceSnapshot(
+            data=data,
+            timestamps_s=timestamps_s,
+            channel_labels=["C", "L", "R", "T", "B"],
+            metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=100.0,
+        )
+
+        overlays = build_overlay_traces(
+            snapshot,
+            snapshot.data,
+            axis_mode="samples",
+            overlay_flags={"shear": False, "normal": False, "integration": False, "baseline_removed": True},
+            vref_voltage=3.3,
+            integration_window_samples=1,
+            hpf_cutoff_hz=0.0,
+        )
+        by_label = {trace.label: trace for trace in overlays}
+        self.assertEqual(
+            set(by_label),
+            {f"{position} Baseline Removed [V]" for position in ["C", "L", "R", "T", "B"]},
+        )
+
+        center_trace = by_label["C Baseline Removed [V]"]
+        # Once the expanding median has caught up with the level shift
+        # (well before the pulse, after warmup), the drift is absorbed and
+        # the residual sits near zero.
+        settled_region = center_trace.y[100:110]
+        self.assertTrue(np.all(np.abs(settled_region) < 0.05), settled_region)
+        # The pulse itself is still clearly visible in the output.
+        pulse_value = center_trace.y[pulse_index]
+        self.assertGreater(abs(pulse_value), 0.3, center_trace.y)
+
+    def test_baseline_removed_overlay_matches_integration_centered_array(self):
+        # Single-source-of-truth check: the overlay's values must be the
+        # exact same centered array integrate_voltage_series_causal_median
+        # computes internally for the Shear/Normal Jerk path -- not a second,
+        # independently recomputed _expanding_median call.
+        data = np.asarray(
+            [
+                [200, 300, -300, 100, -100],
+                [260, 500, -420, 140, -140],
+                [260, 500, -420, 140, -140],
+                [180, 260, -260, 80, -80],
+            ],
+            dtype=np.float32,
+        )
+        data, timestamps_s, _warmup = _prepend_causal_median_warmup(
+            data, np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64), sample_rate_hz=100.0,
+        )
+        snapshot = AnalysisSourceSnapshot(
+            data=data,
+            timestamps_s=timestamps_s,
+            channel_labels=["C", "L", "R", "T", "B"],
+            metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=100.0,
+        )
+        vref_voltage = 3.3
+
+        overlays = build_overlay_traces(
+            snapshot,
+            snapshot.data,
+            axis_mode="samples",
+            overlay_flags={"baseline_removed": True},
+            vref_voltage=vref_voltage,
+            integration_window_samples=1,
+            hpf_cutoff_hz=0.0,
+        )
+        by_label = {trace.label: trace for trace in overlays}
+
+        volts_by_position = {
+            position: counts_to_volts(data[:, index], vref_voltage)
+            for index, position in enumerate(["C", "L", "R", "T", "B"])
+        }
+        _integrated, centered_by_position = integrate_voltage_series_causal_median(
+            volts_by_position,
+            integration_window_samples=1,
+            sample_rate_hz=100.0,
+            return_centered=True,
+        )
+
+        for position in ["C", "L", "R", "T", "B"]:
+            np.testing.assert_array_equal(
+                by_label[f"{position} Baseline Removed [V]"].y,
+                centered_by_position[position],
+            )
+
     def test_force_based_shear_normal_traces_match_reference_integration(self):
         # C, L, R, T, B counts across 4 rows; L/R carry an opposite-sign shear
         # component so the reference must actually exercise shear removal.
@@ -799,9 +992,12 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             ],
             dtype=np.float32,
         )
+        data, timestamps_s, warmup = _prepend_causal_median_warmup(
+            data, np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64), sample_rate_hz=100.0,
+        )
         snapshot = AnalysisSourceSnapshot(
             data=data,
-            timestamps_s=np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64),
+            timestamps_s=timestamps_s,
             channel_labels=["C", "L", "R", "T", "B"],
             metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
             source_id="unit",
@@ -919,9 +1115,12 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         shear_lr_ref = _integrate(shear_lr_jerk_ref, "L")
         shear_tb_ref = _integrate(shear_tb_jerk_ref, "T")
 
-        np.testing.assert_allclose(by_label["Normal Force [N]"].y, normal_ref, rtol=1e-6, atol=1e-12)
-        np.testing.assert_allclose(by_label["Shear Force L/R [N]"].y, shear_lr_ref, rtol=1e-6, atol=1e-12)
-        np.testing.assert_allclose(by_label["Shear Force T/B [N]"].y, shear_tb_ref, rtol=1e-6, atol=1e-12)
+        # build_force_based_shear_normal_traces drops the leading warmup
+        # samples (causal-median convergence, see _causal_median_warmup_count)
+        # before returning -- compare against the same tail of the reference.
+        np.testing.assert_allclose(by_label["Normal Force [N]"].y, normal_ref[warmup:], rtol=1e-6, atol=1e-12)
+        np.testing.assert_allclose(by_label["Shear Force L/R [N]"].y, shear_lr_ref[warmup:], rtol=1e-6, atol=1e-12)
+        np.testing.assert_allclose(by_label["Shear Force T/B [N]"].y, shear_tb_ref[warmup:], rtol=1e-6, atol=1e-12)
 
         # Existing voltage-based Shear/Normal Jerk path (moving SUM) is
         # untouched by enabling the new Force overlay flags.
@@ -952,9 +1151,12 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             ],
             dtype=np.float32,
         )
+        data, timestamps_s, warmup = _prepend_causal_median_warmup(
+            data, np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64), sample_rate_hz=100.0,
+        )
         snapshot = AnalysisSourceSnapshot(
             data=data,
-            timestamps_s=np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64),
+            timestamps_s=timestamps_s,
             channel_labels=["C", "L", "R", "T", "B"],
             metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
             source_id="unit",
@@ -1016,7 +1218,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         ]
 
         self.assertFalse(
-            np.allclose(normal_force, naive_normal, rtol=1e-6, atol=1e-12),
+            np.allclose(normal_force, naive_normal[warmup:], rtol=1e-6, atol=1e-12),
             msg="Normal Force must no longer match the capacitance-mixing-bug reference",
         )
 
@@ -1107,9 +1309,12 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             ],
             dtype=np.float32,
         )
+        data, timestamps_s, _warmup = _prepend_causal_median_warmup(
+            data, np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64), sample_rate_hz=100.0,
+        )
         snapshot = AnalysisSourceSnapshot(
             data=data,
-            timestamps_s=np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64),
+            timestamps_s=timestamps_s,
             channel_labels=["C", "L", "R", "T", "B"],
             metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
             source_id="unit",

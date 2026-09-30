@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QSpinBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -42,6 +43,12 @@ from PyQt6.QtWidgets import (
 from pyqtgraph.exporters import ImageExporter
 
 from constants.plotting import PLOT_COLORS, PLOT_EXPORT_WIDTH
+from constants.pzt_blip_filter import (
+    PZT_BLIP_FILTER_DEFAULT_ENABLED,
+    PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES,
+    PZT_BLIP_FILTER_MAX_WINDOW_SAMPLES,
+    PZT_BLIP_FILTER_MIN_WINDOW_SAMPLES,
+)
 from constants.pzt_force import (
     ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS,
     PZT_FORCE_CAPACITANCE_UNITS,
@@ -49,6 +56,7 @@ from constants.pzt_force import (
 )
 from constants.ui import AnalysisLoadState
 from data_processing.analysis_compute_worker import AnalysisComputeWorker
+from data_processing.analysis_source_load_worker import AnalysisSourceLoadWorker
 from data_processing.analysis_labels import (
     abbreviate_class_names,
     assign_segment,
@@ -90,6 +98,7 @@ class AnalysisPanelMixin:
                 "integration": True,
                 "shear_force": False,
                 "normal_force": False,
+                "baseline_removed": False,
             },
             "pzt_force": dict(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS),
             "visible_labels": {},
@@ -120,6 +129,18 @@ class AnalysisPanelMixin:
         self.analysis_compute_worker.result_ready.connect(self._on_analysis_compute_result)
         self.analysis_compute_worker.error_occurred.connect(self._on_analysis_compute_error)
         self.analysis_compute_worker.start()
+        self.analysis_source_load_worker = AnalysisSourceLoadWorker()
+        self.analysis_source_load_worker.result_ready.connect(self._on_analysis_source_load_result)
+        self.analysis_source_load_worker.error_occurred.connect(self._on_analysis_source_load_error)
+        self.analysis_source_load_worker.start()
+        self._analysis_source_load_generation = 0
+        # True from the moment a CSV source load is submitted to the
+        # background worker until its result/error lands -- lets callers
+        # elsewhere (e.g. TouchID's "Run on Analysis Source") tell "still
+        # loading" apart from "nothing loaded yet"/"loaded", since
+        # analysis_snapshot alone can't distinguish those while a load is
+        # in flight on another thread.
+        self._analysis_source_loading = False
         self.analysis_channel_checks: dict[str, QCheckBox] = {}
         self.analysis_signal_curves = {}
         self.analysis_force_curves = {}
@@ -141,6 +162,10 @@ class AnalysisPanelMixin:
         if worker is not None:
             worker.stop()
             worker.wait(1500)
+        source_worker = getattr(self, "analysis_source_load_worker", None)
+        if source_worker is not None:
+            source_worker.stop()
+            source_worker.wait(1500)
 
     def _get_last_analysis_settings_path(self):
         return Path.home() / ".adc_streamer" / "analysis" / "last_used_analysis_settings.json"
@@ -283,6 +308,13 @@ class AnalysisPanelMixin:
         self.analysis_integration_check = QCheckBox("Integration")
         self.analysis_integration_check.stateChanged.connect(self.on_analysis_settings_changed)
         controls_layout.addWidget(self.analysis_integration_check, 1, 3)
+        self.analysis_baseline_removed_check = QCheckBox("Baseline Removed")
+        self.analysis_baseline_removed_check.setToolTip(
+            "Overlay the causal expanding-median baseline-removed voltage"
+            " (same centered array fed into Shear/Normal Jerk)."
+        )
+        self.analysis_baseline_removed_check.stateChanged.connect(self.on_analysis_settings_changed)
+        controls_layout.addWidget(self.analysis_baseline_removed_check, 1, 4)
         self.analysis_marker_check = QCheckBox("Marker")
         self.analysis_marker_check.setChecked(True)
         self.analysis_marker_check.stateChanged.connect(self.on_analysis_marker_toggled)
@@ -432,6 +464,35 @@ class AnalysisPanelMixin:
         self.analysis_pzt_d33_spin.setSuffix(" pC/N")
         self.analysis_pzt_d33_spin.valueChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_d33_spin, 1, 3)
+
+        self.analysis_pzt_blip_filter_check = QCheckBox("Blip Filter")
+        self.analysis_pzt_blip_filter_check.setChecked(
+            bool(getattr(self, "pzt_blip_filter_enabled", PZT_BLIP_FILTER_DEFAULT_ENABLED))
+        )
+        self.analysis_pzt_blip_filter_check.setToolTip(
+            "Reject isolated single-sample ADC blips on PZT voltage columns with a causal "
+            "median-of-N filter before Jerk/Force are computed. Toggling reloads the current source."
+        )
+        self.analysis_pzt_blip_filter_check.toggled.connect(self._on_analysis_blip_filter_toggled)
+        pzt_force_layout.addWidget(self.analysis_pzt_blip_filter_check, 2, 0)
+
+        self.analysis_pzt_blip_filter_window_spin = QSpinBox()
+        self.analysis_pzt_blip_filter_window_spin.setRange(
+            PZT_BLIP_FILTER_MIN_WINDOW_SAMPLES, PZT_BLIP_FILTER_MAX_WINDOW_SAMPLES,
+        )
+        self.analysis_pzt_blip_filter_window_spin.setSingleStep(2)
+        self.analysis_pzt_blip_filter_window_spin.setValue(
+            int(getattr(self, "pzt_blip_filter_window_samples", PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES))
+        )
+        self.analysis_pzt_blip_filter_window_spin.setSuffix(" samples")
+        self.analysis_pzt_blip_filter_window_spin.setToolTip(
+            "Median filter window (odd samples). Larger windows reject wider blips but flatten "
+            "faster real transitions."
+        )
+        self.analysis_pzt_blip_filter_window_spin.valueChanged.connect(
+            self._on_analysis_blip_filter_window_changed
+        )
+        pzt_force_layout.addWidget(self.analysis_pzt_blip_filter_window_spin, 2, 1)
 
         pzt_force_layout.addWidget(QLabel("MUX timing:"), 3, 0)
         self.analysis_pzt_mux_timing_combo = QComboBox()
@@ -796,6 +857,7 @@ class AnalysisPanelMixin:
             self.analysis_shear_check.setChecked(bool(overlays.get("shear", False)))
             self.analysis_normal_check.setChecked(bool(overlays.get("normal", False)))
             self.analysis_integration_check.setChecked(bool(overlays.get("integration", False)))
+            self.analysis_baseline_removed_check.setChecked(bool(overlays.get("baseline_removed", False)))
             self.analysis_shear_force_check.setChecked(bool(overlays.get("shear_force", False)))
             self.analysis_normal_force_check.setChecked(bool(overlays.get("normal_force", False)))
             pzt_force = state.get("pzt_force", {})
@@ -996,40 +1058,88 @@ class AnalysisPanelMixin:
                     return
                 self.analysis_state["csv_path"] = csv_path
                 self.analysis_state["metadata_path"] = metadata_path
-                self.analysis_snapshot = load_exported_csv_snapshot(csv_path, metadata_path)
-            else:
-                buffer_overflowed = (
-                    hasattr(self, '_capture_exceeds_memory_buffer')
-                    and self._capture_exceeds_memory_buffer()
-                    and getattr(self, '_archive_path', None)
-                )
-                if buffer_overflowed:
-                    self.analysis_snapshot = build_snapshot_from_archive(self)
-                else:
-                    self.analysis_snapshot = build_in_memory_snapshot(self)
-            self._rebuild_analysis_channel_checks()
-            if hasattr(self, 'touchid_load_last_inference_btn'):
-                # New snapshot object -- any cached replay predictions no
-                # longer belong to what's loaded (see
-                # on_touchid_load_last_inference_clicked's identity check).
-                self.touchid_load_last_inference_btn.setEnabled(
-                    self.analysis_snapshot is self._touchid_last_inference_snapshot
-                )
-            self._load_labels_for_current_source()
-            self._analysis_pending_auto_range = True
-            self._analysis_loaded_status = (
-                f"Analysis loaded: {self.analysis_snapshot.sweep_count} sweeps, "
-                f"{self.analysis_snapshot.samples_per_sweep} signal columns"
+                # CSV parsing is pure-Python and can take seconds on a large
+                # capture -- run it on AnalysisSourceLoadWorker's background
+                # thread (same bounded-queue-with-eviction pattern as
+                # AnalysisComputeWorker) so it never blocks the GUI. Finishes
+                # in _on_analysis_source_load_result/_error, not here.
+                self._analysis_source_load_generation += 1
+                self._analysis_source_loading = True
+                self._set_analysis_status_text(f"Analysis: loading {Path(csv_path).name}...")
+                self.analysis_source_load_worker.submit({
+                    "generation": self._analysis_source_load_generation,
+                    "csv_path": csv_path,
+                    "metadata_path": metadata_path,
+                    "blip_filter_enabled": getattr(
+                        self, "pzt_blip_filter_enabled", PZT_BLIP_FILTER_DEFAULT_ENABLED,
+                    ),
+                    "blip_filter_window_samples": getattr(
+                        self, "pzt_blip_filter_window_samples", PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES,
+                    ),
+                })
+                return
+            # In-memory/archive snapshots hold a reference to buffers already
+            # resident in this process -- no file parsing, so no background
+            # thread is needed; this stays synchronous like before.
+            buffer_overflowed = (
+                hasattr(self, '_capture_exceeds_memory_buffer')
+                and self._capture_exceeds_memory_buffer()
+                and getattr(self, '_archive_path', None)
             )
-            self.refresh_analysis_plot()
-            if hasattr(self, "log_status"):
-                self.log_status(self._analysis_loaded_status)
-            self.save_last_analysis_settings()
+            if buffer_overflowed:
+                self.analysis_snapshot = build_snapshot_from_archive(self)
+            else:
+                self.analysis_snapshot = build_in_memory_snapshot(self)
+            self._finish_analysis_source_loaded()
         except Exception as exc:
             self._set_analysis_status_text(f"Analysis load failed: {exc}")
             if hasattr(self, "log_status"):
                 self.log_status(f"Analysis load failed: {exc}")
             QMessageBox.warning(self, "Analysis Load Failed", str(exc))
+
+    def _on_analysis_source_load_result(self, payload: dict):
+        if int(payload.get("generation", -1)) != self._analysis_source_load_generation:
+            return  # superseded by a newer load request -- drop this one.
+        self._analysis_source_loading = False
+        self.analysis_snapshot = payload["snapshot"]
+        try:
+            self._finish_analysis_source_loaded()
+        except Exception as exc:
+            self._set_analysis_status_text(f"Analysis load failed: {exc}")
+            if hasattr(self, "log_status"):
+                self.log_status(f"Analysis load failed: {exc}")
+            QMessageBox.warning(self, "Analysis Load Failed", str(exc))
+
+    def _on_analysis_source_load_error(self, generation: int, message: str):
+        if int(generation) != self._analysis_source_load_generation:
+            return
+        self._analysis_source_loading = False
+        self._set_analysis_status_text(f"Analysis load failed: {message}")
+        if hasattr(self, "log_status"):
+            self.log_status(f"Analysis load failed: {message}")
+        QMessageBox.warning(self, "Analysis Load Failed", str(message))
+
+    def _finish_analysis_source_loaded(self):
+        """Shared post-load steps for both the synchronous in-memory/archive
+        path and AnalysisSourceLoadWorker's background CSV-load result."""
+        self._rebuild_analysis_channel_checks()
+        if hasattr(self, 'touchid_load_last_inference_btn'):
+            # New snapshot object -- any cached replay predictions no
+            # longer belong to what's loaded (see
+            # on_touchid_load_last_inference_clicked's identity check).
+            self.touchid_load_last_inference_btn.setEnabled(
+                self.analysis_snapshot is self._touchid_last_inference_snapshot
+            )
+        self._load_labels_for_current_source()
+        self._analysis_pending_auto_range = True
+        self._analysis_loaded_status = (
+            f"Analysis loaded: {self.analysis_snapshot.sweep_count} sweeps, "
+            f"{self.analysis_snapshot.samples_per_sweep} signal columns"
+        )
+        self.refresh_analysis_plot()
+        if hasattr(self, "log_status"):
+            self.log_status(self._analysis_loaded_status)
+        self.save_last_analysis_settings()
 
     def _rebuild_analysis_channel_checks(self):
         for check in self.analysis_channel_checks.values():
@@ -1098,6 +1208,27 @@ class AnalysisPanelMixin:
             check.setChecked(bool(checked))
         self.on_analysis_settings_changed()
 
+    def _on_analysis_blip_filter_toggled(self, checked: bool):
+        if hasattr(self, "set_pzt_blip_filter_enabled"):
+            self.set_pzt_blip_filter_enabled(checked)
+        else:
+            self.pzt_blip_filter_enabled = bool(checked)
+        self._reload_analysis_source_for_blip_filter_change()
+
+    def _on_analysis_blip_filter_window_changed(self, window_samples: int):
+        if hasattr(self, "set_pzt_blip_filter_window_samples"):
+            self.set_pzt_blip_filter_window_samples(window_samples)
+        else:
+            self.pzt_blip_filter_window_samples = int(window_samples)
+        self._reload_analysis_source_for_blip_filter_change()
+
+    def _reload_analysis_source_for_blip_filter_change(self):
+        # Blip filtering is baked into the snapshot at load time, not applied
+        # per-redraw, so an already-loaded snapshot must be reloaded from its
+        # source for an enabled/window change to take effect.
+        if getattr(self, "analysis_snapshot", None) is not None:
+            self.load_analysis_source()
+
     def on_analysis_settings_changed(self, *_args):
         if not hasattr(self, "analysis_axis_combo"):
             return
@@ -1108,6 +1239,7 @@ class AnalysisPanelMixin:
             "shear": bool(self.analysis_shear_check.isChecked()),
             "normal": bool(self.analysis_normal_check.isChecked()),
             "integration": bool(self.analysis_integration_check.isChecked()),
+            "baseline_removed": bool(self.analysis_baseline_removed_check.isChecked()),
             "shear_force": bool(self.analysis_shear_force_check.isChecked()),
             "normal_force": bool(self.analysis_normal_force_check.isChecked()),
         }
@@ -2203,6 +2335,7 @@ class AnalysisPanelMixin:
             self.analysis_shear_check,
             self.analysis_normal_check,
             self.analysis_integration_check,
+            self.analysis_baseline_removed_check,
             self.analysis_shear_force_check,
             self.analysis_normal_force_check,
             self.analysis_pzt_center_capacitance_spin,

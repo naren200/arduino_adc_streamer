@@ -40,6 +40,12 @@ from constants.plotting import (
     ROSETTE_MOVING_AVERAGE_MAX_SAMPLES,
     ROSETTE_MOVING_AVERAGE_MIN_SAMPLES,
 )
+from constants.pzt_blip_filter import (
+    PZT_BLIP_FILTER_DEFAULT_ENABLED,
+    PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES,
+    PZT_BLIP_FILTER_MAX_WINDOW_SAMPLES,
+    PZT_BLIP_FILTER_MIN_WINDOW_SAMPLES,
+)
 from constants.pzt_ghost import (
     PZT_GHOST_ATTENUATION_DECIMALS,
     PZT_GHOST_ATTENUATION_MAX,
@@ -555,6 +561,28 @@ class DisplayPanelsMixin:
         self.remove_ghost_attenuation_spin.valueChanged.connect(self._on_pzt_ghost_controls_changed)
         repeats_layout.addWidget(self.remove_ghost_attenuation_spin)
 
+        self.pzt_blip_filter_check = QCheckBox("Blip Filter")
+        self.pzt_blip_filter_check.setChecked(PZT_BLIP_FILTER_DEFAULT_ENABLED)
+        self.pzt_blip_filter_check.setToolTip(
+            "Reject isolated single-sample ADC blips on PZT voltage columns with a causal median-of-N filter"
+        )
+        self.pzt_blip_filter_check.toggled.connect(self._on_pzt_blip_filter_check_changed)
+        repeats_layout.addWidget(self.pzt_blip_filter_check)
+
+        self.pzt_blip_filter_window_spin = QSpinBox()
+        self.pzt_blip_filter_window_spin.setRange(
+            PZT_BLIP_FILTER_MIN_WINDOW_SAMPLES, PZT_BLIP_FILTER_MAX_WINDOW_SAMPLES,
+        )
+        self.pzt_blip_filter_window_spin.setSingleStep(2)
+        self.pzt_blip_filter_window_spin.setValue(PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES)
+        self.pzt_blip_filter_window_spin.setSuffix(" samples")
+        self.pzt_blip_filter_window_spin.setToolTip(
+            "Median filter window (odd samples). Larger windows reject wider blips but flatten "
+            "faster real transitions."
+        )
+        self.pzt_blip_filter_window_spin.valueChanged.connect(self._on_pzt_blip_filter_window_changed)
+        repeats_layout.addWidget(self.pzt_blip_filter_window_spin)
+
         repeats_layout.addStretch()
         repeats_group.setLayout(repeats_layout)
         main_layout.addWidget(repeats_group)
@@ -576,9 +604,20 @@ class DisplayPanelsMixin:
         if hasattr(self, 'reset_pressure_force_display_for_baseline_change'):
             self.reset_pressure_force_display_for_baseline_change()
 
+    def _on_pzt_blip_filter_check_changed(self, checked: bool):
+        if hasattr(self, 'set_pzt_blip_filter_enabled'):
+            self.set_pzt_blip_filter_enabled(checked)
+
+    def _on_pzt_blip_filter_window_changed(self, window_samples: int):
+        if hasattr(self, 'set_pzt_blip_filter_window_samples'):
+            self.set_pzt_blip_filter_window_samples(window_samples)
+
     def set_pzt_ghost_controls_enabled(self, enabled: bool):
         """Keep canonical-data controls fixed for the duration of a capture."""
-        for widget_name in ('remove_ghost_check', 'remove_ghost_attenuation_spin'):
+        for widget_name in (
+            'remove_ghost_check', 'remove_ghost_attenuation_spin',
+            'pzt_blip_filter_check', 'pzt_blip_filter_window_spin',
+        ):
             widget = getattr(self, widget_name, None)
             if widget is not None:
                 widget.setEnabled(bool(enabled))
