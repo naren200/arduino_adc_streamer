@@ -630,7 +630,6 @@ class InferencePanelMixin:
             window_size_s=self.touchid_config.window_size_s,
             hop_size_s=self.touchid_config.hop_size_s,
             span_stale_timeout_s=self.touchid_config.span_stale_timeout_s,
-            min_span_fill_ratio=self.touchid_config.min_span_fill_ratio,
             idle_baseline=idle_baseline if idle_baseline is not None else self.touchid_idle_baseline,
             onset_skip_s=self.touchid_config.onset_skip_s,
         )

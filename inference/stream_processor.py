@@ -74,7 +74,6 @@ class TouchIdStreamProcessor:
         window_size_s: float,
         hop_size_s: float,
         span_stale_timeout_s: float,
-        min_span_fill_ratio: float,
         idle_baseline: IdleBaseline | None,
         onset_skip_s: float = ONSET_SKIP_S,
     ) -> None:
@@ -82,7 +81,6 @@ class TouchIdStreamProcessor:
         self.window_size_s = float(window_size_s)
         self.hop_size_s = float(hop_size_s)
         self.span_stale_timeout_s = float(span_stale_timeout_s)
-        self.min_span_fill_ratio = float(min_span_fill_ratio)
         self.idle_baseline = idle_baseline
         self.onset_skip_s = float(onset_skip_s)
 
@@ -249,16 +247,17 @@ class TouchIdStreamProcessor:
         seen live for that exact recording, reproducing identical
         segmentation decisions.
 
-        The first data_mod.CAUSAL_MEDIAN_WARMUP_S of any stream's derived
-        channels are dropped here, before either windowing branch sees them
-        -- CausalDerivedChannels.process() itself never trims (batch and
-        streaming must return bit-identical, un-opinionated output), so
-        withholding the still-invalid leading samples is this caller's job,
-        the same as analysis_workbench.py's batch trim. The session's first
-        data_mod.CAPTURE_START_SETTLE_S is dropped the same way (mux/analog
-        settling at the very start of a session, unrelated to the causal-
-        median warmup above) -- whichever of the two warmups is longer wins,
-        via a single samples_seen-relative cutoff.
+        The first data_mod.total_warmup_sample_count (moving-sum window fill
+        time) of any stream's derived channels are dropped here, before
+        either windowing branch sees them -- CausalDerivedChannels.process()
+        itself never trims (batch and streaming must return bit-identical,
+        un-opinionated output), so withholding the still-invalid leading
+        samples is this caller's job, the same as analysis_workbench.py's
+        batch trim. The session's first data_mod.CAPTURE_START_SETTLE_S is
+        dropped the same way (mux/analog settling at the very start of a
+        session, unrelated to the window-fill warmup above) -- whichever of
+        the two warmups is longer wins, via a single samples_seen-relative
+        cutoff.
         """
         if not self._raw_filtered_this_tick:
             raise RuntimeError(

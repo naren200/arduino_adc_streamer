@@ -14,7 +14,6 @@ from data_processing.adc_mux_timing import calculate_adc_mux_timing_for_acquisit
 from data_processing.analysis_workbench import (
     AnalysisSourceSnapshot,
     _build_offline_stream_index_map,
-    _causal_median_warmup_count,
     _expanding_median,
     _load_filtered_snapshot,
     _owner_analysis_timing_metadata,
@@ -40,29 +39,6 @@ from data_processing.pzt_force_calculation import (
     pzt_capacitance_to_farads,
 )
 from data_processing.shear_detector import ShearDetector
-
-
-def _prepend_causal_median_warmup(data: np.ndarray, timestamps_s: np.ndarray, sample_rate_hz: float):
-    """Pad a tiny synthetic capture with a quiet preamble long enough to
-    clear the causal-median warmup (see _causal_median_warmup_count) that
-    build_force_based_shear_normal_traces now drops in production, so a
-    hand-computed reference can be built over the same total series the
-    function under test actually sees, then compared tail-to-tail.
-
-    The preamble repeats the capture's own first row (already a settled,
-    unchanging value) and extends timestamps backward at the same spacing --
-    it must not itself introduce any transient for the causal median to
-    react to.
-    """
-    warmup = _causal_median_warmup_count(sample_rate_hz)
-    if warmup == 0:
-        return data, timestamps_s, warmup
-    dt = 1.0 / sample_rate_hz
-    preamble_data = np.repeat(data[:1], warmup, axis=0)
-    preamble_ts = timestamps_s[0] - dt * np.arange(warmup, 0, -1)
-    padded_data = np.concatenate([preamble_data, data], axis=0).astype(data.dtype, copy=False)
-    padded_timestamps = np.concatenate([preamble_ts, timestamps_s])
-    return padded_data, padded_timestamps, warmup
 
 
 class OfflineStreamIndexMapTests(unittest.TestCase):
@@ -888,9 +864,8 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         counts[5:, :] = 1900.0  # level shift the expanding median must absorb
         counts[pulse_index, :] += 600.0
 
-        data, timestamps_s, _warmup = _prepend_causal_median_warmup(
-            counts, np.arange(sample_count, dtype=np.float64) * 0.01, sample_rate_hz=100.0,
-        )
+        timestamps_s = np.arange(sample_count, dtype=np.float64) * 0.01
+        data = counts
         snapshot = AnalysisSourceSnapshot(
             data=data,
             timestamps_s=timestamps_s,
@@ -939,9 +914,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             ],
             dtype=np.float32,
         )
-        data, timestamps_s, _warmup = _prepend_causal_median_warmup(
-            data, np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64), sample_rate_hz=100.0,
-        )
+        timestamps_s = np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64)
         snapshot = AnalysisSourceSnapshot(
             data=data,
             timestamps_s=timestamps_s,
@@ -992,9 +965,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             ],
             dtype=np.float32,
         )
-        data, timestamps_s, warmup = _prepend_causal_median_warmup(
-            data, np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64), sample_rate_hz=100.0,
-        )
+        timestamps_s = np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64)
         snapshot = AnalysisSourceSnapshot(
             data=data,
             timestamps_s=timestamps_s,
@@ -1115,12 +1086,9 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         shear_lr_ref = _integrate(shear_lr_jerk_ref, "L")
         shear_tb_ref = _integrate(shear_tb_jerk_ref, "T")
 
-        # build_force_based_shear_normal_traces drops the leading warmup
-        # samples (causal-median convergence, see _causal_median_warmup_count)
-        # before returning -- compare against the same tail of the reference.
-        np.testing.assert_allclose(by_label["Normal Force [N]"].y, normal_ref[warmup:], rtol=1e-6, atol=1e-12)
-        np.testing.assert_allclose(by_label["Shear Force L/R [N]"].y, shear_lr_ref[warmup:], rtol=1e-6, atol=1e-12)
-        np.testing.assert_allclose(by_label["Shear Force T/B [N]"].y, shear_tb_ref[warmup:], rtol=1e-6, atol=1e-12)
+        np.testing.assert_allclose(by_label["Normal Force [N]"].y, normal_ref, rtol=1e-6, atol=1e-12)
+        np.testing.assert_allclose(by_label["Shear Force L/R [N]"].y, shear_lr_ref, rtol=1e-6, atol=1e-12)
+        np.testing.assert_allclose(by_label["Shear Force T/B [N]"].y, shear_tb_ref, rtol=1e-6, atol=1e-12)
 
         # Existing voltage-based Shear/Normal Jerk path (moving SUM) is
         # untouched by enabling the new Force overlay flags.
@@ -1133,6 +1101,67 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             {trace.label for trace in pressure_overlays},
             {"Shear L/R Jerk [V]", "Shear T/B Jerk [V]", "Normal Jerk [V]"},
         )
+
+    def test_force_based_shear_normal_traces_matches_with_shared_median_baseline(self):
+        # prepare_analysis_data hoists one _expanding_median(raw) per
+        # position and shares it between Force and the Shear/Normal Jerk
+        # overlay instead of each computing it independently -- passing that
+        # precomputed (UNTRIMMED) baseline in must reproduce bit-for-bit the
+        # same output as build_force_based_shear_normal_traces computing its
+        # own baseline internally.
+        data = np.asarray(
+            [
+                [200, 300, -300, 100, -100],
+                [260, 500, -420, 140, -140],
+                [260, 500, -420, 140, -140],
+                [180, 260, -260, 80, -80],
+            ],
+            dtype=np.float32,
+        )
+        timestamps_s = np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64)
+        snapshot = AnalysisSourceSnapshot(
+            data=data,
+            timestamps_s=timestamps_s,
+            channel_labels=["C", "L", "R", "T", "B"],
+            metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=100.0,
+        )
+        pzt_force_settings = {
+            "enabled": True,
+            "center_capacitance_value": 150.0,
+            "outer_capacitance_value": 150.0,
+            "capacitance_unit": "pF",
+            "rleak_ohm": 1_000_000.0,
+            "d33_pc_per_n": 600.0,
+            "noise_threshold_n": 0.0,
+        }
+        vref_voltage = 3.3
+
+        unshared_traces = build_force_based_shear_normal_traces(
+            snapshot, snapshot.data, axis_mode="samples",
+            overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=vref_voltage,
+            pzt_force_settings=pzt_force_settings,
+        )
+
+        volts_by_position = {
+            position: counts_to_volts(data[:, index], vref_voltage)
+            for index, position in enumerate(["C", "L", "R", "T", "B"])
+        }
+        median_by_position = {
+            position: _expanding_median(volts) for position, volts in volts_by_position.items()
+        }
+        shared_traces = build_force_based_shear_normal_traces(
+            snapshot, snapshot.data, axis_mode="samples",
+            overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=vref_voltage,
+            pzt_force_settings=pzt_force_settings,
+            median_by_position=median_by_position,
+        )
+
+        unshared_by_label = {trace.label: trace for trace in unshared_traces}
+        shared_by_label = {trace.label: trace for trace in shared_traces}
+        for label in ("Normal Force [N]", "Shear Force L/R [N]", "Shear Force T/B [N]"):
+            np.testing.assert_array_equal(shared_by_label[label].y, unshared_by_label[label].y)
 
     def test_force_based_shear_normal_traces_fixes_capacitance_mixing(self):
         # Original bug: Normal Force summed raw voltage across C (center
@@ -1151,9 +1180,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             ],
             dtype=np.float32,
         )
-        data, timestamps_s, warmup = _prepend_causal_median_warmup(
-            data, np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64), sample_rate_hz=100.0,
-        )
+        timestamps_s = np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64)
         snapshot = AnalysisSourceSnapshot(
             data=data,
             timestamps_s=timestamps_s,
@@ -1218,7 +1245,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         ]
 
         self.assertFalse(
-            np.allclose(normal_force, naive_normal[warmup:], rtol=1e-6, atol=1e-12),
+            np.allclose(normal_force, naive_normal, rtol=1e-6, atol=1e-12),
             msg="Normal Force must no longer match the capacitance-mixing-bug reference",
         )
 
@@ -1309,9 +1336,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             ],
             dtype=np.float32,
         )
-        data, timestamps_s, _warmup = _prepend_causal_median_warmup(
-            data, np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64), sample_rate_hz=100.0,
-        )
+        timestamps_s = np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64)
         snapshot = AnalysisSourceSnapshot(
             data=data,
             timestamps_s=timestamps_s,

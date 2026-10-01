@@ -68,12 +68,6 @@ DEFAULT_MODEL_TYPE = "penta"
 class InferenceConfig:
     window_size_s: float = 0.5      # independent literal, NOT imported from training config
     hop_size_s: float = 0.1         # user-adjustable via GUI spinbox
-    min_span_fill_ratio: float = 0.08  # UNUSED as of the fragment-stitching rewrite --
-                                        # ActiveSampleQueue.expire() uses a single
-                                        # FRAGMENT_MAX_AGE_S rule with no separate
-                                        # fill-ratio grace period. Kept as a
-                                        # TouchIdStreamProcessor constructor param for
-                                        # now to avoid a wider call-site cleanup.
     span_stale_timeout_s: float = 1.0  # TouchIdStreamProcessor._trim_store's safety
                                         # margin only -- fragment expiry itself is now
                                         # governed by segmentation.FRAGMENT_MAX_AGE_S,
@@ -153,18 +147,6 @@ def discover_checkpoints(model_type: str, version: str) -> list[str]:
     ]
 
 
-def unusable_models(model_type: str) -> list[tuple[str, str, str]]:
-    """(version, checkpoint, error) for every checkpoint on disk that parses as
-    `model_type` but does not load -- the reason it is absent from the
-    dropdown. Surfaced so a checkpoint that silently fails to appear is
-    diagnosable without reading discovery internals."""
-    return [
-        (found.artifacts.version, found.artifacts.checkpoint, found.error)
-        for found in model_discovery.discover(model_type)
-        if not found.is_loadable
-    ]
-
-
 def model_version_of(config: InferenceConfig) -> str | None:
     """Best-effort extraction of the version suffix (e.g. "v2b") config is currently set to."""
     artifacts = _current_artifacts(config)
@@ -231,7 +213,6 @@ def save_touchid_settings(config: InferenceConfig) -> Path:
         TOUCHID_SETTINGS_PAYLOAD_KEY: {
             "window_size_s": config.window_size_s,
             "hop_size_s": config.hop_size_s,
-            "min_span_fill_ratio": config.min_span_fill_ratio,
             "span_stale_timeout_s": config.span_stale_timeout_s,
             "pzt_columns": list(config.pzt_columns),
             "smoothing_window_n": config.smoothing_window_n,
@@ -266,8 +247,6 @@ def load_touchid_settings(config: InferenceConfig | None = None) -> InferenceCon
             config.window_size_s = payload["window_size_s"]
         if "hop_size_s" in payload:
             config.hop_size_s = payload["hop_size_s"]
-        if "min_span_fill_ratio" in payload:
-            config.min_span_fill_ratio = payload["min_span_fill_ratio"]
         if "span_stale_timeout_s" in payload:
             config.span_stale_timeout_s = payload["span_stale_timeout_s"]
         if "pzt_columns" in payload:

@@ -34,12 +34,17 @@ def _timestamps(start: float, n: int, fs: float) -> np.ndarray:
 
 
 def _warm_up(processor: TouchIdStreamProcessor, fs: float, t: float = 0.0) -> float:
-    """Push CausalDerivedChannels' own causal-median warmup (see
-    data.CAUSAL_MEDIAN_WARMUP_S) through the processor with idle-valued
-    samples before a test's real assertions, so those samples' own
-    ready-window count isn't silently short by the warmup drop that
-    push_chunk now applies. Returns the timestamp to resume pushing from."""
-    n = data_mod.total_warmup_sample_count(fs, processor.derived_channels.jerk_window_samples)
+    """Push push_chunk's full leading-sample drop (max of
+    CausalDerivedChannels' own moving-sum window-fill warmup and the
+    session's capture-start settle trim -- see push_chunk's docstring)
+    through the processor with idle-valued samples before a test's real
+    assertions, so those samples' own ready-window count isn't silently
+    short by the drop that push_chunk applies. Returns the timestamp to
+    resume pushing from."""
+    n = max(
+        data_mod.total_warmup_sample_count(fs, processor.derived_channels.jerk_window_samples),
+        data_mod.capture_start_settle_sample_count(fs),
+    )
     processor.push_chunk(processor.filter_raw(_chunk(n, 0.0)), _timestamps(t, n, fs), fs, now_t=t)
     return t + n / fs
 
@@ -55,7 +60,6 @@ class FixedGridFallbackTests(unittest.TestCase):
             window_size_s=0.1,
             hop_size_s=0.05,
             span_stale_timeout_s=1.0,
-            min_span_fill_ratio=0.08,
             idle_baseline=None,
         )
 
@@ -110,7 +114,6 @@ class ActiveSampleQueuePathTests(unittest.TestCase):
             window_size_s=0.1,
             hop_size_s=0.05,
             span_stale_timeout_s=1.0,
-            min_span_fill_ratio=0.08,
             idle_baseline=baseline or _make_baseline(),
         )
 
@@ -178,7 +181,6 @@ class SameHopCadenceReproducibilityTests(unittest.TestCase):
             window_size_s=0.1,
             hop_size_s=0.05,
             span_stale_timeout_s=1.0,
-            min_span_fill_ratio=0.08,
             idle_baseline=baseline,
         )
         fs = 1000.0
@@ -210,7 +212,6 @@ class FilterRawTests(unittest.TestCase):
             window_size_s=0.1,
             hop_size_s=0.05,
             span_stale_timeout_s=1.0,
-            min_span_fill_ratio=0.08,
             idle_baseline=None,
         )
 
@@ -260,7 +261,6 @@ class PushChunkRequiresFilterRawTests(unittest.TestCase):
             window_size_s=0.1,
             hop_size_s=0.05,
             span_stale_timeout_s=1.0,
-            min_span_fill_ratio=0.08,
             idle_baseline=None,
         )
 

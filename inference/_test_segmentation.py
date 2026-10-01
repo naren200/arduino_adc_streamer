@@ -126,7 +126,6 @@ def check_no_straddle(
 def main() -> None:
     config = InferenceConfig()
     print(f"window_size_s={config.window_size_s} hop_size_s={config.hop_size_s} "
-          f"min_span_fill_ratio={config.min_span_fill_ratio} "
           f"span_stale_timeout_s={config.span_stale_timeout_s}\n")
 
     missing = [p for p in (IDLE_BASELINE_CSV, LABELED_CSV, LABELED_LABELS_JSON, PURE_IDLE_CSV) if not p.exists()]
@@ -214,7 +213,6 @@ def _drive_stream_processor(samples, rel_s, fs, config, idle_baseline):
         window_size_s=config.window_size_s,
         hop_size_s=config.hop_size_s,
         span_stale_timeout_s=config.span_stale_timeout_s,
-        min_span_fill_ratio=config.min_span_fill_ratio,
         idle_baseline=idle_baseline,
     )
     hop_n = max(1, round(config.hop_size_s * fs))

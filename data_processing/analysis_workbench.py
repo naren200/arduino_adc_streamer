@@ -445,6 +445,22 @@ def prepare_analysis_data(
             status_parts.append(pzt_timing_status)
     except Exception as exc:
         status_parts.append(f"PZT force timing skipped: {exc}")
+    resolved_flags = overlay_flags or {}
+    median_by_position: dict[str, np.ndarray] | None = None
+    if any(
+        bool(resolved_flags.get(key, False))
+        for key in ("shear_force", "normal_force", "shear", "normal", "baseline_removed")
+    ):
+        # Force's per-channel rate stage and the Shear/Normal Jerk overlay
+        # both causal-median-baseline the SAME raw per-position voltage --
+        # compute it once here and share it, instead of each side running
+        # its own independent _expanding_median over identical raw data.
+        resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
+        if resolved_positions is not None:
+            _position_channels, volts_by_position = resolved_positions
+            median_by_position = {
+                position: _expanding_median(volts) for position, volts in volts_by_position.items()
+            }
     try:
         force_traces.extend(
             build_force_based_shear_normal_traces(
@@ -456,6 +472,7 @@ def prepare_analysis_data(
                 pzt_force_settings=pzt_force_settings or {},
                 leak_dt_s=pzt_leak_dt_s,
                 pre_sample_decay_dt_s_by_label=pzt_pre_sample_decay_by_label,
+                median_by_position=median_by_position,
             )
         )
     except Exception as exc:
@@ -469,6 +486,7 @@ def prepare_analysis_data(
         vref_voltage=vref_voltage,
         integration_window_samples=integration_window_samples,
         hpf_cutoff_hz=hpf_cutoff_hz,
+        median_by_position=median_by_position,
     )
     return AnalysisPreparedData(traces, force_traces, overlays, x_label, x_units, " | ".join(status_parts))
 
@@ -671,6 +689,7 @@ def integrate_voltage_series_causal_median(
     sample_rate_hz: float = 0.0,
     mode: str = "sum",
     return_centered: bool = False,
+    baseline_by_key: Mapping | None = None,
 ) -> dict | tuple[dict, dict]:
     """Shear/normal integration path: causal median baseline removal + a
     moving rectangular reduction, mirroring the calibration notebook's shear
@@ -686,14 +705,12 @@ def integrate_voltage_series_causal_median(
     integral -- so it can be fed through exactly one downstream RC-charge
     integration afterward without double-integrating.
 
-    Two independent warmup sources are dropped from this function's own
-    output, via ``data.total_warmup_sample_count`` (the same helper
-    TouchID's ``CausalDerivedChannels`` uses, so the two paths can't drift
-    apart): the moving-sum window's own fill time (``window - 1`` samples)
-    and the causal median's own convergence time (an early transient's
-    samples dominate a still-small running population -- see
-    ``data.CAUSAL_MEDIAN_WARMUP_S``). Every caller gets already-warmed-up
-    data with no separate trimming step of their own; callers that plot
+    The moving-sum window's own fill time (``window - 1`` samples) is
+    dropped from this function's own output, via
+    ``data.total_warmup_sample_count`` (the same helper TouchID's
+    ``CausalDerivedChannels`` uses, so the two paths can't drift apart).
+    Every caller gets already-warmed-up data with no separate trimming
+    step of their own; callers that plot
     this against a shared x/time axis must drop the same leading samples
     from that axis, via :func:`_causal_median_warmup_count`.
 
@@ -703,6 +720,13 @@ def integrate_voltage_series_causal_median(
     to visualize/verify baseline removal use the EXACT SAME centered array
     fed into this function's moving-window reduction, instead of a second,
     independently recomputed ``_expanding_median`` call.
+
+    ``baseline_by_key``, when given, supplies an already-computed per-key
+    ``_expanding_median(raw)`` (UNTRIMMED -- same length as the raw series)
+    so a caller that also needs this same baseline elsewhere (e.g. the
+    Shear/Normal Force pipeline) can share one computation instead of each
+    side recomputing the causal median independently on the same raw
+    voltage. Falls back to computing it here when not given.
     """
     if mode not in ("sum", "average"):
         raise ValueError(f"unsupported integrate_voltage_series_causal_median mode '{mode}'")
@@ -717,7 +741,11 @@ def integrate_voltage_series_causal_median(
             centered_by_key[key] = np.empty(0, dtype=np.float64)
             continue
 
-        baseline = _expanding_median(raw)
+        baseline = (
+            baseline_by_key[key]
+            if baseline_by_key is not None and key in baseline_by_key
+            else _expanding_median(raw)
+        )
         centered = raw - baseline
         centered_by_key[key] = centered[warmup:]
 
@@ -784,6 +812,7 @@ def build_overlay_traces(
     vref_voltage: float,
     integration_window_samples: int,
     hpf_cutoff_hz: float,
+    median_by_position: Mapping[str, np.ndarray] | None = None,
 ) -> list[AnalysisTrace]:
     if not any(
         bool(overlay_flags.get(key, False))
@@ -827,6 +856,7 @@ def build_overlay_traces(
         integration_window_samples=integration_window_samples,
         sample_rate_hz=sample_rate_hz,
         return_centered=True,
+        baseline_by_key=median_by_position,
     )
 
     trimmed_x = x[_causal_median_warmup_count(sample_rate_hz, integration_window_samples):]
@@ -1000,6 +1030,7 @@ def _compute_shear_normal_from_channel_rate(
     pzt_force_settings: Mapping[str, object],
     leak_dt_s=None,
     pre_sample_decay_dt_s_by_label: Mapping[str, float] | None = None,
+    median_by_position: Mapping[str, np.ndarray] | None = None,
 ) -> tuple[dict[str, tuple[int, str]], np.ndarray, np.ndarray, np.ndarray] | None:
     """Per-channel physically-correct force-RATE ("jerk") pipeline for Shear/Normal Force.
 
@@ -1017,6 +1048,14 @@ def _compute_shear_normal_from_channel_rate(
     per-channel, only once afterward on the combined result in
     ``build_force_based_shear_normal_traces``. Returns ``None`` when the five
     C/L/R/T/B positions aren't resolvable.
+
+    ``median_by_position``, when given, supplies an already-computed
+    per-position ``_expanding_median(raw_voltage)`` (UNTRIMMED -- same length
+    as ``raw_voltage``) so the caller can share one causal-median computation
+    with ``integrate_voltage_series_causal_median`` instead of each
+    recomputing it independently on the same raw voltage. Falls back to
+    computing it here when not given (e.g. Force enabled without Jerk/
+    baseline-removed this render).
     """
     resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
     if resolved_positions is None:
@@ -1029,7 +1068,12 @@ def _compute_shear_normal_from_channel_rate(
     for position in SHEAR_SENSOR_POSITIONS:
         column, label = position_channels[position]
         raw_voltage = np.asarray(volts_by_position[position], dtype=np.float64)
-        centered = raw_voltage - _expanding_median(raw_voltage)
+        median = (
+            median_by_position[position]
+            if median_by_position is not None and position in median_by_position
+            else _expanding_median(raw_voltage)
+        )
+        centered = raw_voltage - median
         time_s = np.asarray(time_base_s[:, column], dtype=np.float64) if time_base_s.size else np.empty(0)
         rate_by_position[position] = compute_pzt_force_rate_series(
             centered,
@@ -1180,6 +1224,7 @@ def build_force_based_shear_normal_traces(
     pzt_force_settings: Mapping[str, object],
     leak_dt_s=None,
     pre_sample_decay_dt_s_by_label: Mapping[str, float] | None = None,
+    median_by_position: Mapping[str, np.ndarray] | None = None,
 ) -> list[AnalysisTrace]:
     """Combine per-channel force RATE, then integrate the combined result once each.
 
@@ -1207,6 +1252,7 @@ def build_force_based_shear_normal_traces(
         pzt_force_settings=pzt_force_settings,
         leak_dt_s=leak_dt_s,
         pre_sample_decay_dt_s_by_label=pre_sample_decay_dt_s_by_label,
+        median_by_position=median_by_position,
     )
     if computed is None:
         raise ValueError("Shear Force / Normal Force requires all five C/L/R/T/B channels")
@@ -1219,13 +1265,12 @@ def build_force_based_shear_normal_traces(
     center_column = position_channels["C"][0]
     x = x_matrix[:, center_column] if x_matrix.size else np.empty(0, dtype=np.float64)
 
-    # _compute_shear_normal_from_channel_rate's per-position causal median
-    # (via _expanding_median) needs data.CAUSAL_MEDIAN_WARMUP_S of real
-    # samples to converge -- drop the still-invalid leading jerk samples
-    # BEFORE they reach the stateful Force integrator below, not after: that
-    # integrator is a causal accumulator, so a warmup-contaminated sample
-    # would otherwise get folded into its running force state even if the
-    # display were trimmed afterward.
+    # The moving-sum window feeding shear_jerk_lr/tb/normal_jerk needs
+    # data.total_warmup_sample_count real samples to fill -- drop the still-
+    # invalid leading jerk samples BEFORE they reach the stateful Force
+    # integrator below, not after: that integrator is a causal accumulator,
+    # so a warmup-contaminated sample would otherwise get folded into its
+    # running force state even if the display were trimmed afterward.
     warmup = _causal_median_warmup_count(_overlay_sample_rate_hz(snapshot))
     shear_jerk_lr = shear_jerk_lr[warmup:]
     shear_jerk_tb = shear_jerk_tb[warmup:]
@@ -1279,8 +1324,8 @@ def build_integration_traces(
         channel_map=list(voltage_by_label),
     )
     # integrate_voltage_series already dropped its own leading warmup samples
-    # (total_warmup_sample_count, not just the window-fill count) -- match it
-    # here so the x-axis stays aligned with the y-values.
+    # (total_warmup_sample_count, the moving-sum window-fill count) -- match
+    # it here so the x-axis stays aligned with the y-values.
     sample_rate_hz = _overlay_sample_rate_hz(snapshot)
     warmup = total_warmup_sample_count(sample_rate_hz, integration_window_samples) if sample_rate_hz > 0 \
         else moving_window_warmup_count(integration_window_samples)
