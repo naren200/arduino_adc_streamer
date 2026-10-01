@@ -30,9 +30,9 @@ if str(_REPO_ROOT) not in sys.path:
 
 from inference._paths import TEXTURE_PIEZO_SRC
 from inference.config import InferenceConfig
+from core.piezo_engine.streaming import CausalDerivedChannels
 
 sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
-from causal_derived_channels import CausalDerivedChannels  # noqa: E402
 from clip_windowing_utils_v1 import extract_window_features  # noqa: E402
 
 N_REPEATS = 100

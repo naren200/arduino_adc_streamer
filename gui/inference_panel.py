@@ -45,10 +45,10 @@ from inference.config import (
 )
 from inference.architectures import ARCH_REGISTRY, CHECKPOINT_DEFAULT
 from inference.mode import TouchIdMode
-from inference.quality_gate import load_idle_baseline, save_idle_baseline
+from inference.quality_gate_settings import load_idle_baseline, save_idle_baseline
 from inference.replay_fastforward import ReplayFastForward
 from inference.smoothing import WindowedVoteSmoother, is_guilty_candidate
-from touchid_inference.quality_gate import IDLE_CAPTURE_DURATION_S, fit_idle_baseline
+from core.inference.quality_gate import IDLE_CAPTURE_DURATION_S, fit_idle_baseline
 from inference.stream_processor import TouchIdStreamProcessor
 from constants.plotting import PLOT_COLORS
 

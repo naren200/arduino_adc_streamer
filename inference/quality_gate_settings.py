@@ -19,8 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import _paths  # noqa: F401  (import side effect: puts texture_piezo/src on sys.path)
-from touchid_inference.quality_gate import DEFAULT_K, IdleBaseline
+from core.inference.quality_gate import DEFAULT_K, IdleBaseline
 
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 

@@ -18,10 +18,11 @@ from ._paths import TEXTURE_PIEZO_MODELS, TEXTURE_PIEZO_SRC
 from .model_discovery import DEFAULT_CLASS_NAMES
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 
+from core.inference.quality_gate import DEFAULT_K
+from core.inference.config import ONSET_SKIP_S
+
 sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
 from clip_windowing_utils_v1 import CHANNEL_LABELS  # noqa: E402
-from touchid_inference.quality_gate import DEFAULT_K  # noqa: E402
-from touchid_inference.config import ONSET_SKIP_S  # noqa: E402
 
 # texture_piezo's channel-suffix order (B/L/C/R/T) for one PZT sensor board,
 # independent of which physical sensor number it's wired up as -- see

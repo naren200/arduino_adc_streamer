@@ -31,20 +31,17 @@ processor policy), or any GUI/plotting state.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 
 import numpy as np
 
-from ._paths import TEXTURE_PIEZO_SRC
 from .buffer import RollingBuffer
 
-sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
-from causal_derived_channels import CausalDerivedChannels  # noqa: E402
-import data as data_mod  # noqa: E402
-from touchid_inference.config import ONSET_SKIP_S  # noqa: E402
-from touchid_inference.quality_gate import IdleBaseline, MICRO_CHUNK_S  # noqa: E402
-from touchid_inference.segmentation import ActiveSampleQueue  # noqa: E402
+from core.piezo_engine import baseline as data_mod
+from core.piezo_engine.streaming import CausalDerivedChannels
+from core.inference.config import ONSET_SKIP_S
+from core.inference.quality_gate import IdleBaseline, MICRO_CHUNK_S
+from core.inference.segmentation import ActiveSampleQueue
 
 
 @dataclass

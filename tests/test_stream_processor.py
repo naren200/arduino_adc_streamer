@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 
 from inference.stream_processor import TouchIdStreamProcessor
-from touchid_inference.quality_gate import IdleBaseline
+from core.inference.quality_gate import IdleBaseline
 
 import data as data_mod  # noqa: E402  (sys.path wired by inference.stream_processor's import above)
 
