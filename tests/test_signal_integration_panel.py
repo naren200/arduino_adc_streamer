@@ -30,13 +30,13 @@ from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS
 from constants.shear import DEFAULT_ARROW_GAIN, DEFAULT_ARROW_MIN_THRESHOLD, SHEAR_SENSOR_POSITIONS
 from config.pressure_map_mask_config import MaskConfigStore
 from data_processing.adc_filter_engine import ADCFilterEngine
-from data_processing.normal_force_calculator import NormalForceCalculator
+from core.piezo_engine.normal_force_calculator import NormalForceCalculator
 from data_processing.pressure_map_array_generator import PressureMapArrayGenerator
 from data_processing.force_block_worker import ForceBlockWorker
 from data_processing.pressure_force_display import PressureForceDisplayEngine
 from data_processing.pressure_map_geometry import PressureMapGeometry
 from data_processing.pressure_map_generator import PressureMapGenerator
-from data_processing.shear_detector import ShearDetector
+from core.piezo_engine.shear_detector import ShearDetector
 from gui.pressure_map_widget import PressureMapWidget
 from gui.signal_integration_panel import PressureMapPanelMixin
 

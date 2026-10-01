@@ -28,8 +28,8 @@ from data_processing.analysis_workbench import (
     reorder_circular_capture,
     resolve_analysis_pzt_mux_leak_dt_s,
 )
-from data_processing.normal_force_calculator import NormalForceCalculator
-from data_processing.pzt_force_calculation import (
+from core.piezo_engine.normal_force_calculator import NormalForceCalculator
+from core.piezo_engine.force_integrator import (
     PztChannelPhysicalParams,
     PztForceChannelIntegrator,
     calculate_pzt_force_from_settings,
@@ -38,7 +38,7 @@ from data_processing.pzt_force_calculation import (
     estimate_pzt_quiet_baseline,
     pzt_capacitance_to_farads,
 )
-from data_processing.shear_detector import ShearDetector
+from core.piezo_engine.shear_detector import ShearDetector
 
 
 class OfflineStreamIndexMapTests(unittest.TestCase):

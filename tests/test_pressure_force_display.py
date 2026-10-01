@@ -5,9 +5,9 @@ from unittest.mock import patch
 
 from constants.shear import SHEAR_SENSOR_POSITIONS
 from data_processing.pressure_force_display import ForceLayer, PressureForceDisplayEngine
-from data_processing.shear_detector import ShearDetector
+from core.piezo_engine.shear_detector import ShearDetector
 from data_processing.pressure_map_array_generator import PressureMapArrayForcePackage, PressureMapArrayGenerator
-from data_processing.pzt_force_calculation import (
+from core.piezo_engine.force_integrator import (
     PztForceChannelIntegrator,
     calculate_pzt_force_from_voltage,
 )

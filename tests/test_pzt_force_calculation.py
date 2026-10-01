@@ -15,7 +15,7 @@ import pytest
 
 import numpy as np
 
-from data_processing.pzt_force_calculation import (
+from core.piezo_engine.force_integrator import (
     PztChannelPhysicalParams,
     PztForceChannelIntegrator,
     compute_pzt_force_rate_series,

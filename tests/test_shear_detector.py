@@ -2,7 +2,7 @@
 
 import unittest
 
-from data_processing.shear_detector import ShearDetector
+from core.piezo_engine.shear_detector import ShearDetector
 
 
 class ShearDetectorTests(unittest.TestCase):

@@ -21,7 +21,7 @@ from data_processing.pzt_ghost_removal import PztGhostRemovalMixin
 from data_processing.force_overlay import ForceOverlayMixin
 from data_processing.force_processor import ForceProcessorMixin
 from data_processing.heatmap_processor import HeatmapProcessorMixin
-from data_processing.normal_force_calculator import NormalForceCalculator, NormalForceResult
+from core.piezo_engine.normal_force_calculator import NormalForceCalculator, NormalForceResult
 from data_processing.pressure_map_generator import (
     PressureFieldModel,
     PressureMapGenerator,
@@ -35,7 +35,7 @@ from data_processing.pressure_map_array_generator import (
     PressureMapArrayResult,
 )
 from data_processing.pressure_map_mask import PressureMapMaskGeometry, mask_inside_grid
-from data_processing.shear_detector import ShearDetector, ShearResult
+from core.piezo_engine.shear_detector import ShearDetector, ShearResult
 from data_processing.signal_integrator import SignalIntegrator
 from data_processing.pressure_force_display import (
     ForceMapArrayResult,

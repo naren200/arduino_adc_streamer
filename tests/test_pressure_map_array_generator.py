@@ -3,7 +3,7 @@
 import unittest
 import numpy as np
 
-from data_processing.normal_force_calculator import NormalForceCalculator
+from core.piezo_engine.normal_force_calculator import NormalForceCalculator
 from data_processing.pressure_map_array_generator import (
     PressureMapArrayGenerator,
     PressureMapArrayPackage,

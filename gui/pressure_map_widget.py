@@ -7,7 +7,7 @@ squares, and a numeric normal-force readout. It also draws the live shear arrow
 over the pressure map and can render one combined array-level pressure image.
 
 Dependencies:
-    PyQt6, pyqtgraph, constants.shear, data_processing.normal_force_calculator,
+    PyQt6, pyqtgraph, constants.shear, core.piezo_engine.normal_force_calculator,
     data_processing.pressure_map_generator, and
     data_processing.pressure_map_array_generator.
 """
@@ -94,11 +94,11 @@ from constants.shear import (
     SHEAR_READOUT_MAGNITUDE_DECIMALS,
     SHEAR_ZERO_VALUE,
 )
-from data_processing.normal_force_calculator import NormalForceResult
+from core.piezo_engine.normal_force_calculator import NormalForceResult
 from data_processing.pressure_map_array_generator import PressureMapArrayResult
 from data_processing.pressure_map_mask import PressureMapMaskGeometry, mask_inside_grid
 from data_processing.pressure_map_generator import PressureMapResult
-from data_processing.shear_detector import ShearResult
+from core.piezo_engine.shear_detector import ShearResult
 from gui.shear_visualization_widget import ShearArrowGeometry, ShearArrowRenderMixin
 
 

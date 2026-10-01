@@ -26,7 +26,7 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
 )
 from constants.shear import SHEAR_ZERO_VALUE
-from data_processing.normal_force_calculator import NormalForceResult
+from core.piezo_engine.normal_force_calculator import NormalForceResult
 from data_processing.pressure_map_generator import (
     PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED,
     PressureMapResult,

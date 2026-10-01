@@ -145,7 +145,7 @@ def compute_pzt_force_rate_series(
     Unlike :func:`calculate_pzt_force_from_voltage`, this applies no noise
     thresholding, no hysteresis, no accumulation, and no natural-zero/reset
     machinery -- it is pure per-sample physics, safe to combine (e.g. via
-    :class:`~data_processing.shear_detector.ShearDetector`) BEFORE any
+    :class:`~core.piezo_engine.shear_detector.ShearDetector`) BEFORE any
     nonlinear event state runs. Callers that need the full stateful pipeline
     should use :class:`PztForceChannelIntegrator` instead. ``voltage_v`` must
     already be baseline-centered by the caller; this never re-centers.

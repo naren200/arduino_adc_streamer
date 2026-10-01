@@ -7,7 +7,7 @@ designed for embedding below the Signal Integration plot so Step 2 shear
 detection can be visually verified without adding a new top-level tab.
 
 Dependencies:
-    PyQt6, pyqtgraph, constants.shear, and data_processing.shear_detector.
+    PyQt6, pyqtgraph, constants.shear, and core.piezo_engine.shear_detector.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ from constants.shear import (
     SHEAR_VISUALIZATION_MIN_HEIGHT_PX,
     SHEAR_ZERO_VALUE,
 )
-from data_processing.shear_detector import ShearResult
+from core.piezo_engine.shear_detector import ShearResult
 
 
 @dataclass(frozen=True, slots=True)

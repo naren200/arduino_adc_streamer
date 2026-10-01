@@ -18,13 +18,13 @@ from constants.pressure_map import (
     PRESSURE_MAP_BACKGROUND_COLOR,
     PRESSURE_MAP_OVERLAY_COLOR,
 )
-from data_processing.normal_force_calculator import NormalForceCalculator
+from core.piezo_engine.normal_force_calculator import NormalForceCalculator
 from data_processing.pressure_force_display import ForceMapArrayResult, ForceMapPackageResult
 from data_processing.pressure_map_array_generator import PressureMapArrayGenerator, PressureMapArrayPackage
 from data_processing.pressure_map_geometry import PressureMapGeometry
 from data_processing.pressure_map_mask import mask_inside_grid
 from data_processing.pressure_map_generator import PressureMapGenerator
-from data_processing.shear_detector import ShearDetector
+from core.piezo_engine.shear_detector import ShearDetector
 from gui.pressure_map_widget import (
     PressureMapPackageDisplay,
     PressureMapWidget,

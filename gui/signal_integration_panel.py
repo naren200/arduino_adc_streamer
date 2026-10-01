@@ -213,7 +213,7 @@ from constants.shear import (
     SHEAR_SETTINGS_VERSION,
 )
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
-from data_processing.normal_force_calculator import NormalForceCalculator, NormalForceResult
+from core.piezo_engine.normal_force_calculator import NormalForceCalculator, NormalForceResult
 from data_processing.pressure_map_generator import PressureMapGenerator, PressureMapResult
 from data_processing.pressure_map_array_generator import (
     PressureMapArrayGenerator,
@@ -223,7 +223,7 @@ from data_processing.pressure_map_geometry import PressureMapGeometry
 from data_processing.force_block_worker import ForceBlockBatch, ForceBlockWorker, ForceRenderResult, WorkerState
 from data_processing.pressure_force_display import PressureForceDisplayEngine
 from data_processing.pzt_decay import PztDecayTimingContext
-from data_processing.shear_detector import ShearDetector, ShearResult
+from core.piezo_engine.shear_detector import ShearDetector, ShearResult
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from gui.pressure_map_widget import PressureMapPackageDisplay, PressureMapWidget
 

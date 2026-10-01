@@ -39,15 +39,15 @@ from constants.shear import (
     SHEAR_SENSOR_POSITIONS,
 )
 from data_processing.adc_filter_engine import ADCFilterEngine
-from data_processing.normal_force_calculator import NormalForceCalculator
-from data_processing.pzt_force_calculation import (
+from core.piezo_engine.normal_force_calculator import NormalForceCalculator
+from core.piezo_engine.force_integrator import (
     PztChannelPhysicalParams,
     PztForceChannelIntegrator,
     compute_pzt_force_rate_series,
     pzt_capacitance_to_farads,
     pzt_capacitance_value_for_position,
 )
-from data_processing.shear_detector import ShearDetector
+from core.piezo_engine.shear_detector import ShearDetector
 from data_processing.signal_integrator import SignalIntegrator
 
 # texture_piezo is a sibling checkout, not a vendored copy of this repo (see
@@ -1038,7 +1038,7 @@ def _compute_shear_normal_from_channel_rate(
     causal expanding median Shear/Normal Jerk uses (``_expanding_median`` --
     deliberately NOT PZT Channel Force's single scalar Vmid), then converted
     to a per-sample RC-charge force RATE via
-    :func:`~data_processing.pzt_force_calculation.compute_pzt_force_rate_series`
+    :func:`~core.piezo_engine.force_integrator.compute_pzt_force_rate_series`
     using THAT position's own capacitance (center vs outer -- this is what
     fixes Normal Force silently mixing the two) and MUX leak timing. This
     stage is otherwise stateless: no hysteresis, no accumulation, no

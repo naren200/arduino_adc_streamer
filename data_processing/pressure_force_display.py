@@ -11,16 +11,16 @@ import numpy as np
 
 from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS, PZT_FORCE_PIC_COULOMB_TO_COULOMB
 from constants.shear import SHEAR_SENSOR_POSITIONS
-from data_processing.normal_force_calculator import NormalForceCalculator
+from core.piezo_engine.normal_force_calculator import NormalForceCalculator
 from data_processing.pressure_map_array_generator import PressureMapArrayForcePackage, PressureMapArrayGenerator
 from data_processing.pressure_map_geometry import PressureMapGeometry
-from data_processing.pzt_force_calculation import (
+from core.piezo_engine.force_integrator import (
     PztForceChannelIntegrator,
     PztForceStepResult,
     pzt_capacitance_to_farads,
     pzt_capacitance_value_for_position,
 )
-from data_processing.shear_detector import ShearDetector, ShearResult
+from core.piezo_engine.shear_detector import ShearDetector, ShearResult
 
 
 _FORCE_FRAME_IDS = count(1)
@@ -434,7 +434,7 @@ class PressureForceDisplayEngine:
         """Return whether the package-wide stuck-force fail-safe should engage.
 
         Mirrors the per-channel definition in
-        :class:`~data_processing.pzt_force_calculation.PztForceChannelIntegrator`
+        :class:`~core.piezo_engine.force_integrator.PztForceChannelIntegrator`
         (section 3.2 of the natural-reset plan), evaluated across all five
         channels: no channel active, quiet for at least the configured hold
         time, and at least one channel still nonzero (defense in depth: any

@@ -8,7 +8,7 @@ from constants.shear import (
     SHEAR_FORCE_TYPE_NONE,
     SHEAR_FORCE_TYPE_TENSION,
 )
-from data_processing.normal_force_calculator import NormalForceCalculator
+from core.piezo_engine.normal_force_calculator import NormalForceCalculator
 
 
 class NormalForceCalculatorTests(unittest.TestCase):

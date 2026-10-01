@@ -17,7 +17,7 @@ from constants.shear import (
     SHEAR_POSITION_RIGHT,
     SHEAR_POSITION_TOP,
 )
-from data_processing.shear_detector import ShearDetector
+from core.piezo_engine.shear_detector import ShearDetector
 from gui.shear_visualization_widget import ShearVisualizationWidget
 
 
