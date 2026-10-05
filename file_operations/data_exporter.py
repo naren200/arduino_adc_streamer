@@ -26,6 +26,33 @@ from file_operations.force_export_alignment import (
 from file_operations.export_metadata import build_vmid_noise_metadata
 
 
+SAMPLE_DELTA_COLUMN = "Sample_dt_us"
+_MCU_TIMESTAMP_WRAP_US = 1 << 32
+
+
+class SampleDeltaEncoder:
+    """Encode per-row times as integer microseconds since the previous row.
+
+    Differencing the rounded absolute microseconds (not the float deltas) makes
+    ``cumsum`` reproduce every row time exactly. The modulo keeps deltas correct
+    across the uint32 wrap of the capture-relative MCU time (~71.6 min).
+    """
+
+    def __init__(self):
+        self._previous_us = None
+
+    def encode(self, row_time_s):
+        if row_time_s is None:
+            return ""
+        current_us = round(float(row_time_s) * 1_000_000)
+        if self._previous_us is None:
+            delta_us = 0
+        else:
+            delta_us = (current_us - self._previous_us) % _MCU_TIMESTAMP_WRAP_US
+        self._previous_us = current_us
+        return delta_us
+
+
 def build_export_row(
     sweep,
     row_time,
@@ -35,6 +62,7 @@ def build_export_row(
     is_555_mode,
     force_series,
     export_start_datetime,
+    delta_encoder,
 ):
     """Build one CSV row: RS rounding, column selection, time columns, force values.
 
@@ -51,6 +79,7 @@ def build_export_row(
     row.insert(0, format_export_clock_time(export_start_datetime, row_time))
     if is_555_mode:
         row.insert(1, float(row_time if row_time is not None else 0.0))
+    row.insert(2 if is_555_mode else 1, delta_encoder.encode(row_time))
     row.extend(list(get_nearest_force_values(force_series, row_time)))
     return row
 
@@ -375,6 +404,7 @@ class DataExporterMixin:
         force_series,
         capture_duration_s,
         export_start_datetime,
+        delta_encoder,
         apply_filter: bool,
         rs_round_indices: list | None = None,
         export_column_indices: list[int] | None = None,
@@ -448,6 +478,7 @@ class DataExporterMixin:
                     is_555_mode=is_555_mode,
                     force_series=force_series,
                     export_start_datetime=export_start_datetime,
+                    delta_encoder=delta_encoder,
                 ))
                 saved_index += 1
 
@@ -676,6 +707,8 @@ class DataExporterMixin:
                 header.insert(0, "Timestamp")
                 if is_555_mode:
                     header.insert(1, "Timestamp_s")
+                header.insert(2 if is_555_mode else 1, SAMPLE_DELTA_COLUMN)
+                delta_encoder = SampleDeltaEncoder()
                 header.extend(["Force_X_N", "Force_Z_N"])
                 writer.writerow(header)
 
@@ -695,6 +728,7 @@ class DataExporterMixin:
                         force_series=force_series,
                         capture_duration_s=capture_duration,
                         export_start_datetime=export_start_datetime,
+                        delta_encoder=delta_encoder,
                         apply_filter=bool(applied_filter_to_csv),
                         rs_round_indices=rs_round_indices,
                         export_column_indices=export_column_indices,
@@ -721,6 +755,7 @@ class DataExporterMixin:
                             is_555_mode=is_555_mode,
                             force_series=force_series,
                             export_start_datetime=export_start_datetime,
+                            delta_encoder=delta_encoder,
                         ))
 
                     saved_index = saved_total

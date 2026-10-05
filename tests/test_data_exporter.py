@@ -12,7 +12,7 @@ import numpy as np
 
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
 from data_processing.filter_processor import FilterProcessorMixin
-from file_operations.data_exporter import DataExporterMixin
+from file_operations.data_exporter import DataExporterMixin, SampleDeltaEncoder
 from file_operations.export_metadata import build_analysis_export_metadata
 
 
@@ -58,6 +58,25 @@ class SimpleSpin:
 
     def value(self):
         return self._value
+
+
+class SampleDeltaEncoderTests(unittest.TestCase):
+    def test_deltas_reproduce_absolute_microseconds_across_gaps(self):
+        encoder = SampleDeltaEncoder()
+        times_s = [0.0, 0.0011, 0.0022, 2.5022, 2.5033]
+        deltas = [encoder.encode(t) for t in times_s]
+        self.assertEqual(deltas, [0, 1100, 1100, 2500000, 1100])
+        self.assertEqual(int(np.cumsum(deltas)[-1]), round(times_s[-1] * 1e6))
+
+    def test_missing_time_is_blank_and_keeps_previous_reference(self):
+        encoder = SampleDeltaEncoder()
+        self.assertEqual([encoder.encode(0.0), encoder.encode(None), encoder.encode(0.001)], [0, "", 1000])
+
+    def test_delta_stays_positive_through_uint32_microsecond_wrap(self):
+        encoder = SampleDeltaEncoder()
+        wrap_s = (1 << 32) / 1e6
+        encoder.encode(wrap_s - 0.001)
+        self.assertEqual(encoder.encode(0.0), 1000)
 
 
 class ExportHarness(DataExporterMixin, FilterProcessorMixin):
@@ -345,9 +364,10 @@ class DataExporterTests(unittest.TestCase):
             with csv_files[0].open("r", encoding="utf-8", newline="") as handle:
                 rows = list(csv.reader(handle))
 
-            self.assertEqual(rows[0], ["Timestamp", "CH0", "Force_X_N", "Force_Z_N"])
+            self.assertEqual(rows[0], ["Timestamp", "Sample_dt_us", "CH0", "Force_X_N", "Force_Z_N"])
             self.assertEqual([row[0] for row in rows[1:]], harness.expected_row_times)
-            exported_values = np.asarray([float(row[1]) for row in rows[1:]], dtype=np.float64)
+            self.assertEqual([row[1] for row in rows[1:]], ["0"] + ["10000"] * (len(rows) - 2))
+            exported_values = np.asarray([float(row[2]) for row in rows[1:]], dtype=np.float64)
             raw_values = harness.raw_data[:, 0].astype(np.float64)
             self.assertEqual(len(exported_values), len(raw_values))
             self.assertFalse(np.allclose(exported_values, raw_values))
@@ -441,10 +461,11 @@ class DataExporterTests(unittest.TestCase):
             with csv_files[0].open("r", encoding="utf-8", newline="") as handle:
                 rows = list(csv.reader(handle))
 
-            self.assertEqual(rows[0], ["Timestamp", "Timestamp_s", "CH0", "Force_X_N", "Force_Z_N"])
+            self.assertEqual(rows[0], ["Timestamp", "Timestamp_s", "Sample_dt_us", "CH0", "Force_X_N", "Force_Z_N"])
             self.assertEqual(rows[1][0], harness.expected_row_times[0])
             self.assertEqual(rows[1][1], "0.0")
             self.assertEqual(rows[2][1], "0.01")
+            self.assertEqual([rows[1][2], rows[2][2]], ["0", "10000"])
 
     def test_save_data_streams_archive_beyond_display_buffer_limit(self):
         with workspace_tempdir("data_exporter_archive_stream") as tmpdir:
@@ -487,10 +508,14 @@ class DataExporterTests(unittest.TestCase):
                 rows = list(csv.reader(handle))
 
             self.assertEqual(len(rows), harness.sweep_count + 1)
-            self.assertEqual(rows[0], ["Timestamp", "CH0", "Force_X_N", "Force_Z_N"])
+            self.assertEqual(rows[0], ["Timestamp", "Sample_dt_us", "CH0", "Force_X_N", "Force_Z_N"])
             self.assertEqual(rows[1][0], "03:04:05.678000")
-            self.assertEqual(rows[1][1], "0.0")
-            self.assertEqual(rows[-1][1], str(float(harness.sweep_count - 1)))
+            self.assertEqual(rows[1][2], "0.0")
+            self.assertEqual(rows[-1][2], str(float(harness.sweep_count - 1)))
+            deltas_us = np.asarray([int(row[1]) for row in rows[1:]], dtype=np.int64)
+            self.assertEqual(deltas_us[0], 0)
+            self.assertTrue(np.all(deltas_us[1:] == 1000))
+            self.assertEqual(int(deltas_us.sum()), (harness.sweep_count - 1) * 1000)
 
             metadata = json.loads(metadata_files[0].read_text(encoding="utf-8"))
             self.assertEqual(metadata["export_source"], "archive")
@@ -515,11 +540,11 @@ class DataExporterTests(unittest.TestCase):
 
             self.assertEqual(
                 rows[0],
-                ["Timestamp", "PZT3_B", "PZT3_L", "PZT3_C", "PZT3_R", "PZT3_T", "Force_X_N", "Force_Z_N"],
+                ["Timestamp", "Sample_dt_us", "PZT3_B", "PZT3_L", "PZT3_C", "PZT3_R", "PZT3_T", "Force_X_N", "Force_Z_N"],
             )
 
             self.assertEqual(len(rows[1]), len(rows[0]))
-            self.assertEqual(rows[1][1:6], ["2045.0", "2043.0", "2047.0", "2040.0", "2049.0"])
+            self.assertEqual(rows[1][2:7], ["2045.0", "2043.0", "2047.0", "2040.0", "2049.0"])
 
             metadata = json.loads(metadata_files[0].read_text(encoding="utf-8"))
             self.assertEqual(metadata["configuration"]["buffer_total_samples"], harness.buffer_spin.value() * 5)

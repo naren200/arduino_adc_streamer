@@ -206,10 +206,10 @@ class ForceExportAlignmentTests(unittest.TestCase):
             with csv_files[0].open("r", encoding="utf-8", newline="") as handle:
                 rows = list(csv.reader(handle))
 
-            self.assertEqual(rows[0], ["Timestamp", "CH0", "Force_X_N", "Force_Z_N"])
-            self.assertEqual(rows[1], [harness.expected_row_times[0], "11.0", "1.0", "10.0"])
-            self.assertEqual(rows[2], [harness.expected_row_times[1], "22.0", "3.0", "30.0"])
-            self.assertEqual(rows[3], [harness.expected_row_times[2], "33.0", "5.0", "50.0"])
+            self.assertEqual(rows[0], ["Timestamp", "Sample_dt_us", "CH0", "Force_X_N", "Force_Z_N"])
+            self.assertEqual(rows[1], [harness.expected_row_times[0], "0", "11.0", "1.0", "10.0"])
+            self.assertEqual(rows[2], [harness.expected_row_times[1], "230000", "22.0", "3.0", "30.0"])
+            self.assertEqual(rows[3], [harness.expected_row_times[2], "240000", "33.0", "5.0", "50.0"])
 
 
 if __name__ == "__main__":

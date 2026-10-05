@@ -76,10 +76,14 @@ _TOUCHID_BELOW_THRESHOLD_COLOR = "#999999"
 # contrast in both.
 _TOUCHID_STATUS_OK_COLOR = "#33cc33"
 
+_TOUCHID_WINDOW_MIN_S = 0.05
+# QDoubleSpinBox needs a finite maximum; this is effectively "no upper limit".
+_TOUCHID_ONSET_SKIP_MAX_S = 1000.0
+
 # How long the idle gate can keep skipping windows before the live
-# "Prediction" readout (and its EMA) is cleared, rather than sitting frozen
+# "Current prediction" readout (and its EMA) is cleared, rather than sitting frozen
 # on a stale confidence from whenever a window last actually qualified for
-# classification. Does NOT affect "Last Detected", which is meant to persist.
+# classification. Does NOT affect "Last confident detection", which is meant to persist.
 _TOUCHID_PREDICTION_STALE_TIMEOUT_S = 1.5
 
 # How much real elapsed capture time the Signal Stream plot keeps visible at
@@ -311,25 +315,31 @@ class InferencePanelMixin:
         control_group = QGroupBox('TouchID Controls')
         control_layout = QGridLayout(control_group)
 
-        control_layout.addWidget(QLabel('Window (s):'), 0, 0)
+        control_layout.addWidget(QLabel('Window length (s):'), 0, 0)
         self.touchid_window_spin = QDoubleSpinBox()
-        self.touchid_window_spin.setRange(0.05, 10.0)
+        self.touchid_window_spin.setRange(_TOUCHID_WINDOW_MIN_S, 10.0)
         self.touchid_window_spin.setDecimals(4)
         self.touchid_window_spin.setSingleStep(0.1)
         self.touchid_window_spin.setValue(self.touchid_config.window_size_s)
+        self.touchid_window_spin.setToolTip(
+            'Length of signal fed to the classifier per prediction.'
+        )
         self.touchid_window_spin.valueChanged.connect(self.on_touchid_window_changed)
         control_layout.addWidget(self.touchid_window_spin, 0, 1)
 
-        control_layout.addWidget(QLabel('Hop (s):'), 0, 2)
+        control_layout.addWidget(QLabel('Hop / step (s):'), 0, 2)
         self.touchid_hop_spin = QDoubleSpinBox()
         self.touchid_hop_spin.setRange(0.01, 5.0)
         self.touchid_hop_spin.setDecimals(4)
         self.touchid_hop_spin.setSingleStep(0.01)
         self.touchid_hop_spin.setValue(self.touchid_config.hop_size_s)
+        self.touchid_hop_spin.setToolTip(
+            'How often a new window (and so a new prediction) is produced.'
+        )
         self.touchid_hop_spin.valueChanged.connect(self.on_touchid_hop_changed)
         control_layout.addWidget(self.touchid_hop_spin, 0, 3)
 
-        control_layout.addWidget(QLabel('Smoothing N:'), 0, 4)
+        control_layout.addWidget(QLabel('Smoothing (last N windows):'), 0, 4)
         self.touchid_smoothing_n_spin = QSpinBox()
         self.touchid_smoothing_n_spin.setRange(1, 30)
         self.touchid_smoothing_n_spin.setSingleStep(1)
@@ -401,7 +411,7 @@ class InferencePanelMixin:
         self.touchid_run_on_source_btn.clicked.connect(self.on_touchid_run_on_source_clicked)
         control_layout.addWidget(self.touchid_run_on_source_btn, 0, 14)
 
-        self.touchid_stop_replay_btn = QPushButton('Stop')
+        self.touchid_stop_replay_btn = QPushButton('Stop Replay')
         self.touchid_stop_replay_btn.setToolTip(
             "Stop the in-progress 'Run on Analysis Source' replay early. Windows classified "
             "so far are kept and still summarized in the final results."
@@ -410,7 +420,7 @@ class InferencePanelMixin:
         self.touchid_stop_replay_btn.clicked.connect(self.on_touchid_stop_replay_clicked)
         control_layout.addWidget(self.touchid_stop_replay_btn, 0, 16)
 
-        self.touchid_fast_forward_check = QCheckBox('Fast Forward')
+        self.touchid_fast_forward_check = QCheckBox('Fast-forward replay')
         self.touchid_fast_forward_check.setToolTip(
             "Skip the per-tick stream-plot animation during 'Run on Analysis Source' so the "
             "replay runs at full speed instead of animating like live capture. Windows are "
@@ -453,7 +463,7 @@ class InferencePanelMixin:
         self.touchid_pzt_sensor_combo.currentTextChanged.connect(self.on_touchid_pzt_sensor_changed)
         pzt_layout.addWidget(self.touchid_pzt_sensor_combo)
 
-        self.touchid_guilty_filter_check = QCheckBox('Guilty-clip filter')
+        self.touchid_guilty_filter_check = QCheckBox('Reject unreliable windows (guilty-clip filter)')
         self.touchid_guilty_filter_check.setChecked(self.touchid_config.guilty_clip_filter_enabled)
         self.touchid_guilty_filter_check.setToolTip(
             "Excludes a window from the smoothing vote when its raw prediction disagrees with "
@@ -507,7 +517,26 @@ class InferencePanelMixin:
         summary_row.addWidget(self.touchid_idle_gate_label)
 
         summary_row.addSpacing(16)
-        summary_row.addWidget(QLabel('Threshold:'))
+        summary_row.addWidget(QLabel('Last confident detection:'))
+        self.touchid_last_detected_label = QLabel('-')
+        self.touchid_last_detected_label.setStyleSheet('font-size: 20pt; font-weight: bold; color: #cc0000;')
+        summary_row.addWidget(self.touchid_last_detected_label)
+        self.touchid_last_detected_confidence_label = QLabel('confidence: -')
+        summary_row.addWidget(self.touchid_last_detected_confidence_label)
+
+        summary_row.addSpacing(16)
+        summary_row.addWidget(QLabel('Current prediction:'))
+        self.touchid_class_label = QLabel('-')
+        self.touchid_class_label.setStyleSheet('font-size: 13pt; font-weight: bold;')
+        summary_row.addWidget(self.touchid_class_label)
+        self.touchid_confidence_label = QLabel('confidence: -')
+        summary_row.addWidget(self.touchid_confidence_label)
+
+        summary_row.addStretch()
+        root_layout.addLayout(summary_row)
+
+        tuning_row = QHBoxLayout()
+        tuning_row.addWidget(QLabel('Confidence cutoff (display only):'))
         self.touchid_threshold_spin = QDoubleSpinBox()
         self.touchid_threshold_spin.setRange(0.0, 1.0)
         self.touchid_threshold_spin.setDecimals(2)
@@ -515,13 +544,14 @@ class InferencePanelMixin:
         self.touchid_threshold_spin.setValue(self.touchid_config.confidence_threshold)
         self.touchid_threshold_spin.setToolTip(
             "Bar-chart classes at or above this confidence are colored red (recognized); "
-            "below it, gray (uncertain). Crossing it also latches the 'Last Detected' readout."
+            "below it, gray (uncertain). Crossing it also latches the 'Last confident detection' readout. "
+            "Display only -- does not change what gets inferenced."
         )
         self.touchid_threshold_spin.valueChanged.connect(self.on_touchid_threshold_changed)
-        summary_row.addWidget(self.touchid_threshold_spin)
+        tuning_row.addWidget(self.touchid_threshold_spin)
 
-        summary_row.addSpacing(16)
-        summary_row.addWidget(QLabel('Idle gate k:'))
+        tuning_row.addSpacing(16)
+        tuning_row.addWidget(QLabel('Idle gate width (k × noise σ):'))
         self.touchid_idle_gate_k_spin = QDoubleSpinBox()
         self.touchid_idle_gate_k_spin.setRange(1.0, 30.0)
         self.touchid_idle_gate_k_spin.setDecimals(1)
@@ -536,26 +566,24 @@ class InferencePanelMixin:
             "default for the next captured baseline."
         )
         self.touchid_idle_gate_k_spin.valueChanged.connect(self.on_touchid_idle_gate_k_changed)
-        summary_row.addWidget(self.touchid_idle_gate_k_spin)
+        tuning_row.addWidget(self.touchid_idle_gate_k_spin)
 
-        summary_row.addSpacing(16)
-        summary_row.addWidget(QLabel('Last Detected:'))
-        self.touchid_last_detected_label = QLabel('-')
-        self.touchid_last_detected_label.setStyleSheet('font-size: 20pt; font-weight: bold; color: #cc0000;')
-        summary_row.addWidget(self.touchid_last_detected_label)
-        self.touchid_last_detected_confidence_label = QLabel('confidence: -')
-        summary_row.addWidget(self.touchid_last_detected_confidence_label)
-
-        summary_row.addSpacing(16)
-        summary_row.addWidget(QLabel('Prediction:'))
-        self.touchid_class_label = QLabel('-')
-        self.touchid_class_label.setStyleSheet('font-size: 13pt; font-weight: bold;')
-        summary_row.addWidget(self.touchid_class_label)
-        self.touchid_confidence_label = QLabel('confidence: -')
-        summary_row.addWidget(self.touchid_confidence_label)
-
-        summary_row.addStretch()
-        root_layout.addLayout(summary_row)
+        tuning_row.addSpacing(16)
+        tuning_row.addWidget(QLabel('Onset skip (s):'))
+        self.touchid_onset_skip_spin = QDoubleSpinBox()
+        self.touchid_onset_skip_spin.setRange(0.0, _TOUCHID_ONSET_SKIP_MAX_S)
+        self.touchid_onset_skip_spin.setDecimals(4)
+        self.touchid_onset_skip_spin.setSingleStep(0.005)
+        self.touchid_onset_skip_spin.setValue(self.touchid_config.onset_skip_s)
+        self.touchid_onset_skip_spin.setToolTip(
+            "Discards this much of the start of each new touch (the settling transient) "
+            "before windows are drawn. 0 disables it. Not applied when a touch resumes "
+            "after a short gap. Applies from the next touch."
+        )
+        self.touchid_onset_skip_spin.valueChanged.connect(self.on_touchid_onset_skip_changed)
+        tuning_row.addWidget(self.touchid_onset_skip_spin)
+        tuning_row.addStretch()
+        root_layout.addLayout(tuning_row)
 
         plots_col = QVBoxLayout()
 
@@ -735,6 +763,17 @@ class InferencePanelMixin:
                 if hasattr(self, 'log_status'):
                     self.log_status(f'Warning: could not save idle baseline: {e}')
             self._update_touchid_idle_gate_label()
+        self.save_last_touchid_settings()
+
+    def on_touchid_onset_skip_changed(self, value_s):
+        onset_skip_s = float(value_s)
+        self.touchid_config.onset_skip_s = onset_skip_s
+        # ActiveSampleQueue reads onset_skip_s live on each fresh onset, so
+        # updating the live queue applies from the next touch without a rebuild.
+        self.touchid_processor.onset_skip_s = onset_skip_s
+        active_queue = getattr(self.touchid_processor, 'active_queue', None)
+        if active_queue is not None:
+            active_queue.onset_skip_s = onset_skip_s
         self.save_last_touchid_settings()
 
     def on_touchid_smoothed_toggled(self, state):
@@ -1478,10 +1517,10 @@ class InferencePanelMixin:
     def _touchid_maybe_clear_stale_prediction(self):
         """Called each time a window is gate-skipped. If it's been more than
         _TOUCHID_PREDICTION_STALE_TIMEOUT_S since classify_window last
-        actually ran, reset the EMA and clear the live "Prediction" readout
+        actually ran, reset the EMA and clear the live "Current prediction" readout
         -- otherwise it sits frozen on whatever confidence happened to be
         computed right before the gate started skipping, which reads as a
-        stuck/stale prediction the longer idle continues. "Last Detected"
+        stuck/stale prediction the longer idle continues. "Last confident detection"
         is deliberately left untouched; it's meant to persist across gaps."""
         if self.touchid_last_classification_time is None:
             return  # already cleared (or never classified yet) -- nothing to do
