@@ -46,7 +46,8 @@ from dataclasses import dataclass
 import numpy as np
 
 from . import window_padding
-from .config import ONSET_SKIP_S
+from .time_window import first_index_at_or_after, hop_start_index, padded_start_index, window_end_index
+from .window_config import ONSET_SKIP_S
 from .quality_gate import IdleBaseline, chunk_is_active, idle_gap_chunks_cap
 
 # CausalDerivedChannels' bounded windowed sums (integration, shear/normal) and
@@ -104,6 +105,11 @@ class _Fragment:
     start_ts: float
     end_ts: float
     frag_id: int
+    # Sweep-clock timestamp before which this fragment's samples are the
+    # fresh-onset settling transient and must be skipped. Resolved into an
+    # index against the store's timestamps in ready_windows(), since the skip
+    # can span more samples than have arrived by the time the fragment opens.
+    onset_ts: float
 
 
 class ActiveSampleQueue:
@@ -126,7 +132,6 @@ class ActiveSampleQueue:
 
     def __init__(
         self,
-        fs: float,
         window_size_s: float,
         hop_size_s: float,
         baseline: IdleBaseline,
@@ -142,13 +147,11 @@ class ActiveSampleQueue:
                 "itself before anything is ever emitted, which is almost certainly a "
                 "misconfiguration."
             )
-        self.fs = fs
         self.window_size_s = window_size_s
         self.hop_size_s = hop_size_s
         self.baseline = baseline
         self.k = baseline.k if k is None else k
         self.onset_skip_s = onset_skip_s
-        self._onset_skip_n = round(onset_skip_s * fs)
         self._idle_gap_chunks_cap = idle_gap_chunks_cap(window_size_s)
         # Chunk-count grace window for the hold-and-merge check, same units
         # as _idle_run_chunks/_idle_gap_chunks_cap.
@@ -175,8 +178,12 @@ class ActiveSampleQueue:
         self._open_start: int | None = None
         self._open_end: int | None = None
         self._open_start_ts: float | None = None
+        self._open_onset_ts: float | None = None
         self._open_frag_id: int | None = None
         self._idle_run_chunks = 0
+        # Sweep-clock timestamp of the chunk where the current tentative idle
+        # run began -- the active signal of a fragment ends here.
+        self._idle_run_start_sweep_ts: float | None = None
         # Index where the current tentative idle run began -- tracked
         # directly (not reconstructed from idle_run_chunks * a chunk width)
         # since micro-chunks pushed in are not guaranteed uniform width (the
@@ -190,11 +197,17 @@ class ActiveSampleQueue:
         self._last_now_t: float | None = None
 
     def push_micro_chunk(
-        self, chunk_idx_range: tuple[int, int], chunk_samples: np.ndarray, now_t: float,
+        self,
+        chunk_idx_range: tuple[int, int],
+        chunk_samples: np.ndarray,
+        chunk_start_ts: float,
+        now_t: float,
     ) -> None:
         """Feed one 0.05s micro-chunk's worth of raw ADC samples (for the
         activity test) plus its index range into the caller's continuous
-        buffers. Call once per micro-chunk tick, in order."""
+        buffers. chunk_start_ts is the sweep timestamp of the chunk's first
+        sample (the store's clock, unlike now_t, which is the caller's
+        staleness clock). Call once per micro-chunk tick, in order."""
         start_idx, end_idx = chunk_idx_range
         chunk_samples = np.asarray(chunk_samples)
         active = chunk_is_active(chunk_samples, self.baseline, self.k)
@@ -212,10 +225,12 @@ class ActiveSampleQueue:
                 self._held_idle_chunks = 0
                 self._open_start = prev.start_idx
                 self._open_start_ts = prev.start_ts
+                self._open_onset_ts = prev.onset_ts
                 self._open_frag_id = prev.frag_id
                 self._open_end = end_idx
                 self._idle_run_chunks = 0
                 self._idle_run_start_idx = None
+                self._idle_run_start_sweep_ts = None
                 return
 
             self._held_idle_chunks += 1
@@ -247,8 +262,10 @@ class ActiveSampleQueue:
         if self._open_start is None:
             # Fresh idle->active transition (not a merge-grace resume, which
             # is handled above and reuses prev.start_idx unchanged) -- skip
-            # the settling transient at the very start of this new fragment.
-            self._open_start = start_idx + self._onset_skip_n
+            # the settling transient at the very start of this new fragment
+            # (by time, resolved against the store's timestamps later).
+            self._open_start = start_idx
+            self._open_onset_ts = chunk_start_ts + self.onset_skip_s
             self._open_start_ts = now_t
             self._open_frag_id = self._next_frag_id
             self._next_frag_id += 1
@@ -257,11 +274,13 @@ class ActiveSampleQueue:
         if active:
             self._idle_run_chunks = 0
             self._idle_run_start_idx = None
+            self._idle_run_start_sweep_ts = None
             return
 
         self._idle_run_chunks += 1
         if self._idle_run_start_idx is None:
             self._idle_run_start_idx = start_idx
+            self._idle_run_start_sweep_ts = chunk_start_ts
         if self._idle_run_chunks < self._idle_gap_chunks_cap:
             # Tentative idle run, still short of the strip threshold -- stays
             # inline inside the open fragment, nothing closed off yet.
@@ -273,56 +292,77 @@ class ActiveSampleQueue:
         # guaranteed uniform) and close whatever real active signal is left.
         # Hold it rather than closing it outright -- see _held_fragment.
         fragment_end = self._idle_run_start_idx
-        if fragment_end > self._open_start:
+        survives_onset_skip = self._idle_run_start_sweep_ts > self._open_onset_ts
+        if fragment_end > self._open_start and survives_onset_skip:
             self._held_fragment = _Fragment(
-                self._open_start, fragment_end, self._open_start_ts, now_t, self._open_frag_id
+                self._open_start, fragment_end, self._open_start_ts, now_t, self._open_frag_id,
+                self._open_onset_ts,
             )
             self._held_idle_chunks = 0
 
+        self._clear_open_fragment()
+
+    def _clear_open_fragment(self) -> None:
         self._open_start = None
         self._open_end = None
         self._open_start_ts = None
+        self._open_onset_ts = None
         self._open_frag_id = None
         self._idle_run_chunks = 0
         self._idle_run_start_idx = None
+        self._idle_run_start_sweep_ts = None
+
+    @staticmethod
+    def _skip_onset(
+        start_idx: int, onset_ts: float, store_ts: np.ndarray, store_base_abs: int,
+    ) -> int:
+        """Absolute index of the first sample past the fresh-onset transient."""
+        return max(start_idx, store_base_abs + first_index_at_or_after(store_ts, onset_ts))
 
     @staticmethod
     def _windows_for_fragment(
-        fragment: _Fragment, window_n: int, hop_n: int,
+        fragment: _Fragment, store_ts: np.ndarray, store_base_abs: int,
+        window_size_s: float, hop_size_s: float,
     ) -> tuple[list[tuple[int, int, int]], int]:
-        """Pure: slide window_n windows at hop_n hop within one fragment.
-        Returns (windows, new_start) where new_start is the fragment's
-        updated start_idx after consuming whatever full windows fit."""
+        """Pure: slide window_size_s windows at hop_size_s hop within one
+        fragment, by real elapsed time. Returns (windows, new_start) where
+        new_start is the fragment's updated start_idx after consuming
+        whatever full windows fit."""
         windows: list[tuple[int, int, int]] = []
         start = fragment.start_idx
-        end = fragment.end_idx
-        while end - start >= window_n:
+        while start < fragment.end_idx:
+            start_i = start - store_base_abs
+            end_i = window_end_index(store_ts, start_i, window_size_s)
+            if end_i is None or store_base_abs + end_i > fragment.end_idx:
+                break
             if start >= WARMUP_SAMPLES:
-                windows.append((start, start + window_n, fragment.frag_id))
-            start += hop_n
+                windows.append((start, store_base_abs + end_i, fragment.frag_id))
+            start = store_base_abs + hop_start_index(store_ts, start_i, hop_size_s)
         return windows, start
 
     def ready_windows(
-        self, window_size_s: float | None = None, hop_size_s: float | None = None,
-        store_base_abs: int | None = None,
+        self, store_ts: np.ndarray, store_base_abs: int,
+        window_size_s: float | None = None, hop_size_s: float | None = None,
+        pad_short_spans: bool = False,
     ) -> list[tuple[int, int, int]]:
-        """Slide window_size_s-length windows at hop_size_s hop within each
-        fragment that has reached window_size_s worth of real samples, never
-        crossing a fragment boundary. Consumed portions advance so the same
-        samples aren't re-yielded on a later call (mirrors
-        RollingBuffer.get_window's advance-after-return pattern).
+        """Slide window_size_s-long windows at hop_size_s hop within each
+        fragment that has reached window_size_s of real elapsed time, never
+        crossing a fragment boundary. Boundaries come from store_ts (the
+        caller's per-sample sweep timestamps, whose first sample has absolute
+        index store_base_abs), never from a sample-rate estimate. Consumed
+        portions advance so the same samples aren't re-yielded on a later
+        call (mirrors RollingBuffer.get_window's advance-after-return
+        pattern).
 
         A CLOSED fragment is, by construction, done growing -- so waiting
         any longer can never make its leftover remainder (shorter than
-        window_n) reach window_n on its own. Rather than discard that
-        remainder (or classify it alone on too little signal -- observed to
-        misclassify, see window_padding.py's module docstring), pad it out
-        to window_n using its own immediately-preceding history via
+        window_size_s) reach a full window on its own. With
+        pad_short_spans, rather than discard that remainder (or classify it
+        alone on too little signal -- observed to misclassify, see
+        window_padding.py's module docstring), pad it out to window_size_s
+        using its own immediately-preceding history via
         window_padding.classify_padding -- see that module for the exact
-        accept/reject rules (PaddingStatus). store_base_abs is the caller's
-        continuous store's earliest still-retained absolute index, needed to
-        know how far back padding can actually reach; store_base_abs=None
-        (the default) skips padding entirely.
+        accept/reject rules (PaddingStatus).
 
         Also slides within the OPEN fragment's confirmed-active prefix (up
         to the start of any current tentative idle run, so a still-tentative
@@ -337,41 +377,53 @@ class ActiveSampleQueue:
         started" without comparing indices."""
         window_size_s = self.window_size_s if window_size_s is None else window_size_s
         hop_size_s = self.hop_size_s if hop_size_s is None else hop_size_s
-        window_n = round(window_size_s * self.fs)
-        hop_n = round(hop_size_s * self.fs)
-        if window_n <= 0 or hop_n <= 0:
+        if window_size_s <= 0 or hop_size_s <= 0 or len(store_ts) == 0:
             return []
 
         windows: list[tuple[int, int, int]] = []
         remaining: list[_Fragment] = []
         for fragment in self._fragments:
-            frag_windows, new_start = self._windows_for_fragment(fragment, window_n, hop_n)
+            start = self._skip_onset(fragment.start_idx, fragment.onset_ts, store_ts, store_base_abs)
+            fragment = _Fragment(
+                start, fragment.end_idx, fragment.start_ts, fragment.end_ts, fragment.frag_id, fragment.onset_ts,
+            )
+            frag_windows, new_start = self._windows_for_fragment(
+                fragment, store_ts, store_base_abs, window_size_s, hop_size_s,
+            )
             windows.extend(frag_windows)
             start, end = new_start, fragment.end_idx
             if end > start:
-                if store_base_abs is not None and self._last_now_t is not None:
-                    age_s = self._last_now_t - fragment.end_ts
-                    decision = window_padding.classify_padding(start, end, window_n, store_base_abs, age_s)
-                    if decision.status is window_padding.PaddingStatus.READY and decision.padded_start >= WARMUP_SAMPLES:
-                        windows.append((decision.padded_start, end, fragment.frag_id))
+                if pad_short_spans and self._last_now_t is not None:
+                    decision, padded_start = self._classify_padding(
+                        start, end, store_ts, store_base_abs, window_size_s, fragment.end_ts,
+                    )
+                    if decision is window_padding.PaddingStatus.READY and padded_start >= WARMUP_SAMPLES:
+                        windows.append((padded_start, end, fragment.frag_id))
                         continue
-                    if decision.status in (
+                    if decision in (
                         window_padding.PaddingStatus.EXPIRED,
                         window_padding.PaddingStatus.INSUFFICIENT_REAL_DATA,
                     ):
                         continue  # never going to become usable -- don't keep carrying it
                 # INSUFFICIENT_HISTORY (more history may still be retained
-                # later), or store_base_abs=None (padding not opted in):
-                # keep waiting.
-                remaining.append(_Fragment(start, end, fragment.start_ts, fragment.end_ts, fragment.frag_id))
+                # later), or padding not opted in: keep waiting.
+                remaining.append(
+                    _Fragment(start, end, fragment.start_ts, fragment.end_ts, fragment.frag_id, fragment.onset_ts)
+                )
         self._fragments = remaining
 
         if self._open_start is not None:
+            self._open_start = self._skip_onset(self._open_start, self._open_onset_ts, store_ts, store_base_abs)
             confirmed_end = (
                 self._idle_run_start_idx if self._idle_run_start_idx is not None else self._open_end
             )
-            open_fragment = _Fragment(self._open_start, confirmed_end, self._open_start_ts, confirmed_end, self._open_frag_id)
-            frag_windows, new_start = self._windows_for_fragment(open_fragment, window_n, hop_n)
+            open_fragment = _Fragment(
+                self._open_start, confirmed_end, self._open_start_ts, confirmed_end, self._open_frag_id,
+                self._open_onset_ts,
+            )
+            frag_windows, new_start = self._windows_for_fragment(
+                open_fragment, store_ts, store_base_abs, window_size_s, hop_size_s,
+            )
             windows.extend(frag_windows)
             if new_start != self._open_start and self._last_now_t is not None:
                 # Consumed part of the open fragment -- its oldest remaining
@@ -381,6 +433,21 @@ class ActiveSampleQueue:
             self._open_start = new_start
 
         return windows
+
+    def _classify_padding(
+        self, start: int, end: int, store_ts: np.ndarray, store_base_abs: int,
+        window_size_s: float, fragment_end_ts: float,
+    ) -> tuple[window_padding.PaddingStatus, int | None]:
+        """Time-based padding decision for one short closed span: find where a
+        window_size_s span ending at the span's last sample begins, then let
+        window_padding judge real-fraction and staleness on that sample count."""
+        padded_i = padded_start_index(store_ts, end - store_base_abs, window_size_s)
+        if padded_i is None:
+            return window_padding.PaddingStatus.INSUFFICIENT_HISTORY, None
+        padded_abs = store_base_abs + padded_i
+        age_s = self._last_now_t - fragment_end_ts
+        decision = window_padding.classify_padding(start, end, end - padded_abs, store_base_abs, age_s)
+        return decision.status, decision.padded_start
 
     def expire(self, now_t: float) -> None:
         """Drop stale fragments that will never produce a window.
@@ -411,12 +478,7 @@ class ActiveSampleQueue:
 
         if self._open_start is not None and self._last_now_t is not None:
             if now_t - self._last_now_t > FRAGMENT_MAX_AGE_S:
-                self._open_start = None
-                self._open_end = None
-                self._open_start_ts = None
-                self._open_frag_id = None
-                self._idle_run_chunks = 0
-                self._idle_run_start_idx = None
+                self._clear_open_fragment()
 
     def oldest_referenced_idx(self) -> int | None:
         """Smallest start_idx still referenced by any live fragment (closed

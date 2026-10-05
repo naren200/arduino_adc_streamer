@@ -29,7 +29,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from inference._paths import TEXTURE_PIEZO_SRC
-from inference.config import InferenceConfig
+from core.texture_piezo.application.inference_config import InferenceConfig
 from core.piezo_engine.streaming import CausalDerivedChannels
 
 sys.path.insert(0, str(TEXTURE_PIEZO_SRC))

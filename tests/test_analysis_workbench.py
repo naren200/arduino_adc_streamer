@@ -13,6 +13,7 @@ from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS
 from data_processing.adc_mux_timing import calculate_adc_mux_timing_for_acquisition
 from data_processing.analysis_workbench import (
     AnalysisSourceSnapshot,
+    ShearNormalForceSettings,
     _build_offline_stream_index_map,
     _expanding_median,
     _load_filtered_snapshot,
@@ -991,7 +992,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             axis_mode="samples",
             overlay_flags={"shear_force": True, "normal_force": True},
             vref_voltage=vref_voltage,
-            pzt_force_settings=pzt_force_settings,
+            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings),
         )
         by_label = {trace.label: trace for trace in traces}
         self.assertEqual(
@@ -1141,7 +1142,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         unshared_traces = build_force_based_shear_normal_traces(
             snapshot, snapshot.data, axis_mode="samples",
             overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=vref_voltage,
-            pzt_force_settings=pzt_force_settings,
+            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings),
         )
 
         volts_by_position = {
@@ -1154,7 +1155,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         shared_traces = build_force_based_shear_normal_traces(
             snapshot, snapshot.data, axis_mode="samples",
             overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=vref_voltage,
-            pzt_force_settings=pzt_force_settings,
+            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings),
             median_by_position=median_by_position,
         )
 
@@ -1207,7 +1208,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         traces = build_force_based_shear_normal_traces(
             snapshot, snapshot.data, axis_mode="samples",
             overlay_flags={"normal_force": True}, vref_voltage=vref_voltage,
-            pzt_force_settings=pzt_force_settings,
+            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings),
         )
         normal_force = next(trace.y for trace in traces if trace.label == "Normal Force [N]")
 
@@ -1263,7 +1264,9 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             build_force_based_shear_normal_traces(
                 snapshot, snapshot.data, axis_mode="samples",
                 overlay_flags={"normal_force": True}, vref_voltage=3.3,
-                pzt_force_settings={"center_capacitance_value": 150.0, "outer_capacitance_value": 150.0},
+                settings=ShearNormalForceSettings(
+                    pzt_force_settings={"center_capacitance_value": 150.0, "outer_capacitance_value": 150.0}
+                ),
             )
 
     def test_force_based_shear_normal_traces_idle_stretch_stays_near_zero(self):
@@ -1293,7 +1296,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         traces = build_force_based_shear_normal_traces(
             snapshot, snapshot.data, axis_mode="samples",
             overlay_flags={"normal_force": True}, vref_voltage=3.3,
-            pzt_force_settings=pzt_force_settings,
+            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings),
         )
         normal_force = next(trace.y for trace in traces if trace.label == "Normal Force [N]")
         self.assertTrue(np.all(np.abs(normal_force) < 1e-6), msg=f"drifted: {normal_force}")
@@ -1357,11 +1360,13 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         traces = build_force_based_shear_normal_traces(
             snapshot, snapshot.data, axis_mode="samples",
             overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=3.3,
-            pzt_force_settings={
-                **base_settings,
-                "normal_force_noise_threshold_n": 100.0,
-                "shear_force_noise_threshold_n": 0.0,
-            },
+            settings=ShearNormalForceSettings(
+                pzt_force_settings={
+                    **base_settings,
+                    "normal_force_noise_threshold_n": 100.0,
+                    "shear_force_noise_threshold_n": 0.0,
+                }
+            ),
         )
         by_label = {trace.label: trace for trace in traces}
         self.assertTrue(np.all(by_label["Normal Force [N]"].y == 0.0))
@@ -1371,11 +1376,13 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         traces = build_force_based_shear_normal_traces(
             snapshot, snapshot.data, axis_mode="samples",
             overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=3.3,
-            pzt_force_settings={
-                **base_settings,
-                "normal_force_noise_threshold_n": 0.0,
-                "shear_force_noise_threshold_n": 100.0,
-            },
+            settings=ShearNormalForceSettings(
+                pzt_force_settings={
+                    **base_settings,
+                    "normal_force_noise_threshold_n": 0.0,
+                    "shear_force_noise_threshold_n": 100.0,
+                }
+            ),
         )
         by_label = {trace.label: trace for trace in traces}
         self.assertTrue(np.all(by_label["Shear Force L/R [N]"].y == 0.0))
@@ -1407,7 +1414,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         traces = build_force_based_shear_normal_traces(
             snapshot, snapshot.data, axis_mode="samples",
             overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=3.3,
-            pzt_force_settings=pzt_force_settings,
+            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings),
         )
         by_label = {trace.label: trace for trace in traces}
         # Threshold of 100N silences everything, matching pre-split behavior.

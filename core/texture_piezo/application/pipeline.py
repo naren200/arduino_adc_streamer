@@ -25,7 +25,7 @@ import sys
 
 import numpy as np
 
-from ._paths import TEXTURE_PIEZO_SRC
+from inference._paths import TEXTURE_PIEZO_SRC
 
 sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
 from clip_windowing_utils_v1 import extract_window_features  # noqa: E402

@@ -29,9 +29,9 @@ from PyQt6.QtWidgets import (
 
 import re
 
-from inference.classifier import TextureClassifier
-from inference.classify_worker import TouchIdClassifyWorker
-from inference.config import (
+from core.texture_piezo.models.classifier import TextureClassifier
+from core.texture_piezo.application.classify_worker import TouchIdClassifyWorker
+from core.texture_piezo.application.inference_config import (
     InferenceConfig,
     discover_checkpoints,
     discover_model_versions,
@@ -43,13 +43,13 @@ from inference.config import (
     save_touchid_settings,
     set_model_version,
 )
-from inference.architectures import ARCH_REGISTRY, CHECKPOINT_DEFAULT
-from inference.mode import TouchIdMode
-from inference.quality_gate_settings import load_idle_baseline, save_idle_baseline
-from inference.replay_fastforward import ReplayFastForward
-from inference.smoothing import WindowedVoteSmoother, is_guilty_candidate
-from core.inference.quality_gate import IDLE_CAPTURE_DURATION_S, fit_idle_baseline
-from inference.stream_processor import TouchIdStreamProcessor
+from core.texture_piezo.models.architectures import ARCH_REGISTRY, CHECKPOINT_DEFAULT
+from core.texture_piezo.application.mode import TouchIdMode
+from core.texture_piezo.application.quality_gate_settings import load_idle_baseline, save_idle_baseline
+from core.texture_piezo.application.replay_fastforward import ReplayFastForward
+from core.texture_piezo.application.smoothing import WindowedVoteSmoother, is_guilty_candidate
+from core.texture_piezo.gating.quality_gate import IDLE_CAPTURE_DURATION_S, fit_idle_baseline
+from core.texture_piezo.application.stream_processor import TouchIdStreamProcessor
 from constants.plotting import PLOT_COLORS
 
 # Display label (combo box text) -> InferenceConfig.model_type key. Built from

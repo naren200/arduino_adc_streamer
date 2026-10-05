@@ -165,11 +165,18 @@ def test_warmup_sample_count_before_first_process_raises():
         _ = channels.warmup_sample_count
 
 
-def test_sample_rate_change_mid_stream_raises():
+def test_sample_rate_change_mid_stream_keeps_first_call_rate():
+    """Live callers (gui/inference_panel.py) recompute fs every tick from a
+    cumulative average that drifts continuously and is never bit-identical
+    call-to-call -- process() must tolerate that instead of raising, since
+    sample_rate_hz only ever feeds warmup_sample_count (consumed once, at
+    stream start), never the per-sample integration/shear/normal math."""
     channels = CausalDerivedChannels(pzt_columns=PZT_COLUMNS)
     raw = _make_synthetic_series(10, len(PZT_COLUMNS), seed=3)
     chunk_by_column = {col: raw[:, i] for i, col in enumerate(PZT_COLUMNS)}
 
     channels.process(chunk_by_column, sample_rate_hz=SAMPLE_RATE_HZ)
-    with pytest.raises(ValueError):
-        channels.process(chunk_by_column, sample_rate_hz=SAMPLE_RATE_HZ * 2)
+    channels.process(chunk_by_column, sample_rate_hz=SAMPLE_RATE_HZ * 2)
+    assert channels.warmup_sample_count == data_mod.total_warmup_sample_count(
+        SAMPLE_RATE_HZ, channels.jerk_window_samples
+    )

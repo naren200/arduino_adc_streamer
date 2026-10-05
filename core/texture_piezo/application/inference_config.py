@@ -13,13 +13,13 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import model_discovery
-from ._paths import TEXTURE_PIEZO_MODELS, TEXTURE_PIEZO_SRC
-from .model_discovery import DEFAULT_CLASS_NAMES
+from core.texture_piezo.models import model_discovery
+from inference._paths import TEXTURE_PIEZO_MODELS, TEXTURE_PIEZO_SRC
+from core.texture_piezo.models.model_discovery import DEFAULT_CLASS_NAMES
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 
-from core.inference.quality_gate import DEFAULT_K
-from core.inference.config import ONSET_SKIP_S
+from core.texture_piezo.gating.quality_gate import DEFAULT_K
+from core.texture_piezo.gating.window_config import ONSET_SKIP_S
 
 sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
 from clip_windowing_utils_v1 import CHANNEL_LABELS  # noqa: E402

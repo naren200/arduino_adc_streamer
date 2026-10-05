@@ -75,7 +75,7 @@ from data_processing.analysis_workbench import (
 )
 from file_operations.export_metadata import build_analysis_export_metadata
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
-from inference.config import InferenceConfig
+from core.texture_piezo.application.inference_config import InferenceConfig
 
 
 ANALYSIS_CHECKBOX_MIN_COLUMN_WIDTH = 130

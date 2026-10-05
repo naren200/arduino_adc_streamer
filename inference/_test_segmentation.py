@@ -28,10 +28,10 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from inference.config import InferenceConfig
-from inference.stream_processor import TouchIdStreamProcessor
-from core.inference.quality_gate import fit_idle_baseline, idle_gap_chunks_cap, MICRO_CHUNK_S
-from core.inference.segmentation import ActiveSampleQueue
+from core.texture_piezo.application.inference_config import InferenceConfig
+from core.texture_piezo.application.stream_processor import TouchIdStreamProcessor
+from core.texture_piezo.gating.quality_gate import fit_idle_baseline, idle_gap_chunks_cap, MICRO_CHUNK_S
+from core.texture_piezo.gating.segmentation import ActiveSampleQueue
 
 _TEXTURE_PIEZO_ROOT = _REPO_ROOT.parent / "texture_piezo" / "data" / "raw" / "sensor_v12d_7_26" / "ch5"
 
@@ -55,7 +55,7 @@ def _load_csv(path: Path) -> tuple[np.ndarray, np.ndarray, float]:
 
 
 def _replay(
-    samples: np.ndarray, fs: float, config: InferenceConfig, baseline,
+    samples: np.ndarray, sweep_ts: np.ndarray, fs: float, config: InferenceConfig, baseline,
 ) -> tuple[ActiveSampleQueue, list[tuple[int, int]]]:
     """Feed the whole capture through in 0.05s micro-chunks, draining
     ready_windows() and running expire() every tick -- matching how the
@@ -65,7 +65,7 @@ def _replay(
     windows must be pulled out via ready_windows() before that cadence, not
     after."""
     queue = ActiveSampleQueue(
-        fs=fs, window_size_s=config.window_size_s, hop_size_s=config.hop_size_s, baseline=baseline,
+        window_size_s=config.window_size_s, hop_size_s=config.hop_size_s, baseline=baseline,
     )
     chunk_n = max(1, round(MICRO_CHUNK_S * fs))
     n = len(samples)
@@ -74,9 +74,9 @@ def _replay(
     while idx < n:
         end = min(idx + chunk_n, n)
         now_t = end / fs
-        queue.push_micro_chunk((idx, end), samples[idx:end], now_t)
+        queue.push_micro_chunk((idx, end), samples[idx:end], sweep_ts[idx], now_t)
+        windows.extend(queue.ready_windows(sweep_ts[:end], 0))
         idx = end
-        windows.extend(queue.ready_windows())
         queue.expire(now_t)
     return queue, windows
 
@@ -143,7 +143,7 @@ def main() -> None:
 
     # --- (a) + (b): labeled capture -----------------------------------
     samples, rel_s, fs = _load_csv(LABELED_CSV)
-    _queue, windows = _replay(samples, fs, config, baseline)
+    _queue, windows = _replay(samples, rel_s, fs, config, baseline)
     windows_s = [(rel_s[0] + s / fs, rel_s[0] + e / fs) for s, e, _span_id in windows]
     print(f"{LABELED_CSV.name}: fs={fs:.1f}Hz, {len(samples)} samples, {len(windows)} windows emitted")
 
@@ -169,8 +169,8 @@ def main() -> None:
         print("  FAIL: zero windows landed inside any labeled active run")
 
     # --- (c): pure-idle capture ----------------------------------------
-    idle_samples, _its, idle_fs = _load_csv(PURE_IDLE_CSV)
-    _idle_queue, idle_windows = _replay(idle_samples, idle_fs, config, baseline)
+    idle_samples, idle_ts, idle_fs = _load_csv(PURE_IDLE_CSV)
+    _idle_queue, idle_windows = _replay(idle_samples, idle_ts, idle_fs, config, baseline)
     print(f"\n{PURE_IDLE_CSV.name}: fs={idle_fs:.1f}Hz, {len(idle_samples)} samples, "
           f"{len(idle_windows)} windows emitted (expect 0, or near-zero false positives)")
     false_positive_rate = len(idle_windows) / max(1, len(idle_samples) / (config.hop_size_s * idle_fs))

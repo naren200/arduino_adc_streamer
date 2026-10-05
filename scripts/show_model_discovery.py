@@ -10,8 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from inference import model_discovery  # noqa: E402
-from inference.config import InferenceConfig, model_checkpoint_of, model_version_of  # noqa: E402
+from core.texture_piezo.models import model_discovery  # noqa: E402
+from core.texture_piezo.application.inference_config import InferenceConfig, model_checkpoint_of, model_version_of  # noqa: E402
 
 
 def _name(path) -> str:

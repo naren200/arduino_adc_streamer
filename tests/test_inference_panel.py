@@ -9,9 +9,9 @@ import numpy as np
 from PyQt6.QtWidgets import QApplication
 
 from gui.inference_panel import InferencePanelMixin
-from inference.mode import TouchIdMode
-from core.inference.segmentation import WARMUP_SAMPLES, ActiveSampleQueue
-from core.inference.quality_gate import IdleBaseline
+from core.texture_piezo.application.mode import TouchIdMode
+from core.texture_piezo.gating.segmentation import WARMUP_SAMPLES, ActiveSampleQueue
+from core.texture_piezo.gating.quality_gate import IdleBaseline
 
 
 class FakeTabs:
@@ -160,8 +160,9 @@ class ActiveSampleQueueFragIdTests(unittest.TestCase):
     def test_windows_from_same_fragment_share_frag_id(self):
         fs = 1000.0
         queue = ActiveSampleQueue(
-            fs=fs, window_size_s=0.1, hop_size_s=0.05, baseline=self._baseline(),
+            window_size_s=0.1, hop_size_s=0.05, baseline=self._baseline(),
         )
+        sweep_ts = np.arange(5000) / fs
         chunk_n = 50  # 0.05s at 1000Hz
         active_chunk = np.ones((chunk_n, 5)) * 10.0  # far above baseline -> active
         # Start well past WARMUP_SAMPLES (segmentation.py silently drops any
@@ -174,10 +175,10 @@ class ActiveSampleQueueFragIdTests(unittest.TestCase):
         # Push several active chunks, well past one window_size_s, with no
         # idle gap -- should all belong to the same open fragment.
         for _ in range(6):
-            queue.push_micro_chunk((idx, idx + chunk_n), active_chunk, now_t)
+            queue.push_micro_chunk((idx, idx + chunk_n), active_chunk, sweep_ts[idx], now_t)
             idx += chunk_n
             now_t += chunk_n / fs
-            windows.extend(queue.ready_windows())
+            windows.extend(queue.ready_windows(sweep_ts[:idx], 0))
 
         self.assertGreaterEqual(len(windows), 2)
         frag_ids = {w[2] for w in windows}
@@ -186,8 +187,9 @@ class ActiveSampleQueueFragIdTests(unittest.TestCase):
     def test_new_fragment_after_idle_gets_a_new_frag_id(self):
         fs = 1000.0
         queue = ActiveSampleQueue(
-            fs=fs, window_size_s=0.1, hop_size_s=0.05, baseline=self._baseline(),
+            window_size_s=0.1, hop_size_s=0.05, baseline=self._baseline(),
         )
+        sweep_ts = np.arange(5000) / fs
         chunk_n = 50
         active_chunk = np.ones((chunk_n, 5)) * 10.0
         idle_chunk = np.zeros((chunk_n, 5))
@@ -200,10 +202,10 @@ class ActiveSampleQueueFragIdTests(unittest.TestCase):
         def push(chunk, n_pushes):
             nonlocal idx, now_t
             for _ in range(n_pushes):
-                queue.push_micro_chunk((idx, idx + chunk_n), chunk, now_t)
+                queue.push_micro_chunk((idx, idx + chunk_n), chunk, sweep_ts[idx], now_t)
                 idx += chunk_n
                 now_t += chunk_n / fs
-                windows.extend(queue.ready_windows())
+                windows.extend(queue.ready_windows(sweep_ts[:idx], 0))
 
         push(active_chunk, 4)
         # Long enough idle run to force a genuine strip-and-close (not just

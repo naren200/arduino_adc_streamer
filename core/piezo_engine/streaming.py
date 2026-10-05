@@ -170,10 +170,11 @@ class CausalDerivedChannels:
         samples in this chunk}, same channels/order every call.
 
         ``sample_rate_hz`` is required (not defaulted) so training, offline
-        GUI inference, and live streaming can never silently disagree on it --
-        a wrong default is exactly how the warmup count would drift between
-        callers. It must be the same value for the life of one instance
-        (`reset()` to start a new stream at a different rate).
+        GUI inference, and live streaming can never silently disagree on what
+        the FIRST call's rate was -- a wrong default is exactly how the
+        warmup count would drift between callers. Only that first-call value
+        is ever used (see `warmup_sample_count`); later calls may pass a
+        different value without affecting anything; see `reset()`.
 
         Returns {"integrated": {pzt_column_name: array}, "shear_jerk_lr": array,
         "shear_jerk_tb": array, "normal_jerk": array} -- one output value per
@@ -186,11 +187,16 @@ class CausalDerivedChannels:
             raise ValueError("sample_rate_hz must be greater than zero")
         if self._sample_rate_hz is None:
             self._sample_rate_hz = sample_rate_hz
-        elif self._sample_rate_hz != sample_rate_hz:
-            raise ValueError(
-                f"sample_rate_hz changed mid-stream ({self._sample_rate_hz} -> {sample_rate_hz}); "
-                "call reset() before starting a new stream at a different rate"
-            )
+        # A later call's sample_rate_hz is intentionally never compared
+        # against the latched value: it only ever feeds warmup_sample_count
+        # (consumed once, at stream start -- see push_chunk's warmup trim),
+        # never the per-sample integration/shear/normal math, which is sized
+        # entirely by integration_window_samples/jerk_window_samples (sample
+        # counts, not Hz). Live callers recompute fs every tick from a
+        # cumulative elapsed-time average that drifts slightly forever and is
+        # never bit-identical call-to-call -- rejecting that drift here would
+        # crash an otherwise-healthy stream to protect a value nothing past
+        # warmup still reads. Call reset() to actually start a new stream.
 
         n = 0
         for col in self.pzt_columns:

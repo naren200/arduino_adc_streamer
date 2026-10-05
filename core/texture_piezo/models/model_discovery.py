@@ -36,7 +36,7 @@ from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 
-from ._paths import TEXTURE_PIEZO_MODELS, TEXTURE_PIEZO_ROOT
+from inference._paths import TEXTURE_PIEZO_MODELS, TEXTURE_PIEZO_ROOT
 
 # Folders scanned for checkpoints and their sidecars. Checkpoints only ever
 # live in the first; manifests are written to either by different notebooks.

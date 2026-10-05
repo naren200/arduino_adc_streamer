@@ -16,7 +16,7 @@ import queue
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from inference.pipeline import classify_window
+from core.texture_piezo.application.pipeline import classify_window
 
 
 class TouchIdClassifyWorker(QThread):

@@ -469,9 +469,11 @@ def prepare_analysis_data(
                 axis_mode=axis_mode,
                 overlay_flags=overlay_flags or {},
                 vref_voltage=vref_voltage,
-                pzt_force_settings=pzt_force_settings or {},
-                leak_dt_s=pzt_leak_dt_s,
-                pre_sample_decay_dt_s_by_label=pzt_pre_sample_decay_by_label,
+                settings=ShearNormalForceSettings(
+                    pzt_force_settings=pzt_force_settings or {},
+                    leak_dt_s=pzt_leak_dt_s,
+                    pre_sample_decay_dt_s_by_label=pzt_pre_sample_decay_by_label,
+                ),
                 median_by_position=median_by_position,
             )
         )
@@ -1022,14 +1024,31 @@ def _shear_normal_jerk_from_rates(
     return shear_jerk_lr, shear_jerk_tb, normal_jerk
 
 
+@dataclass(frozen=True, slots=True)
+class ShearNormalForceSettings:
+    """Bundled user/config settings for the Shear/Normal Force pipeline.
+
+    Covers only the true settings params shared by
+    ``_compute_shear_normal_from_channel_rate`` and
+    ``build_force_based_shear_normal_traces`` -- ``pzt_force_settings``,
+    ``leak_dt_s``, and ``pre_sample_decay_dt_s_by_label``. Deliberately
+    excludes ``median_by_position``: that is a computed numpy-array cache
+    shared with ``integrate_voltage_series_causal_median``, not user config,
+    so bundling it here would give this object two unrelated reasons to
+    change.
+    """
+
+    pzt_force_settings: Mapping[str, object]
+    leak_dt_s: float | None = None
+    pre_sample_decay_dt_s_by_label: Mapping[str, float] | None = None
+
+
 def _compute_shear_normal_from_channel_rate(
     snapshot: AnalysisSourceSnapshot,
     data: np.ndarray,
     *,
     vref_voltage: float,
-    pzt_force_settings: Mapping[str, object],
-    leak_dt_s=None,
-    pre_sample_decay_dt_s_by_label: Mapping[str, float] | None = None,
+    settings: ShearNormalForceSettings,
     median_by_position: Mapping[str, np.ndarray] | None = None,
 ) -> tuple[dict[str, tuple[int, str]], np.ndarray, np.ndarray, np.ndarray] | None:
     """Per-channel physically-correct force-RATE ("jerk") pipeline for Shear/Normal Force.
@@ -1062,7 +1081,7 @@ def _compute_shear_normal_from_channel_rate(
         return None
     position_channels, volts_by_position = resolved_positions
 
-    pre_sample_by_label = pre_sample_decay_dt_s_by_label or {}
+    pre_sample_by_label = settings.pre_sample_decay_dt_s_by_label or {}
     time_base_s = build_trace_time_axis_seconds(snapshot)
     rate_by_position: dict[str, np.ndarray] = {}
     for position in SHEAR_SENSOR_POSITIONS:
@@ -1078,8 +1097,8 @@ def _compute_shear_normal_from_channel_rate(
         rate_by_position[position] = compute_pzt_force_rate_series(
             centered,
             time_s,
-            _shear_normal_channel_physical_params(pzt_force_settings, position),
-            leak_dt_s=leak_dt_s,
+            _shear_normal_channel_physical_params(settings.pzt_force_settings, position),
+            leak_dt_s=settings.leak_dt_s,
             pre_sample_decay_dt_s=pre_sample_by_label.get(label),
         )
 
@@ -1101,32 +1120,38 @@ def _role_for_shear_normal_position(sensor_position: str) -> str:
 
 
 def _shear_normal_role_threshold(
-    supplied: Mapping[str, object], resolved: Mapping[str, object], role: str, shared_key: str,
+    supplied: Mapping[str, object],
+    resolved: Mapping[str, object],
+    role: str,
+    sub_key: str,
+    *,
+    legacy_shared_key: str | None = None,
 ) -> float:
     """Resolve a shear/normal-specific threshold, preferring an explicit caller override.
 
-    ``role_key`` is ``{role}_force_{shared_key}`` (e.g. ``normal_force_noise_threshold_n``)
-    for the ``noise_threshold_n`` shared key, but ``{role}_{shared_key}`` (e.g.
-    ``normal_force_zero_band_min_n``) for keys that already start with
-    ``force_`` -- matching the actual key names in
+    ``role_key`` is always ``{role}_force_{sub_key}`` (e.g.
+    ``normal_force_noise_threshold_n`` for ``sub_key="noise_threshold_n"``,
+    ``normal_force_zero_band_min_n`` for ``sub_key="zero_band_min_n"``) --
+    matching the actual key names in
     ``constants.pzt_force.PZT_FORCE_DEFAULT_SETTINGS``.
 
     Precedence: an explicitly supplied role-specific key wins; otherwise an
-    explicitly supplied legacy shared key (e.g. ``force_zero_band_min_n`` for
-    a caller that only sets the pre-split generic key) is honored; otherwise
-    falls back to the role-specific default. Note ``noise_threshold_n`` has
-    no meaningful pre-split shared-key fallback (the old shared key was named
-    ``noise_threshold_v`` and is a different, volt-scale quantity now that
-    this stage's input is force-rate) -- callers migrating an old saved
-    ``*_threshold_v`` value should do so explicitly before calling this
-    (see the Analysis panel's settings-load migration), not rely on this
-    fallback to bridge the unit change.
+    explicitly supplied ``legacy_shared_key`` (e.g. ``force_zero_band_min_n``,
+    or plain ``noise_threshold_n`` for a caller that only sets the pre-split
+    generic key) is honored, when the caller passes one; otherwise falls back
+    to the role-specific default. Note the generic ``noise_threshold_n``
+    fallback is NOT the same as the old pre-force-rate ``noise_threshold_v``
+    (a different, volt-scale quantity from when this stage's input was a
+    voltage rather than a force-rate) -- callers migrating an old saved
+    ``*_threshold_v`` value must do so explicitly before calling this (see
+    the Analysis panel's settings-load migration), not rely on this fallback
+    to bridge the unit change.
     """
-    role_key = f"{role}_{shared_key}" if shared_key.startswith("force_") else f"{role}_force_{shared_key}"
+    role_key = f"{role}_force_{sub_key}"
     if role_key in supplied:
         return float(supplied[role_key])
-    if shared_key in supplied:
-        return float(supplied[shared_key])
+    if legacy_shared_key is not None and legacy_shared_key in supplied:
+        return float(supplied[legacy_shared_key])
     return float(resolved[role_key])
 
 
@@ -1185,13 +1210,17 @@ def _new_shear_normal_force_integrator(
         capacitance_f=capacitance_f,
         rleak_ohm=float(resolved["rleak_ohm"]),
         d33_c_per_n=d33_c_per_n,
-        noise_threshold_v=_shear_normal_role_threshold(supplied, resolved, role, "noise_threshold_n"),
+        noise_threshold_v=_shear_normal_role_threshold(
+            supplied, resolved, role, "noise_threshold_n", legacy_shared_key="noise_threshold_n"
+        ),
         off_mux_rleak_ohm=off_mux_rleak_ohm,
         accumulate_raw=True,
         force_zero_band_fraction=float(resolved["force_zero_band_fraction"]),
-        force_zero_band_min_n=_shear_normal_role_threshold(supplied, resolved, role, "force_zero_band_min_n"),
+        force_zero_band_min_n=_shear_normal_role_threshold(
+            supplied, resolved, role, "zero_band_min_n", legacy_shared_key="force_zero_band_min_n"
+        ),
         force_zero_min_event_peak_n=_shear_normal_role_threshold(
-            supplied, resolved, role, "force_zero_min_event_peak_n"
+            supplied, resolved, role, "zero_min_event_peak_n", legacy_shared_key="force_zero_min_event_peak_n"
         ),
         quiet_hold_release_fraction=float(resolved["quiet_hold_release_fraction"]),
         quiet_hold_clear_s=float(resolved["quiet_hold_clear_s"]),
@@ -1221,9 +1250,7 @@ def build_force_based_shear_normal_traces(
     axis_mode: str,
     overlay_flags: Mapping[str, bool],
     vref_voltage: float,
-    pzt_force_settings: Mapping[str, object],
-    leak_dt_s=None,
-    pre_sample_decay_dt_s_by_label: Mapping[str, float] | None = None,
+    settings: ShearNormalForceSettings,
     median_by_position: Mapping[str, np.ndarray] | None = None,
 ) -> list[AnalysisTrace]:
     """Combine per-channel force RATE, then integrate the combined result once each.
@@ -1249,9 +1276,7 @@ def build_force_based_shear_normal_traces(
     computed = _compute_shear_normal_from_channel_rate(
         snapshot, data,
         vref_voltage=vref_voltage,
-        pzt_force_settings=pzt_force_settings,
-        leak_dt_s=leak_dt_s,
-        pre_sample_decay_dt_s_by_label=pre_sample_decay_dt_s_by_label,
+        settings=settings,
         median_by_position=median_by_position,
     )
     if computed is None:
@@ -1279,13 +1304,13 @@ def build_force_based_shear_normal_traces(
     x = x[warmup:]
 
     normal_force = _integrate_causal_series(
-        normal_jerk, row_time_s, _new_shear_normal_force_integrator(pzt_force_settings, "C")
+        normal_jerk, row_time_s, _new_shear_normal_force_integrator(settings.pzt_force_settings, "C")
     )
     shear_force_lr = _integrate_causal_series(
-        shear_jerk_lr, row_time_s, _new_shear_normal_force_integrator(pzt_force_settings, "L")
+        shear_jerk_lr, row_time_s, _new_shear_normal_force_integrator(settings.pzt_force_settings, "L")
     )
     shear_force_tb = _integrate_causal_series(
-        shear_jerk_tb, row_time_s, _new_shear_normal_force_integrator(pzt_force_settings, "T")
+        shear_jerk_tb, row_time_s, _new_shear_normal_force_integrator(settings.pzt_force_settings, "T")
     )
 
     traces: list[AnalysisTrace] = []

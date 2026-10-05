@@ -18,7 +18,7 @@ from __future__ import annotations
 import numpy as np
 
 from .architectures import ARCH_REGISTRY
-from .config import InferenceConfig, model_version_of
+from core.texture_piezo.application.inference_config import InferenceConfig, model_version_of
 
 
 class TextureClassifier:

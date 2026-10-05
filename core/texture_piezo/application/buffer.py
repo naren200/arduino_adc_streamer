@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from core.texture_piezo.gating.time_window import hop_start_index, window_end_index
+
 
 class RollingBuffer:
     def __init__(self, n_channels: int, window_size_s: float, hop_size_s: float):
@@ -40,21 +42,19 @@ class RollingBuffer:
 
         self._timestamps = np.concatenate([self._timestamps, np.asarray(timestamps)])
 
-    def get_window(self, fs: float) -> tuple[np.ndarray, np.ndarray] | None:
+    def get_window(self) -> tuple[np.ndarray, np.ndarray] | None:
         """
         Return (window_adc: (n_window_samples, n_channels), timestamps) once
-        window_size_s worth of data is buffered, else None.
-        Internally advances the buffer start by hop_size_s worth of samples
+        window_size_s of real elapsed time is buffered, else None.
+        Internally advances the buffer start by hop_size_s of elapsed time
         after a window is successfully returned (so the next call yields the
         next hop, not the same window again).
         """
-        if self._channel_order is None:
+        if self._channel_order is None or len(self._timestamps) == 0:
             return None
 
-        window_n = round(self.window_size_s * fs)
-        hop_n = round(self.hop_size_s * fs)
-
-        if len(self._timestamps) < window_n:
+        window_n = window_end_index(self._timestamps, 0, self.window_size_s)
+        if window_n is None:
             return None
 
         window_adc = np.stack(
@@ -62,7 +62,7 @@ class RollingBuffer:
         )
         window_timestamps = self._timestamps[:window_n]
 
-        advance_n = min(hop_n, len(self._timestamps))
+        advance_n = hop_start_index(self._timestamps, 0, self.hop_size_s)
         for name in self._channel_order:
             self._samples[name] = self._samples[name][advance_n:]
         self._timestamps = self._timestamps[advance_n:]

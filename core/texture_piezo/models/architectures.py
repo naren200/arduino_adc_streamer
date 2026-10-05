@@ -29,13 +29,13 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
 import numpy as np
 import torch
 import yaml
 
-from ._paths import TEXTURE_PIEZO_ROOT, TEXTURE_PIEZO_SRC
+from inference._paths import TEXTURE_PIEZO_ROOT, TEXTURE_PIEZO_SRC
 
 sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
 from clip_windowing_utils_v1 import build_feature_names  # noqa: E402
@@ -54,9 +54,59 @@ _QUAD_N_FFT = 64
 _QUAD_HOP_LENGTH = 16
 
 
-def _load_train_config() -> dict:
-    with open(_TRAIN_CONFIG_PATH) as f:
-        return yaml.safe_load(f) or {}
+# ---------------------------------------------------------------------------
+# Loader abstractions
+# ---------------------------------------------------------------------------
+# Each runtime's __init__ previously called joblib.load / torch.load /
+# np.load / yaml.safe_load directly, so unit-testing it required real
+# checkpoint files on disk. These narrow, per-format protocols let each
+# runtime accept an injected loader instead -- only the formats it actually
+# touches, not one fat interface every runtime must implement regardless of
+# need. Defaults below wrap the real calls so existing callers (model
+# construction in ARCH_REGISTRY) see unchanged production behavior.
+
+
+class TorchCheckpointLoader(Protocol):
+    def load(self, path) -> object: ...
+
+
+class JoblibLoader(Protocol):
+    def load(self, path) -> object: ...
+
+
+class NumpyLoader(Protocol):
+    def load(self, path) -> object: ...
+
+
+class YamlLoader(Protocol):
+    def load(self, path) -> dict: ...
+
+
+class _RealTorchCheckpointLoader:
+    def load(self, path) -> object:
+        return torch.load(path, map_location="cpu")
+
+
+class _RealJoblibLoader:
+    def load(self, path) -> object:
+        import joblib
+        return joblib.load(path)
+
+
+class _RealNumpyLoader:
+    def load(self, path) -> object:
+        return np.load(path)
+
+
+class _RealYamlLoader:
+    def load(self, path) -> dict:
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+
+
+def _load_train_config(yaml_loader: YamlLoader = None) -> dict:
+    yaml_loader = yaml_loader or _RealYamlLoader()
+    return yaml_loader.load(_TRAIN_CONFIG_PATH)
 
 
 def _load_feature_names() -> list[str]:
@@ -111,9 +161,10 @@ _STATE_DICT_KEYS = ("model_state", "state_dict", "model")
 _EMBEDDED_NAMES_KEYS = ("names", "feature_names")
 
 
-def _load_checkpoint(path) -> tuple[dict, list[str] | None]:
+def _load_checkpoint(path, torch_loader: TorchCheckpointLoader = None) -> tuple[dict, list[str] | None]:
     """-> (state_dict, feature names the checkpoint embeds, or None)."""
-    payload = torch.load(path, map_location="cpu")
+    torch_loader = torch_loader or _RealTorchCheckpointLoader()
+    payload = torch_loader.load(path)
     for key in _STATE_DICT_KEYS:
         inner = payload.get(key) if isinstance(payload, dict) else None
         if isinstance(inner, dict):
@@ -158,10 +209,11 @@ class ArchitectureRuntime:
 # ---------------------------------------------------------------------------
 
 class _AnnRuntime(ArchitectureRuntime):
-    def __init__(self, config, version):
-        import joblib
-        self.scaler = joblib.load(config.scaler_path)
-        state_dict, embedded_names = _load_checkpoint(config.ann_model_path)
+    def __init__(self, config, version, joblib_loader: JoblibLoader = None,
+                 torch_loader: TorchCheckpointLoader = None):
+        joblib_loader = joblib_loader or _RealJoblibLoader()
+        self.scaler = joblib_loader.load(config.scaler_path)
+        state_dict, embedded_names = _load_checkpoint(config.ann_model_path, torch_loader)
         self.feature_names = embedded_names or _resolve_trained_feature_names(config, version)
         # A scaler fitted on a different width than the feature names means
         # select_features would hand transform() the wrong columns and produce
@@ -201,10 +253,12 @@ _RAW_NORM_CLIP_RANGE = (-50.0, 50.0)  # matches texture_piezo's fit_idle_norm_st
 
 
 class _CnnRuntime(ArchitectureRuntime):
-    def __init__(self, config, version):
-        import joblib
-        self.scaler = joblib.load(config.scaler_path)
-        state_dict, embedded_names = _load_checkpoint(config.cnn_model_path)
+    def __init__(self, config, version, joblib_loader: JoblibLoader = None,
+                 torch_loader: TorchCheckpointLoader = None, numpy_loader: NumpyLoader = None):
+        joblib_loader = joblib_loader or _RealJoblibLoader()
+        numpy_loader = numpy_loader or _RealNumpyLoader()
+        self.scaler = joblib_loader.load(config.scaler_path)
+        state_dict, embedded_names = _load_checkpoint(config.cnn_model_path, torch_loader)
         self.feature_names = embedded_names or _resolve_trained_feature_names(config, version)
         if self.scaler.n_features_in_ != len(self.feature_names):
             raise ValueError(
@@ -215,7 +269,7 @@ class _CnnRuntime(ArchitectureRuntime):
                             num_classes=len(config.class_names), dropout=0.4)
         self.model.load_state_dict(state_dict)
         self.model.eval()
-        raw_stats = np.load(config.raw_norm_stats_path)
+        raw_stats = numpy_loader.load(config.raw_norm_stats_path)
         self.raw_mean = raw_stats["mean"].astype(np.float64)
         self.raw_std = raw_stats["std"].astype(np.float64)
         self.raw_eps = float(raw_stats["eps"])
@@ -252,11 +306,12 @@ class _QuadPentaRuntime(ArchitectureRuntime):
     they differ only in model class + forward signature (Penta adds x_raw_full),
     not in how the raw window becomes grid/frame tensors."""
 
-    def __init__(self, model: torch.nn.Module, fusion_feat_names: list[str], is_penta: bool):
+    def __init__(self, model: torch.nn.Module, fusion_feat_names: list[str], is_penta: bool,
+                 yaml_loader: YamlLoader = None):
         self.model = model.eval()
         self.fusion_feat_names = fusion_feat_names
         self.is_penta = is_penta
-        train_cfg = _load_train_config()
+        train_cfg = _load_train_config(yaml_loader)
         raw_norm = train_cfg["data_v3"]["raw_norm"]
         self.adc_scale_stats = raw_norm["adc_scale_stats"]
         self.integrated_scale_stats = raw_norm["integrated_scale_stats"]
@@ -345,8 +400,9 @@ class _QuadPentaRuntime(ArchitectureRuntime):
         return dict(zip(class_names, probs.tolist()))
 
 
-def _load_quad_or_penta(config, version, model_cls, is_penta: bool):
-    train_cfg = _load_train_config()
+def _load_quad_or_penta(config, version, model_cls, is_penta: bool,
+                         yaml_loader: YamlLoader = None, torch_loader: TorchCheckpointLoader = None):
+    train_cfg = _load_train_config(yaml_loader)
     prefix = "penta" if is_penta else "quad"
     version_cfg = train_cfg.get(f"{prefix}branch_{version}")
     if version_cfg is None:
@@ -370,9 +426,10 @@ def _load_quad_or_penta(config, version, model_cls, is_penta: bool):
         model = model_cls(**kwargs)
     else:
         model = model_cls(**kwargs)
-    model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
+    state_dict, _embedded_names = _load_checkpoint(checkpoint_path, torch_loader)
+    model.load_state_dict(state_dict)
 
-    return _QuadPentaRuntime(model, fusion_feat_names, is_penta)
+    return _QuadPentaRuntime(model, fusion_feat_names, is_penta, yaml_loader)
 
 
 _QUAD_MODEL_CLS_BY_VERSION = {
