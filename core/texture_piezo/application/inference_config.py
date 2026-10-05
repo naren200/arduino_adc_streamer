@@ -95,6 +95,7 @@ class InferenceConfig:
     cnn_model_path: str = field(default_factory=lambda: _default_path("cnn"))
     quad_model_path: str = field(default_factory=lambda: _default_path("quad"))
     penta_model_path: str = field(default_factory=lambda: _default_path("penta"))
+    chunk_model_path: str = field(default_factory=lambda: _default_path("chunk"))
     # Sidecars are resolved per version alongside the checkpoint they belong
     # to, so they track whichever architecture's default is sidecar-backed.
     scaler_path: str = field(default_factory=lambda: _default_sidecar("scaler_path"))

@@ -41,6 +41,7 @@ sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
 from clip_windowing_utils_v1 import build_feature_names  # noqa: E402
 from model import ANN, CNN1D, CNNPentaBranchV1, CNNQuadBranchV3, CNNQuadBranchV4  # noqa: E402
 import data as data_mod  # noqa: E402
+from .chunk_ann import ChunkPredictor, parse_bundle  # noqa: E402
 
 _TRAIN_CONFIG_PATH = TEXTURE_PIEZO_ROOT / "configs" / "config.yaml"
 _FEATURE_NAMES_PATH = TEXTURE_PIEZO_ROOT / "data" / "processed" / "clip_feature_names_v2.json"
@@ -460,6 +461,32 @@ def _load_penta(config, version):
 
 
 # ---------------------------------------------------------------------------
+# Multi-scale chunk ANN
+# ---------------------------------------------------------------------------
+
+class _ChunkRuntime(ArchitectureRuntime):
+    """Self-contained bundle (scales, widths, per-scale scalers all inside the
+    checkpoint), so any exported scale combination loads here unchanged and no
+    sidecar files or config.yaml entry are needed. The window is resampled to
+    the bundle's own window_len, not the quad/penta raw_fixed_len."""
+
+    def __init__(self, config, torch_loader: TorchCheckpointLoader = None):
+        payload = (torch_loader or _RealTorchCheckpointLoader()).load(config.chunk_model_path)
+        self.predictor = ChunkPredictor(parse_bundle(payload, expected_num_classes=len(config.class_names)))
+
+    def predict_proba(self, feature_vector, window_channels, class_names, window_integrated=None):
+        if window_channels is None:
+            raise ValueError("window_channels is required for model_type='chunk'")
+        resampled, _stats = data_mod.pad_or_truncate_raw([window_channels], self.predictor.window_len)
+        probs = self.predictor.predict_proba(resampled[0])
+        return dict(zip(class_names, probs.tolist()))
+
+
+def _load_chunk(config, version):
+    return _ChunkRuntime(config)
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -473,4 +500,5 @@ ARCH_REGISTRY: dict[str, ArchSpec] = {
     "cnn": ArchSpec(key="cnn", load=_load_cnn),
     "quad": ArchSpec(key="quad", load=_load_quad),
     "penta": ArchSpec(key="penta", load=_load_penta),
+    "chunk": ArchSpec(key="chunk", load=_load_chunk),
 }

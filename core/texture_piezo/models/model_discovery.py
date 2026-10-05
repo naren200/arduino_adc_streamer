@@ -62,6 +62,9 @@ ARCH_STEM_PREFIXES: dict[str, tuple[str, ...]] = {
     "cnn": ("texture_cnn",),
     "quad": ("texture_quadbranch",),
     "penta": ("texture_pentabranch",),
+    # Chunk-ANN checkpoints are self-contained bundles tagged by scale set,
+    # e.g. texture_chunkann_v4_scales20_25.pt -> version v4, tag scales20_25.
+    "chunk": ("texture_chunkann",),
 }
 
 # model_type -> the sidecar roles that architecture's runtime actually reads.
@@ -75,6 +78,7 @@ ARCH_SIDECAR_ROLES: dict[str, tuple[str, ...]] = {
     "cnn": ("scaler_path", "raw_norm_stats_path", "feature_names_path"),
     "quad": (),
     "penta": (),
+    "chunk": (),  # scalers travel inside the bundle
 }
 
 # Artifact role -> (file suffix, keywords every candidate stem must contain).

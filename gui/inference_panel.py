@@ -56,7 +56,7 @@ from constants.plotting import PLOT_COLORS
 # ARCH_REGISTRY so a new architecture registered there (architectures.py)
 # shows up in the combo automatically -- no GUI change needed to add one.
 _MODEL_TYPE_DISPLAY_NAMES = {
-    "ann": "ANN", "cnn": "CNN", "quad": "Quad", "penta": "Penta",
+    "ann": "ANN", "cnn": "CNN", "quad": "Quad", "penta": "Penta", "chunk": "Chunk",
 }
 _MODEL_TYPE_LABELS = [_MODEL_TYPE_DISPLAY_NAMES.get(key, key.upper()) for key in ARCH_REGISTRY]
 _MODEL_TYPE_BY_LABEL = {label: key for key, label in zip(ARCH_REGISTRY, _MODEL_TYPE_LABELS)}
