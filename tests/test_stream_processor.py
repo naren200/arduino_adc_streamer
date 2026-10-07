@@ -8,7 +8,6 @@ import numpy as np
 from core.texture_piezo.application.stream_processor import LIVE_ENGINE_CONFIG, TouchIdStreamProcessor
 from core.texture_piezo.gating.quality_gate import IdleBaseline
 
-from core.piezo_engine import baseline as data_mod
 
 PZT_COLUMNS = [f"PZT3_{c}" for c in "BLCRT"]
 
@@ -34,14 +33,13 @@ def _timestamps(start: float, n: int, fs: float) -> np.ndarray:
 
 
 def _warm_up(processor: TouchIdStreamProcessor, fs: float, t: float = 0.0) -> float:
-    """Push push_chunk's full leading-sample drop (the session's
-    capture-start settle trim PLUS the engine's common window-fill
-    warmup -- see push_chunk's docstring)
+    """Push push_chunk's full leading-sample drop (the engine's common
+    window-fill warmup -- see push_chunk's docstring)
     through the processor with idle-valued samples before a test's real
     assertions, so those samples' own ready-window count isn't silently
     short by the drop that push_chunk applies. Returns the timestamp to
     resume pushing from."""
-    n = LIVE_ENGINE_CONFIG.leading_warmup_samples + data_mod.capture_start_settle_sample_count(fs)
+    n = LIVE_ENGINE_CONFIG.leading_warmup_samples
     processor.push_chunk(processor.filter_raw(_chunk(n, 0.0)), _timestamps(t, n, fs), fs, now_t=t)
     return t + n / fs
 
@@ -298,7 +296,7 @@ class ChunkInvarianceTests(unittest.TestCase):
 
     def test_store_arrays_identical_when_warmup_itself_spans_the_chunk_boundary(self):
         """Same as above, but skips _warm_up -- the leading-sample warmup
-        drop (the pipeline's settle gate plus its samples_seen-relative
+        drop (the pipeline's samples_seen-relative
         warmup cutoff) happens inside a single push for the
         whole run and is itself split across several small pushes for the
         split run. This is the exact logic moving into DerivedChannelPipeline
@@ -306,7 +304,7 @@ class ChunkInvarianceTests(unittest.TestCase):
         baseline = _make_baseline()
         fs = 1000.0
         rng = np.random.default_rng(1)
-        warmup_n = LIVE_ENGINE_CONFIG.leading_warmup_samples + data_mod.capture_start_settle_sample_count(fs)
+        warmup_n = LIVE_ENGINE_CONFIG.leading_warmup_samples
         total_n = warmup_n + 150
         raw_by_col = self._per_column_signal(rng, total_n)
         ts_all = _timestamps(0.0, total_n, fs)
@@ -371,8 +369,8 @@ class FilterRawTests(unittest.TestCase):
 
 
 class PushChunkRequiresFilterRawTests(unittest.TestCase):
-    """Regression test for the ordering bug: push_chunk's capture-start
-    settle trim only removes leading samples, it does not despike them --
+    """Regression test for the ordering bug: push_chunk's warmup
+    drop only removes leading samples, it does not despike them --
     the despiking has to have already happened via filter_raw(). Pins the
     fail-fast guard (stream_processor.py's _raw_filtered_this_tick marker)
     so a future edit that drops or reorders a filter_raw() call in a real

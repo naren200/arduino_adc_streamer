@@ -1,17 +1,14 @@
-"""Composed engine pipeline: median-N -> capture-start settle -> derived
-channels + force stage -> common leading warmup drop.
+"""Composed engine pipeline: median-N -> derived channels + force stage ->
+common leading warmup drop.
 
 One implementation serves training (a whole file in one ``process`` call),
 offline replay and live streaming (one call per arriving chunk): the output is
 bit-identical however the input is chunked. Each stage is a small stateful
 class; this module only wires them.
 
-Order matters. The settle samples are dropped BEFORE the derived stage sees
-them, so the analog start-up transient never enters the bounded sums or the
-unbounded causal medians. The common warmup (``config.leading_warmup_samples``,
-the longest window fill) is then dropped from the outputs of EVERY channel so
-they stay aligned; the force stage itself integrates from its first sample and
-is only sliced, never gated.
+The common warmup (``config.leading_warmup_samples``, the longest window fill)
+is dropped from the outputs of EVERY channel so they stay aligned; the force
+stage itself integrates from its first sample and is only sliced, never gated.
 """
 
 from __future__ import annotations
@@ -23,7 +20,6 @@ from typing import Mapping
 
 import numpy as np
 
-from core.piezo_engine.baseline import capture_start_settle_sample_count
 from core.piezo_engine.config import EngineConfig
 from core.piezo_engine.force_stage import ForceStage, ForceTraces
 from core.piezo_engine.median import DEFAULT_MEDIAN_WINDOW_SAMPLES, CausalMedianN
@@ -32,7 +28,6 @@ from core.piezo_engine.streaming import CausalDerivedChannels, counts_to_volts
 
 INPUT_CONDITIONING_METADATA_KEY = "analysis_input_conditioning"
 _MEDIAN_WINDOW_RECORD_KEY = "median_window_samples"
-_SETTLE_TRIMMED_RECORD_KEY = "settle_trimmed_samples"
 
 _logger = logging.getLogger(__name__)
 
@@ -41,14 +36,12 @@ _logger = logging.getLogger(__name__)
 class InputConditioning:
     """What an upstream loader already did to the samples fed to the pipeline.
 
-    Default is raw ADC counts: the engine applies the median and the settle
-    drop itself. A source that was already median-filtered (with window
-    ``median_window_samples``) and/or settle-trimmed (an Analysis snapshot)
-    must say so, or those stages would run twice.
+    Default is raw ADC counts: the engine applies the median itself. A source
+    that was already median-filtered (with window ``median_window_samples``, an
+    Analysis snapshot) must say so, or the median would run twice.
     """
 
     median_window_samples: int | None = None
-    settle_applied: bool = False
 
     @property
     def median_applied(self) -> bool:
@@ -56,15 +49,12 @@ class InputConditioning:
 
 
 RAW_INPUT = InputConditioning()
-ALREADY_CONDITIONED_INPUT = InputConditioning(median_window_samples=DEFAULT_MEDIAN_WINDOW_SAMPLES, settle_applied=True)
+ALREADY_CONDITIONED_INPUT = InputConditioning(median_window_samples=DEFAULT_MEDIAN_WINDOW_SAMPLES)
 
 
-def conditioning_record(median_window_samples: int | None, settle_trimmed_samples: int) -> dict:
+def conditioning_record(median_window_samples: int | None) -> dict:
     """The plain-dict form a loader stamps into snapshot metadata."""
-    return {
-        _MEDIAN_WINDOW_RECORD_KEY: None if median_window_samples is None else int(median_window_samples),
-        _SETTLE_TRIMMED_RECORD_KEY: int(settle_trimmed_samples),
-    }
+    return {_MEDIAN_WINDOW_RECORD_KEY: None if median_window_samples is None else int(median_window_samples)}
 
 
 def input_conditioning_from_record(record: Mapping | None) -> InputConditioning:
@@ -72,22 +62,18 @@ def input_conditioning_from_record(record: Mapping | None) -> InputConditioning:
     if not isinstance(record, Mapping):
         return RAW_INPUT
     window = record.get(_MEDIAN_WINDOW_RECORD_KEY)
-    return InputConditioning(
-        median_window_samples=None if window is None else int(window),
-        settle_applied=int(record.get(_SETTLE_TRIMMED_RECORD_KEY) or 0) > 0,
-    )
+    return InputConditioning(median_window_samples=None if window is None else int(window))
 
 
 @dataclass(frozen=True)
 class DroppedLeading:
     """Leading samples removed from THIS call's input (align timestamps with ``total``)."""
 
-    settle: int = 0
     warmup: int = 0
 
     @property
     def total(self) -> int:
-        return self.settle + self.warmup
+        return self.warmup
 
 
 @dataclass(frozen=True)
@@ -131,9 +117,6 @@ class LeadingDropGate:
         if self._remaining is None:
             self._remaining = max(0, int(total))
 
-    def mark_complete(self) -> None:
-        self._remaining = 0
-
     def take(self, n_incoming: int) -> int:
         """How many samples to drop from the front of a chunk of ``n_incoming``."""
         dropped = min(int(n_incoming), self._remaining or 0)
@@ -141,10 +124,10 @@ class LeadingDropGate:
         return dropped
 
 
-class PostSettleTimeline:
-    """Timestamps of the post-settle stream: explicit ones, or a uniform ``i / fs`` grid.
+class SampleTimeline:
+    """Timestamps of the input stream: explicit ones, or a uniform ``i / fs`` grid.
 
-    The grid index is the GLOBAL post-settle sample count and ``fs`` is latched
+    The grid index is the GLOBAL input sample count and ``fs`` is latched
     at the first call (a live caller's per-tick rate drifts and would otherwise
     make the grid depend on chunking), so any chunking yields identical times.
     """
@@ -154,7 +137,7 @@ class PostSettleTimeline:
         self._count = 0
 
     def latch_sample_rate(self, sample_rate_hz: float) -> None:
-        """Called on every call, even one that is all settle: only the first value sticks."""
+        """Called on every call: only the first value sticks."""
         if self._sample_rate_hz is None:
             self._sample_rate_hz = float(sample_rate_hz)
 
@@ -189,12 +172,9 @@ class PiezoEnginePipeline:
         self.input_conditioning = input_conditioning
         self._warn_if_upstream_median_differs(input_conditioning, config)
         self._median = MedianStage(self.pzt_columns, config.blip_window_samples)
-        self._settle = LeadingDropGate()
-        if input_conditioning.settle_applied:
-            self._settle.mark_complete()
         self.derived_channels = self._new_derived_channels()
         self._force = ForceStage(self.derived_channels.column_map, config) if config.compute_force else None
-        self._timeline = PostSettleTimeline()
+        self._timeline = SampleTimeline()
 
     @staticmethod
     def _warn_if_upstream_median_differs(conditioning: InputConditioning, config: EngineConfig) -> None:
@@ -214,8 +194,8 @@ class PiezoEnginePipeline:
         )
 
     def adopt_state_from(self, other: "PiezoEnginePipeline") -> None:
-        """Continue ``other``'s stream: take over EVERY stateful stage (median window, settle
-        gate, derived sums/medians, force stage, force timeline) so nothing restarts cold.
+        """Continue ``other``'s stream: take over EVERY stateful stage (median window,
+        derived sums/medians, force stage, force timeline) so nothing restarts cold.
 
         Only valid between pipelines running the same engine (columns and config);
         ``other`` must not be used afterwards, its stage objects are now shared.
@@ -224,7 +204,6 @@ class PiezoEnginePipeline:
             raise ValueError("cannot adopt the state of a pipeline with different columns or engine config")
         self.input_conditioning = other.input_conditioning
         self._median = other._median
-        self._settle = other._settle
         self.derived_channels = other.derived_channels
         self._force = other._force
         self._timeline = other._timeline
@@ -243,8 +222,8 @@ class PiezoEnginePipeline:
         sample_rate_hz: float,
         timestamps_s: np.ndarray | None = None,
     ) -> PipelineResult:
-        """``timestamps_s``, when given, has one strictly increasing entry per INPUT sample
-        (settle samples included); default is the uniform post-settle grid ``i / fs``."""
+        """``timestamps_s``, when given, has one strictly increasing entry per INPUT sample;
+        default is the uniform grid ``i / fs``."""
         filtered = self.filter_raw(chunk_by_column)
         return self.process_filtered(filtered, sample_rate_hz=sample_rate_hz, timestamps_s=timestamps_s)
 
@@ -255,17 +234,13 @@ class PiezoEnginePipeline:
         sample_rate_hz: float,
         timestamps_s: np.ndarray | None = None,
     ) -> PipelineResult:
-        """Settle -> derived + force -> warmup on samples that already went through ``filter_raw``."""
+        """Derived + force -> warmup on samples that already went through ``filter_raw``."""
         n_input = len(np.asarray(filtered_by_column[self.pzt_columns[0]]).reshape(-1))
         explicit = self._validated_timestamps(timestamps_s, n_input)
         self._timeline.latch_sample_rate(sample_rate_hz)
-        self._settle.arm(capture_start_settle_sample_count(sample_rate_hz))
-        settle_dropped = self._settle.take(n_input)
-        kept = _slice_chunk(filtered_by_column, settle_dropped)
-        if n_input == settle_dropped:
-            return self._empty_result(DroppedLeading(settle=settle_dropped))
-        kept_times = self._timeline.take(n_input - settle_dropped, None if explicit is None else explicit[settle_dropped:])
-        return self._derive_and_trim(kept, kept_times, settle_dropped, sample_rate_hz)
+        kept = _slice_chunk(filtered_by_column, 0)
+        kept_times = self._timeline.take(n_input, explicit)
+        return self._derive_and_trim(kept, kept_times, sample_rate_hz)
 
     @staticmethod
     def _validated_timestamps(timestamps_s: np.ndarray | None, n_input: int) -> np.ndarray | None:
@@ -285,16 +260,14 @@ class PiezoEnginePipeline:
         }
         return self._force.push(volts_by_position, kept_times)
 
-    def _derive_and_trim(
-        self, kept: dict, kept_times: np.ndarray, settle_dropped: int, sample_rate_hz: float
-    ) -> PipelineResult:
+    def _derive_and_trim(self, kept: dict, kept_times: np.ndarray, sample_rate_hz: float) -> PipelineResult:
         derived_channels = self.derived_channels
         seen_before = derived_channels.samples_seen
         derived = derived_channels.process(kept, sample_rate_hz=sample_rate_hz)
         force = self._force_traces(kept, kept_times)
         n_kept = len(derived["shear_jerk_lr"])
         warmup_dropped = min(n_kept, max(0, self.config.leading_warmup_samples - seen_before))
-        dropped = DroppedLeading(settle=settle_dropped, warmup=warmup_dropped)
+        dropped = DroppedLeading(warmup=warmup_dropped)
         return PipelineResult(
             raw=MappingProxyType(_slice_chunk(kept, warmup_dropped)),
             integrated=MappingProxyType(_slice_chunk(derived["integrated"], warmup_dropped)),
@@ -304,21 +277,5 @@ class PiezoEnginePipeline:
             normal_force=None if force is None else force.normal_force[warmup_dropped:],
             shear_force_lr=None if force is None else force.shear_force_lr[warmup_dropped:],
             shear_force_tb=None if force is None else force.shear_force_tb[warmup_dropped:],
-            dropped_leading=dropped,
-        )
-
-    def _empty_result(self, dropped: DroppedLeading) -> PipelineResult:
-        empty = np.empty(0, dtype=np.float64)
-        force_empty = empty if self._force is not None else None
-        columns = {col: empty for col in self.pzt_columns}
-        return PipelineResult(
-            raw=MappingProxyType(dict(columns)),
-            integrated=MappingProxyType(dict(columns)),
-            shear_jerk_lr=empty,
-            shear_jerk_tb=empty,
-            normal_jerk=empty,
-            normal_force=force_empty,
-            shear_force_lr=force_empty,
-            shear_force_tb=force_empty,
             dropped_leading=dropped,
         )

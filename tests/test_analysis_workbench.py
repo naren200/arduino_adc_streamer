@@ -579,12 +579,8 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             temp_path = Path(temp_dir)
             csv_path = temp_path / "capture.csv"
             metadata_path = temp_path / "capture_metadata.json"
-            # A leading dummy row is dropped by the capture-start settle trim
-            # (data_mod.capture_start_settle_sample_count) before this test's
-            # assertions look at the remaining two real rows.
             csv_path.write_text(
                 "Timestamp,CH1,CH2,Force_X_N,Force_Z_N\n"
-                "00:00:00.000000,99,99,9.9,9.9\n"
                 "00:00:00.010000,1,2,0.5,1.5\n"
                 "00:00:00.020000,3,4,0.6,1.6\n",
                 encoding="utf-8",
@@ -604,7 +600,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
 
             self.assertEqual(snapshot.channel_labels, ["CH1", "CH2"])
             self.assertEqual(snapshot.data.shape, (2, 2))
-            np.testing.assert_allclose(snapshot.timestamps_s, [0.01, 0.02])
+            np.testing.assert_allclose(snapshot.timestamps_s, [0.0, 0.02])
             np.testing.assert_allclose(snapshot.force_x_n, [0.5, 0.6])
 
     def test_load_exported_csv_snapshot_tolerates_legacy_col_placeholders_and_metadata_mismatch(self):
@@ -612,12 +608,8 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             temp_path = Path(temp_dir)
             csv_path = temp_path / "legacy_array.csv"
             metadata_path = temp_path / "legacy_array_metadata.json"
-            # A leading dummy row is dropped by the capture-start settle trim
-            # (data_mod.capture_start_settle_sample_count) before this test's
-            # assertions look at the remaining two real rows.
             csv_path.write_text(
                 "Timestamp,PZT3_B,Col1,PZT3_L,Col3,PZT3_C,Col5,PZT3_R,Col7,PZT3_T,Col9,Force_X_N,Force_Z_N\n"
-                "13:29:44.970000,9999.0,9999.0,9999.0,9999.0,9999.0,9999.0,9999.0,9999.0,9999.0,9999.0,0.0,0.0\n"
                 "13:29:44.971321,2045.0,2046.0,2043.0,2047.0,2047.0,2047.0,2040.0,2046.0,2049.0,2047.0,0.0,0.0\n"
                 "13:29:44.971931,2047.0,2046.0,2046.0,2049.0,2048.0,2048.0,2040.0,2046.0,2049.0,2047.0,0.0,0.0\n",
                 encoding="utf-8",
@@ -649,12 +641,8 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             temp_path = Path(temp_dir)
             csv_path = temp_path / "legacy_force.csv"
             metadata_path = temp_path / "legacy_force_metadata.json"
-            # A leading dummy row is dropped by the capture-start settle trim
-            # (data_mod.capture_start_settle_sample_count) before this test's
-            # assertions look at the remaining two real rows.
             csv_path.write_text(
                 "Timestamp,CH1,Force_X,Force_Z\n"
-                "00:00:00.000000,0,0,0\n"
                 f"00:00:00.010000,1,{2.0 * X_FORCE_SENSOR_TO_NEWTON},{3.0 * Z_FORCE_SENSOR_TO_NEWTON}\n"
                 f"00:00:00.020000,2,{4.0 * X_FORCE_SENSOR_TO_NEWTON},{5.0 * Z_FORCE_SENSOR_TO_NEWTON}\n",
                 encoding="utf-8",
@@ -680,12 +668,8 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             temp_path = Path(temp_dir)
             csv_path = temp_path / "array.csv"
             metadata_path = temp_path / "array_metadata.json"
-            # A leading dummy row is dropped by the capture-start settle trim
-            # (data_mod.capture_start_settle_sample_count) before this test's
-            # assertions look at the remaining two real rows.
             csv_path.write_text(
                 "PZT6_B,PZT6_L,PZT6_C,PZT6_R,PZT6_T,PZT6_RS1,PZT6_RS2,Force_X,Force_Z\n"
-                "9999,9999,9999,9999,9999,9999,9999,0,0\n"
                 "2046,2052,2039,2049,2044,474.6,455.42,0,0\n"
                 "2044,2052,2038,2050,2044,474.6,455.42,0,0\n",
                 encoding="utf-8",
@@ -719,24 +703,13 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             self.assertEqual(snapshot.data.shape, (2, 7))
             np.testing.assert_allclose(snapshot.force_x_n, [0.0, 0.0])
 
-    def test_load_exported_csv_snapshot_filters_blip_before_settle_trim(self):
-        """Regression test for the ordering bug: a blip planted right where
-        the settle-trim boundary lands must still be removed by the blip
-        filter, because filtering runs on the FULL raw capture first and the
-        settle-trim only afterward. Under the old (buggy) order -- trim
-        first, then filter the already-trimmed array -- this exact blip
-        would land inside the causal median filter's own always-unfiltered
-        first (window - 1) samples and survive, which is the bug the user
-        actually saw in the Analysis tab's Raw Signal panel."""
+    def test_load_exported_csv_snapshot_filters_blips_and_keeps_every_row(self):
+        """The blip filter runs on the full capture and no leading rows are trimmed."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            csv_path = temp_path / "blip_at_trim_boundary.csv"
-            metadata_path = temp_path / "blip_at_trim_boundary_metadata.json"
-            # fs=3.0 -> settle_count = ceil(0.4 * 3.0) = 2, so rows 0-1 are
-            # discarded and row 2 (the blip) becomes the new first row.
-            # window=3 (default) needs one full window of real neighbors on
-            # both sides to median-out row 2's blip -- rows 0,1,2 supply that
-            # only if filtering sees the FULL 5-row array, not the trimmed one.
+            csv_path = temp_path / "blip_in_capture.csv"
+            metadata_path = temp_path / "blip_in_capture_metadata.json"
+            # window=3 (default): row 2's blip is medianed out by rows 0,1,2.
             csv_path.write_text(
                 "Timestamp,PZT3_B,PZT3_L,PZT3_C,PZT3_R,PZT3_T,Force_X_N,Force_Z_N\n"
                 "00:00:00.000000,2048,2048,2048,2048,2048,0.0,0.0\n"
@@ -759,7 +732,8 @@ class AnalysisWorkbenchTests(unittest.TestCase):
 
             snapshot = load_exported_csv_snapshot(csv_path, metadata_path)
 
-            self.assertEqual(snapshot.data.shape, (3, 5))
+            self.assertEqual(snapshot.data.shape, (5, 5))
+            self.assertEqual(len(snapshot.timestamps_s), 5)
             self.assertTrue(np.all(snapshot.data < 3000.0), snapshot.data)
 
     def test_prepare_analysis_data_builds_requested_overlays(self):

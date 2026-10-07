@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from core.piezo_engine.baseline import capture_start_settle_sample_count
 from core.piezo_engine.config import EngineConfig, TimingMode, TimingPolicy
 from core.piezo_engine.median import CausalMedianN
 from core.piezo_engine.pipeline import (
@@ -101,51 +100,44 @@ def test_many_chunks_are_bit_identical_to_one_call_on_a_real_capture():
         assert np.array_equal(whole.integrated[col], merged["integrated"][col])
 
 
-def test_chunked_equals_one_call_across_settle_and_warmup_boundaries():
-    n_samples = capture_start_settle_sample_count(SYNTHETIC_FS) + 300
+def test_chunked_equals_one_call_across_the_warmup_boundary():
+    n_samples = CONFIG.leading_warmup_samples + 300
     stream = _synthetic_stream(n_samples)
     whole = PiezoEnginePipeline(SYNTHETIC_COLUMNS, CONFIG).process(stream, sample_rate_hz=SYNTHETIC_FS)
-    sizes = [1, 1, 150, 99, 140, 10, 11, 1, 5]
+    sizes = [1, 1, 20, 7, 140, 10, 11, 1, 5]
     sizes.append(n_samples - sum(sizes))
     chunked = _run_chunks(PiezoEnginePipeline(SYNTHETIC_COLUMNS, CONFIG), stream, sizes)
     _assert_equal(_concat([whole]), _concat(chunked))
     assert sum(r.dropped_leading.total for r in chunked) == whole.dropped_leading.total
 
 
-def test_drop_counts_are_settle_then_the_common_longest_window_warmup():
+def test_stream_is_not_settle_trimmed_and_only_the_warmup_is_dropped():
     stream = _synthetic_stream(1000)
     result = PiezoEnginePipeline(SYNTHETIC_COLUMNS, CONFIG).process(stream, sample_rate_hz=SYNTHETIC_FS)
-    settle = capture_start_settle_sample_count(SYNTHETIC_FS)
-    assert (result.dropped_leading.settle, result.dropped_leading.warmup) == (settle, CONFIG.leading_warmup_samples)
-    assert result.n_samples == 1000 - settle - CONFIG.leading_warmup_samples
+    warmup = CONFIG.leading_warmup_samples
+    assert result.dropped_leading.warmup == warmup and result.dropped_leading.total == warmup
+    assert result.n_samples == 1000 - warmup
 
 
-def test_settle_samples_never_reach_the_derived_state():
+def test_derived_channels_see_the_whole_median_filtered_stream_from_sample_zero():
     stream = _synthetic_stream(900)
-    settle = capture_start_settle_sample_count(SYNTHETIC_FS)
     filtered = CausalMedianN(CONFIG.blip_window_samples, len(SYNTHETIC_COLUMNS)).process(
         np.stack([stream[c] for c in SYNTHETIC_COLUMNS], axis=1))
-    kept = {col: filtered[settle:, i] for i, col in enumerate(SYNTHETIC_COLUMNS)}
-    reference = CausalDerivedChannels(SYNTHETIC_COLUMNS).process(kept, sample_rate_hz=SYNTHETIC_FS)
+    whole = {col: filtered[:, i] for i, col in enumerate(SYNTHETIC_COLUMNS)}
+    reference = CausalDerivedChannels(SYNTHETIC_COLUMNS).process(whole, sample_rate_hz=SYNTHETIC_FS)
     result = PiezoEnginePipeline(SYNTHETIC_COLUMNS, CONFIG).process(stream, sample_rate_hz=SYNTHETIC_FS)
     warmup = CONFIG.leading_warmup_samples
     assert np.array_equal(result.shear_jerk_lr, reference["shear_jerk_lr"][warmup:])
     assert np.array_equal(result.integrated[SYNTHETIC_COLUMNS[2]], reference["integrated"][SYNTHETIC_COLUMNS[2]][warmup:])
-    assert np.array_equal(result.raw[SYNTHETIC_COLUMNS[0]], kept[SYNTHETIC_COLUMNS[0]][warmup:])
+    assert np.array_equal(result.raw[SYNTHETIC_COLUMNS[0]], whole[SYNTHETIC_COLUMNS[0]][warmup:])
 
 
-def test_chunk_shorter_than_settle_yields_empty_result_and_counts_the_drop():
-    pipeline = PiezoEnginePipeline(SYNTHETIC_COLUMNS, CONFIG)
-    result = pipeline.process(_synthetic_stream(10), sample_rate_hz=SYNTHETIC_FS)
-    assert result.n_samples == 0 and result.dropped_leading.settle == 10 and result.dropped_leading.total == 10
-
-
-def test_already_conditioned_input_runs_neither_median_nor_settle_again():
+def test_already_conditioned_input_does_not_run_the_median_again():
     stream = _synthetic_stream(200)
     pipeline = PiezoEnginePipeline(SYNTHETIC_COLUMNS, CONFIG, input_conditioning=ALREADY_CONDITIONED_INPUT)
     result = pipeline.process(stream, sample_rate_hz=SYNTHETIC_FS)
     warmup = CONFIG.leading_warmup_samples
-    assert (result.dropped_leading.settle, result.dropped_leading.warmup) == (0, warmup)
+    assert result.dropped_leading.warmup == warmup
     assert np.array_equal(result.raw[SYNTHETIC_COLUMNS[1]], stream[SYNTHETIC_COLUMNS[1]][warmup:])
 
 
@@ -168,7 +160,7 @@ def _series(results: list) -> dict:
 
 
 def test_adopting_a_warm_pipeline_continues_the_stream_bit_exactly_in_every_output():
-    """The hand-over carries EVERY stateful stage (median window, settle gate, derived sums/medians,
+    """The hand-over carries EVERY stateful stage (median window, derived sums/medians,
     force stage, force timeline): chunk 1 on one pipeline + chunk 2 on its successor == one pipeline."""
     n_samples, split = 2600, 900
     stream = _synthetic_stream(n_samples)
@@ -207,8 +199,6 @@ def test_adopting_state_also_takes_over_the_input_conditioning():
     successor = PiezoEnginePipeline(SYNTHETIC_COLUMNS, CONFIG)
     successor.adopt_state_from(first)
     assert successor.input_conditioning == ALREADY_CONDITIONED_INPUT
-    result = successor.process(_synthetic_stream(100), sample_rate_hz=SYNTHETIC_FS)
-    assert result.dropped_leading.settle == 0
 
 
 # ---------------------------------------------------------------- compute_force switch
@@ -219,9 +209,7 @@ def test_compute_force_false_skips_the_force_stage_and_returns_none_forces():
     assert pipeline._force is None
     result = pipeline.process(_synthetic_stream(900), sample_rate_hz=SYNTHETIC_FS)
     assert result.normal_force is None and result.shear_force_lr is None and result.shear_force_tb is None
-    assert result.n_samples == 900 - capture_start_settle_sample_count(SYNTHETIC_FS) - config.leading_warmup_samples
-    all_settle = pipeline.process(_synthetic_stream(1), sample_rate_hz=SYNTHETIC_FS)
-    assert all_settle.normal_force is None
+    assert result.n_samples == 900 - config.leading_warmup_samples
 
 
 def test_compute_force_false_leaves_every_other_output_bit_identical():
@@ -246,7 +234,7 @@ def test_compute_force_is_part_of_equality_and_the_canonical_dict():
     on, off = EngineConfig(timing=CONFIG.timing), EngineConfig(timing=CONFIG.timing, compute_force=False)
     assert on.to_dict()["compute_force"] is True and off.to_dict()["compute_force"] is False
     assert on != off
-    assert on.to_dict()["schema_version"] == 3
+    assert on.to_dict()["schema_version"] == 4
 
 
 def test_engine_config_round_trips_through_its_canonical_dict_and_json():
@@ -256,35 +244,27 @@ def test_engine_config_round_trips_through_its_canonical_dict_and_json():
     assert EngineConfig.from_dict(json.loads(json.dumps(config.to_dict()))) == config
 
 
-def test_engine_config_from_dict_refuses_a_foreign_schema_or_settle_duration():
+def test_engine_config_from_dict_refuses_a_foreign_schema():
     record = EngineConfig(timing=CONFIG.timing).to_dict()
     with pytest.raises(ValueError, match="schema"):
         EngineConfig.from_dict({**record, "schema_version": record["schema_version"] - 1})
-    with pytest.raises(ValueError, match="settle"):
-        EngineConfig.from_dict({**record, "capture_start_settle_s": 0.5})
 
 
 def test_conditioning_record_round_trips_and_missing_record_means_raw():
     assert input_conditioning_from_record(None) == RAW_INPUT
     assert input_conditioning_from_record({}) == RAW_INPUT
-    assert input_conditioning_from_record(conditioning_record(None, 0)) == RAW_INPUT
-    assert input_conditioning_from_record(conditioning_record(5, 611)) == InputConditioning(5, True)
-    assert input_conditioning_from_record(conditioning_record(3, 0)) == InputConditioning(3, False)
+    assert input_conditioning_from_record(conditioning_record(None)) == RAW_INPUT
+    assert input_conditioning_from_record(conditioning_record(5)) == InputConditioning(5)
 
 
-def test_median_only_conditioning_still_drops_settle_once():
-    stream = _synthetic_stream(900)
-    pipeline = PiezoEnginePipeline(SYNTHETIC_COLUMNS, CONFIG, input_conditioning=InputConditioning(3, False))
-    result = pipeline.process(stream, sample_rate_hz=SYNTHETIC_FS)
-    assert result.dropped_leading.settle == capture_start_settle_sample_count(SYNTHETIC_FS)
-    warmup = CONFIG.leading_warmup_samples
-    settle = result.dropped_leading.settle
-    assert np.array_equal(result.raw[SYNTHETIC_COLUMNS[0]], stream[SYNTHETIC_COLUMNS[0]][settle + warmup:])
+def test_conditioning_record_reader_ignores_the_legacy_settle_trimmed_key():
+    legacy = {"median_window_samples": 3, "settle_trimmed_samples": 611}
+    assert input_conditioning_from_record(legacy) == InputConditioning(3)
 
 
 def test_upstream_median_window_mismatch_is_logged(caplog):
     with caplog.at_level(logging.WARNING, logger="core.piezo_engine.pipeline"):
-        PiezoEnginePipeline(SYNTHETIC_COLUMNS, CONFIG, input_conditioning=InputConditioning(5, True))
+        PiezoEnginePipeline(SYNTHETIC_COLUMNS, CONFIG, input_conditioning=InputConditioning(5))
     assert "median-5" in caplog.text
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="core.piezo_engine.pipeline"):

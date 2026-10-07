@@ -1,10 +1,8 @@
-"""Causal-median baseline and capture-start-settle helpers, ported from
+"""Causal-median baseline and warmup helpers, ported from
 texture_piezo's data.py for arduino_adc_streamer standalone signal processing.
 """
 
 from __future__ import annotations
-
-import math
 
 import numpy as np
 from numba import njit
@@ -168,85 +166,7 @@ def total_warmup_sample_count(sample_rate_hz: float, integration_window_samples:
     the current formula doesn't use it, so every call site here and in both
     repos' callers doesn't need to change if a future sample-rate-dependent
     warmup source is ever added back.
-
-    A prior version of this function also added a causal-median convergence
-    warmup (`CAUSAL_MEDIAN_WARMUP_S`, removed 2026-09-30). `IncrementalMedian`
-    is an unbounded expanding median with no fixed "fill" point, so that
-    warmup was never a derived quantity -- empirical measurement against the
-    `only_*` captures in data/raw/sensor_v12d_7_26/ch5 (true two-heap median
-    run from sample 0, deviation-from-steady-state-median vs noise floor)
-    found the p90 convergence time was ~0.0001s and the sole outlier
-    (PZT5_B, only_idle_v2, 0.358s) was confounded with `CAPTURE_START_SETTLE_S`
-    settling rather than genuine median-warmup -- visual inspection of that
-    exact file/channel at warmup=0 showed no drift. Removed rather than kept
-    conservative.
     """
     if sample_rate_hz <= 0.0:
         raise ValueError("sample_rate_hz must be greater than zero")
     return max(0, int(integration_window_samples) - 1)
-
-
-CAPTURE_START_SETTLE_S = 0.4
-"""Seconds of leading samples to discard from the very start of a capture/
-session, before any other processing (integration, calibration, etc.) sees
-them. Measured empirically (2026-09-30) against the labeled `baseline`
-segments of the `only_*` texture captures in data/raw/sensor_v12d_7_26/ch5
-and data/raw/sensor_v12b_v11z4: the mean largest-channel deviation from a
-file's own baseline median is ~2.3-2.5x the steady-state noise floor for the
-first 30 samples and decays to ~1.3x by sample 100. That covers most
-channels, but a per-channel check (`_R` specifically, across all 15 baseline-
-labeled files) found several files (cardboard_v1, leather_v1, leather_v2)
-still ~1.3-1.5x their floor at sample 300 (~200ms), not converging until
-~sample 600 (~1527 Hz -> ~400ms) -- an asymptotic settling transient, not a
-fixed-count glitch. A few other files (leather_v3, tile_v3, tiona_v3) stay
-elevated on `_R` well past 600 samples, but their 301-600 and 601-1500 bins
-are already close to each other -- that's a noisier baseline in that
-file/channel, not unfinished settling, and no larger cutoff fixes it. This
-is real analog/mux settling at the very start of the series itself, distinct
-from `total_warmup_sample_count`'s moving-window fill time on an
-already-started series."""
-
-
-def capture_start_settle_sample_count(sample_rate_hz: float) -> int:
-    """Single source of truth for how many leading samples of a fresh
-    capture/session to discard before any other processing sees them --
-    Analysis (`load_exported_csv_snapshot`), live TouchID ingestion
-    (`TouchIdStreamProcessor.push_chunk`, first chunk of a session only),
-    and the saved/training-data path (`load_calibration_csv`) all call this
-    same function so the cutoff can't drift apart between them. See
-    CAPTURE_START_SETTLE_S for how the value was derived."""
-    if sample_rate_hz <= 0.0:
-        raise ValueError("sample_rate_hz must be greater than zero")
-    return math.ceil(CAPTURE_START_SETTLE_S * float(sample_rate_hz))
-
-
-def preprocess_capture_start(values: np.ndarray, sample_rate_hz: float, *, blip_filter) -> tuple[np.ndarray, int]:
-    """Sole authority for capture-start preprocessing ORDER: blip-filter
-    first, THEN settle-trim -- as one call, so the sequence can't be pulled
-    apart by a future edit the way it already was once (a settle-trim that
-    ran before filtering left the filter's own always-unfiltered leading
-    edge, normally harmless deep inside a long capture, sitting as the very
-    first visible samples instead).
-
-    `blip_filter` is injected (not fixed here) because the three callers
-    genuinely use different filters -- windowed `_median_filter_columns`
-    with RS-column exclusion (Analysis), the engine's `CausalMedianN`
-    (saved/training-data) -- forcing them onto one filter implementation
-    would be a bigger, unwanted change than fixing the ordering bug calls
-    for. What every caller DOES share, and what actually drifted apart
-    before, is the sequence and the trim count -- that's what's centralized
-    here. Pass a pass-through filter (`lambda x: x`) for a disabled-filter
-    caller; do not skip this call entirely, or the trim silently stops
-    happening too.
-
-    `values` has samples on axis 0 (1D or 2D, one call covers a whole
-    multi-column block). Returns (processed, trim_count) -- the caller must
-    apply the same trim_count to every companion array (timestamps, force
-    columns, ...) that isn't itself passed through blip_filter, so they stay
-    aligned with the returned array.
-    """
-    values = np.asarray(values)
-    filtered = blip_filter(values)
-    trim_count = min(capture_start_settle_sample_count(sample_rate_hz), filtered.shape[0] - 1)
-    trim_count = max(trim_count, 0)
-    return filtered[trim_count:], trim_count

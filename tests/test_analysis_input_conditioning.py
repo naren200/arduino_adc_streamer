@@ -1,4 +1,4 @@
-"""Snapshot loaders stamp which conditioning (median / settle trim) they already applied."""
+"""Snapshot loaders stamp which conditioning (median) they already applied."""
 
 import os
 from pathlib import Path
@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 import data_processing.analysis_workbench as analysis
-from core.piezo_engine.baseline import capture_start_settle_sample_count
 from core.piezo_engine.pipeline import INPUT_CONDITIONING_METADATA_KEY
 
 RAW_DIR = Path(os.environ.get(
@@ -28,11 +27,11 @@ def _snapshot() -> analysis.AnalysisSourceSnapshot:
 
 
 @pytest.mark.parametrize("kwargs, expected", [
-    ({"enabled": True, "window": 3}, {"median_window_samples": 3, "settle_trimmed_samples": 0}),
-    ({"enabled": True, "window": 4}, {"median_window_samples": 5, "settle_trimmed_samples": 0}),
-    ({"enabled": False}, {"median_window_samples": None, "settle_trimmed_samples": 0}),
+    ({"enabled": True, "window": 3}, {"median_window_samples": 3}),
+    ({"enabled": True, "window": 4}, {"median_window_samples": 5}),
+    ({"enabled": False}, {"median_window_samples": None}),
 ])
-def test_in_memory_loader_stamps_median_window_and_no_settle(kwargs, expected):
+def test_in_memory_loader_stamps_median_window(kwargs, expected):
     snapshot = analysis._load_filtered_snapshot(_snapshot(), **kwargs)
     assert snapshot.metadata[INPUT_CONDITIONING_METADATA_KEY] == expected
 
@@ -40,11 +39,10 @@ def test_in_memory_loader_stamps_median_window_and_no_settle(kwargs, expected):
 @pytest.mark.parametrize("kwargs, expected_window", [
     ({}, 3), ({"blip_filter_window_samples": 5}, 5), ({"blip_filter_enabled": False}, None),
 ])
-def test_csv_loader_stamps_median_window_and_settle_trim(kwargs, expected_window):
+def test_csv_loader_stamps_median_window_and_keeps_every_row(kwargs, expected_window):
     csv_path = RAW_DIR / f"{CAPTURE}.csv"
     if not csv_path.exists():
         pytest.skip("training capture not available")
     snapshot = analysis.load_exported_csv_snapshot(csv_path, RAW_DIR / f"{CAPTURE}_metadata.json", **kwargs)
-    record = snapshot.metadata[INPUT_CONDITIONING_METADATA_KEY]
-    assert record["median_window_samples"] == expected_window
-    assert record["settle_trimmed_samples"] == capture_start_settle_sample_count(snapshot.sample_rate_hz)
+    assert snapshot.metadata[INPUT_CONDITIONING_METADATA_KEY] == {"median_window_samples": expected_window}
+    assert len(snapshot.timestamps_s) == len(snapshot.data)

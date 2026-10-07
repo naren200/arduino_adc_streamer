@@ -25,7 +25,6 @@ def test_to_dict_is_json_safe_and_canonical():
     assert payload["timing"] == {
         "mode": "auto", "leak_dt_s": LEAK_DT_S, "pre_sample_decay_s_by_label": DECAY_BY_LABEL,
     }
-    assert payload["capture_start_settle_s"] == 0.4
 
 
 def test_equal_configs_compare_equal_a_changed_field_does_not_and_a_dict_round_trip_is_equal():

@@ -14,7 +14,6 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Mapping
 
-from core.piezo_engine.baseline import CAPTURE_START_SETTLE_S
 from core.piezo_engine.force_integrator import (
     PztChannelPhysicalParams,
     pzt_capacitance_to_farads,
@@ -36,7 +35,7 @@ DEFAULT_JERK_INTEGRATION_WINDOW_SAMPLES = 22
 # smoothing the raw Normal Jerk signal the shear is subtracted from.
 SHEAR_JERK_SMOOTHING_WINDOW_SAMPLES = 6
 DEFAULT_VREF_VOLTAGE = 3.3
-ENGINE_CONFIG_SCHEMA_VERSION = 3
+ENGINE_CONFIG_SCHEMA_VERSION = 4
 
 
 class TimingMode(str, Enum):
@@ -261,13 +260,12 @@ class EngineConfig:
 
     @property
     def leading_warmup_samples(self) -> int:
-        """Leading post-settle samples every output channel drops: the longest
+        """Leading samples every output channel drops: the longest
         window-sum stage is only fully filled after ``window - 1`` samples."""
         return max(self.integration_window_samples, self.jerk_window_samples) - 1
 
     def to_dict(self) -> dict:
-        """JSON-safe canonical form. Includes the capture-start settle duration
-        (a module constant, not a field) because it changes every output."""
+        """JSON-safe canonical form."""
         return {
             "schema_version": ENGINE_CONFIG_SCHEMA_VERSION,
             "blip_window_samples": int(self.blip_window_samples),
@@ -275,7 +273,6 @@ class EngineConfig:
             "jerk_window_samples": int(self.jerk_window_samples),
             "smoothing_window_samples": int(self.smoothing_window_samples),
             "vref_voltage": float(self.vref_voltage),
-            "capture_start_settle_s": float(CAPTURE_START_SETTLE_S),
             "timing": self.timing.to_dict(),
             "force": self.force.to_dict(),
             "compute_force": bool(self.compute_force),
@@ -283,12 +280,9 @@ class EngineConfig:
 
     @classmethod
     def from_dict(cls, record: Mapping) -> "EngineConfig":
-        """Inverse of :meth:`to_dict`; refuses a record written by another schema or
-        another capture-start settle duration (its numbers would not be this engine's)."""
+        """Inverse of :meth:`to_dict`; refuses a record written by another schema."""
         if record.get("schema_version") != ENGINE_CONFIG_SCHEMA_VERSION:
             raise ValueError(f"engine config schema {record.get('schema_version')!r} != {ENGINE_CONFIG_SCHEMA_VERSION}")
-        if record.get("capture_start_settle_s") != float(CAPTURE_START_SETTLE_S):
-            raise ValueError("engine config was written with a different capture-start settle duration")
         return cls(
             blip_window_samples=record["blip_window_samples"],
             integration_window_samples=record["integration_window_samples"],

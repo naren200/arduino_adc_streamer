@@ -11,7 +11,7 @@ the two need different clocks).
 
 Owns:
   - The engine pipeline (core/piezo_engine/pipeline.py: median-N despike,
-    capture-start settle drop, "integrated"/shear-jerk/normal-jerk causal
+    "integrated"/shear-jerk/normal-jerk causal
     derivation, warmup drop). Feeding it in small incremental chunks or
     fewer/larger ones produces IDENTICAL numbers, which is what makes
     sharing it between live, replay and training valid in the first place.
@@ -144,15 +144,15 @@ class ContinuousSampleStore:
 
 
 class DerivedChannelPipeline:
-    """TouchID's adapter over ``PiezoEnginePipeline`` (median-N -> capture-start
-    settle -> derived channels -> warmup drop), keeping the two-call tick
+    """TouchID's adapter over ``PiezoEnginePipeline`` (median-N -> derived
+    channels -> warmup drop), keeping the two-call tick
     contract the GUI relies on: ``filter_raw`` (despiked, full-length, also
     feeds the Signal Stream plot and idle-baseline accumulation) then
-    ``process`` (settle + derived + warmup drop, outputs aligned with
+    ``process`` (derived + warmup drop, outputs aligned with
     timestamps).
 
     Live timing: the engine's force stage runs on the uniform ``i / fs`` grid of
-    the GLOBAL post-settle sample index (what training uses), so live timestamps
+    the GLOBAL sample index (what training uses), so live timestamps
     are deliberately NOT forwarded to it -- they are wall-clock based, can jitter or
     go backwards, and force integrates against them. A model whose features read no
     force sets ``EngineConfig.compute_force=False`` and the stage is skipped."""
@@ -175,7 +175,7 @@ class DerivedChannelPipeline:
         return self._engine.config
 
     def adopt_state_from(self, other: "DerivedChannelPipeline") -> None:
-        """Continue ``other``'s stream (median window, settle gate, derived sums and
+        """Continue ``other``'s stream (median window, derived sums and
         medians, force stage) instead of starting every stage cold."""
         self._engine.adopt_state_from(other._engine)
         self._raw_filtered_this_tick = other._raw_filtered_this_tick
@@ -189,14 +189,14 @@ class DerivedChannelPipeline:
         return filtered
 
     def process(self, channel_samples: dict, timestamps: np.ndarray, fs: float) -> tuple[dict, dict, np.ndarray]:
-        """Settle drop, derived channels and warmup drop for this tick's
+        """Derived channels and warmup drop for this tick's
         already-``filter_raw``ed chunk; returns (raw, derived, timestamps)
         trimmed together. Raises RuntimeError if filter_raw() was not called
         this tick first."""
         if not self._raw_filtered_this_tick:
             raise RuntimeError(
                 "push_chunk called without a matching filter_raw() call this tick -- "
-                "the capture-start settle trim assumes raw was already blip-filtered"
+                "process assumes raw was already blip-filtered"
             )
         self._raw_filtered_this_tick = False
         result = self._engine.process_filtered(channel_samples, sample_rate_hz=fs)
@@ -293,7 +293,7 @@ class TouchIdStreamProcessor:
 
     def adopt_engine_state_from(self, other: "TouchIdStreamProcessor") -> None:
         """Continue ``other``'s sample stream: its whole engine state (median window,
-        settle gate, bounded sums, causal medians, force stage) stays valid across a
+        bounded sums, causal medians, force stage) stays valid across a
         window/hop resize because the raw stream is unbroken (gui/inference_panel.py's
         _rebuild_touchid_buffers). The windowing/queue state is NOT taken over."""
         self._derived_pipeline.adopt_state_from(other._derived_pipeline)
@@ -349,15 +349,12 @@ class TouchIdStreamProcessor:
         seen live for that exact recording, reproducing identical
         segmentation decisions.
 
-        Leading samples are dropped by the engine pipeline, in this order:
-        the session's first capture_start_settle_sample_count(fs) raw samples
-        (mux/analog settling) BEFORE the derived stage sees them, then the
-        engine's common window-fill warmup (config.leading_warmup_samples,
-        max(integration, jerk window) - 1 = 29)
-        from its outputs -- so a fresh stream loses settle + warmup samples
-        in total (640 at 1527 Hz), the same as training. Sources already
-        median-filtered / settle-trimmed upstream (Analysis snapshot replay)
-        declare it via ``input_conditioning`` so neither stage runs twice.
+        Leading samples are dropped by the engine pipeline: the engine's common
+        window-fill warmup (config.leading_warmup_samples,
+        max(integration, jerk window) - 1 = 29) is dropped from its outputs, the
+        same as training. Sources already median-filtered upstream (Analysis
+        snapshot replay) declare it via ``input_conditioning`` so the median
+        does not run twice.
         """
         channel_samples, derived, timestamps = self._derived_pipeline.process(
             channel_samples, timestamps, fs,

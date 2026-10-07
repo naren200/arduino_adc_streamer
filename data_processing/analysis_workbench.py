@@ -28,7 +28,7 @@ from constants.pzt_blip_filter import (
 )
 from constants.shear import SHEAR_SENSOR_POSITIONS
 from data_processing.adc_filter_engine import ADCFilterEngine
-from core.piezo_engine.baseline import preprocess_capture_start, total_warmup_sample_count
+from core.piezo_engine.baseline import total_warmup_sample_count
 from core.piezo_engine.config import EngineConfig, ForceSettings, TimingMode, TimingPolicy
 from core.piezo_engine.force_stage import ForceStage
 from core.piezo_engine.median import CausalMedianN
@@ -138,13 +138,13 @@ def _load_filtered_snapshot(
     every downstream consumer. A filter failure leaves the snapshot's raw
     data intact with a warning, instead of failing the whole load.
     """
-    snapshot.metadata[INPUT_CONDITIONING_METADATA_KEY] = conditioning_record(None, 0)
+    snapshot.metadata[INPUT_CONDITIONING_METADATA_KEY] = conditioning_record(None)
     if not enabled:
         return snapshot
     try:
         normalized_window = normalize_pzt_blip_filter_window(window)
         snapshot.data = _apply_pzt_blip_filter(snapshot, snapshot.data, normalized_window)
-        snapshot.metadata[INPUT_CONDITIONING_METADATA_KEY] = conditioning_record(normalized_window, 0)
+        snapshot.metadata[INPUT_CONDITIONING_METADATA_KEY] = conditioning_record(normalized_window)
     except Exception as exc:
         warnings = snapshot.metadata.setdefault("analysis_warnings", [])
         if not isinstance(warnings, list):
@@ -337,8 +337,6 @@ def load_exported_csv_snapshot(
     applied_median_window: list[int] = []
 
     def _blip_filter(values: np.ndarray) -> np.ndarray:
-        # Pass-through when disabled -- preprocess_capture_start must still
-        # be called (not skipped) so the settle trim keeps happening.
         if not blip_filter_enabled:
             return values
         try:
@@ -354,25 +352,10 @@ def load_exported_csv_snapshot(
             warnings.append(f"PZT blip filter skipped: {exc}")
             return values
 
-    # data_mod.preprocess_capture_start is the sole authority for the
-    # blip-filter-then-settle-trim ORDER and the trim count -- shared with
-    # drag_detection_utils_v1.load_calibration_csv and
-    # TouchIdStreamProcessor.push_chunk, so this can't drift out of sequence
-    # again the way it already did once (see its docstring for what broke).
-    snapshot.data, settle_count = preprocess_capture_start(
-        snapshot.data, snapshot.sample_rate_hz, blip_filter=_blip_filter,
-    )
+    snapshot.data = _blip_filter(snapshot.data)
     snapshot.metadata[INPUT_CONDITIONING_METADATA_KEY] = conditioning_record(
-        applied_median_window[0] if applied_median_window else None, settle_count,
+        applied_median_window[0] if applied_median_window else None,
     )
-    if settle_count > 0:
-        snapshot.timestamps_s = snapshot.timestamps_s[settle_count:]
-        if snapshot.force_x_n.size:
-            snapshot.force_x_n = snapshot.force_x_n[settle_count:]
-        if snapshot.force_z_n.size:
-            snapshot.force_z_n = snapshot.force_z_n[settle_count:]
-        if snapshot.force_timestamps_s.size:
-            snapshot.force_timestamps_s = snapshot.force_timestamps_s[settle_count:]
     return snapshot
 
 
@@ -742,8 +725,8 @@ def build_force_based_shear_normal_traces(
 ) -> list[AnalysisTrace]:
     """Shear Force L/R, Shear Force T/B and Normal Force traces from the engine's ``ForceStage``.
 
-    The snapshot columns are already conditioned (median-filtered and settle-trimmed
-    by the loader), so they go straight into the force stage with the snapshot's own
+    The snapshot columns are already median-filtered
+    by the loader, so they go straight into the force stage with the snapshot's own
     timestamps; the stage is used untrimmed, so the traces span every snapshot row
     (the force path has no warmup trim). Needs all five C/L/R/T/B positions and valid
     numeric PZT force settings; independent of the Jerk display checkboxes.

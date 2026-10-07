@@ -5,7 +5,6 @@ import time
 import numpy as np
 import pytest
 
-from core.piezo_engine.baseline import capture_start_settle_sample_count
 from core.piezo_engine.config import EngineConfig, TimingMode, TimingPolicy
 from core.piezo_engine.pipeline import ALREADY_CONDITIONED_INPUT, PiezoEnginePipeline
 from test_piezo_engine_force_stage import assert_bit_equal, random_sizes, synthetic_counts
@@ -44,13 +43,12 @@ def _run(pipeline, stream, sizes, explicit_times=None) -> dict:
 
 # ---------------------------------------------------------------- synthetic pipeline behaviour
 
-def test_all_outputs_are_bit_identical_across_chunkings_including_single_samples_and_the_settle_boundary():
+def test_all_outputs_are_bit_identical_across_chunkings_including_single_samples_and_the_warmup_boundary():
     n_samples = 4200
     stream = _synthetic_stream(n_samples, 1)
     whole = _run(PiezoEnginePipeline(SYNTHETIC_COLUMNS, CONTINUOUS_CONFIG), stream, [n_samples])
-    settle = capture_start_settle_sample_count(SYNTHETIC_FS)
     boundary_sizes = [1] * 450 + [n_samples - 450]
-    assert settle < 450 < settle + 60
+    assert CONTINUOUS_CONFIG.leading_warmup_samples < 450
     for sizes in (boundary_sizes, random_sizes(n_samples, 21), random_sizes(n_samples, 22)):
         chunked = _run(PiezoEnginePipeline(SYNTHETIC_COLUMNS, CONTINUOUS_CONFIG), stream, sizes)
         for name in whole:
@@ -58,12 +56,11 @@ def test_all_outputs_are_bit_identical_across_chunkings_including_single_samples
     assert np.abs(whole["normal_force"]).max() > 0.1 and np.abs(whole["shear_force_tb"]).max() > 0.05
 
 
-def test_explicit_timestamps_are_sliced_by_the_settle_drop_and_equal_the_default_grid_when_uniform():
+def test_explicit_timestamps_equal_the_default_grid_when_uniform():
     n_samples = 2500
     stream = _synthetic_stream(n_samples, 2)
     default = _run(PiezoEnginePipeline(SYNTHETIC_COLUMNS, CONTINUOUS_CONFIG), stream, [n_samples])
-    settle = capture_start_settle_sample_count(SYNTHETIC_FS)
-    explicit_times = (np.arange(n_samples) - settle) / SYNTHETIC_FS  # post-settle sample i sits at i / fs
+    explicit_times = np.arange(n_samples) / SYNTHETIC_FS
     explicit = _run(PiezoEnginePipeline(SYNTHETIC_COLUMNS, CONTINUOUS_CONFIG), stream, random_sizes(n_samples, 3), explicit_times)
     for name in default:
         assert_bit_equal(explicit[name], default[name], name)

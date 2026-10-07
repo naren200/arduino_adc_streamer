@@ -704,7 +704,7 @@ class InferencePanelMixin:
     ) -> TouchIdStreamProcessor:
         """Build a fresh TouchIdStreamProcessor at the current config/idle
         baseline. Pass `continue_from` (the previous processor) to carry its
-        whole engine state (median window, settle gate, bounded sums, causal
+        whole engine state (median window, bounded sums, causal
         medians, force stage) forward into the new processor instead of
         starting it fresh
         -- used by _rebuild_touchid_buffers (see its docstring for why a
@@ -714,8 +714,8 @@ class InferencePanelMixin:
         processor -- used by on_touchid_run_on_source_clicked to prefer a
         replay source's own "baseline"-labeled samples over the live/global
         one. Pass `input_conditioning` when the fed samples were already
-        median-filtered and/or settle-trimmed upstream (Analysis snapshot
-        replay), so the engine does not apply those stages a second time."""
+        median-filtered upstream (Analysis snapshot replay), so the
+        engine does not apply the median a second time."""
         engine_config = self._touchid_engine_config()
         processor = TouchIdStreamProcessor(
             pzt_columns=self.touchid_config.pzt_columns,
@@ -1180,9 +1180,8 @@ class InferencePanelMixin:
         # live-captured global baseline.
         replay_baseline = self._touchid_file_idle_baseline(snapshot, channel_indices, fs)
         self._touchid_replay_idle_baseline = replay_baseline
-        # The snapshot loader records which of median / settle-trim it already
-        # applied; the engine runs only the stages that were not (no stamp
-        # means raw).
+        # The snapshot loader records whether it already applied the median;
+        # the engine runs it only if not (no stamp means raw).
         replay_conditioning = input_conditioning_from_record(
             snapshot.metadata.get(INPUT_CONDITIONING_METADATA_KEY),
         )
