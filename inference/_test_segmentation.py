@@ -9,7 +9,7 @@ Replays labeled texture_piezo captures through ActiveSampleQueue and checks:
   (c) a pure-idle capture produces zero (or near-zero) emitted windows.
 
 No pytest/test framework is configured in this repo (no pytest.ini/tests
-dir) -- this follows _bench_featurize.py's convention of a standalone
+dir) -- this is a standalone
 diagnostic script that prints PASS/FAIL.
 
 Run: python inference/_test_segmentation.py

@@ -58,15 +58,7 @@ class TouchIdClassifyWorker(QThread):
                 break
 
             try:
-                probs = classify_window(
-                    payload["window_adc"],
-                    payload["window_integrated"],
-                    payload["window_shear_jerk_lr"],
-                    payload["window_shear_jerk_tb"],
-                    payload["window_normal_jerk"],
-                    payload["fs"],
-                    payload["classifier"],
-                )
+                probs = classify_window(payload["window"], payload["classifier"])
                 self.result_ready.emit(probs, payload["window_ts"])
             except Exception as exc:
                 self.error_occurred.emit(str(exc))

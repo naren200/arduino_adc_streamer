@@ -8,7 +8,7 @@ returns both the extracted shear vector and residual signals with the lateral
 component removed.
 
 Dependencies:
-    Python math utilities and constants.shear.
+    Python math utilities and shear_constants.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import math
 from collections.abc import Mapping
 
-from constants.shear import (
+from core.piezo_engine.shear_constants import (
     SHEAR_DEFAULT_ANGLE_DEG,
     SHEAR_POSITION_BOTTOM,
     SHEAR_POSITION_CENTER,

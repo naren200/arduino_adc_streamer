@@ -10,11 +10,11 @@ from the snapshot's own sample clock -- see push_chunk's docstring for why
 the two need different clocks).
 
 Owns:
-  - CausalDerivedChannels (the "integrated"/shear-jerk/normal-jerk causal derivation --
-    see texture_piezo/src/causal_derived_channels.py's module docstring for
-    why feeding it in small incremental chunks or fewer/larger ones produces
-    IDENTICAL numbers, which is what makes sharing this class between live
-    and replay valid in the first place).
+  - The engine pipeline (core/piezo_engine/pipeline.py: median-N despike,
+    capture-start settle drop, "integrated"/shear-jerk/normal-jerk causal
+    derivation, warmup drop). Feeding it in small incremental chunks or
+    fewer/larger ones produces IDENTICAL numbers, which is what makes
+    sharing it between live, replay and training valid in the first place.
   - The RollingBuffer pair (fixed-grid fallback path, used only when no idle
     baseline has been captured yet -- see push_chunk).
   - The continuous raw+derived sample store + its trim/slice logic, feeding
@@ -31,45 +31,60 @@ processor policy), or any GUI/plotting state.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
 
 from .buffer import RollingBuffer
 
-from core.piezo_engine import baseline as data_mod
-from core.piezo_engine.streaming import CausalDerivedChannels
+from .live_channels import DEFAULT_CHANNELS, named_engine_channels, needs_force
+
+from core.piezo_engine.channel_names import FORCE_COLUMNS
+from core.piezo_engine.config import EngineConfig, EngineConfigMismatchError, TimingMode, TimingPolicy
+from core.piezo_engine.live_window import LiveWindow
+from core.piezo_engine.pipeline import PiezoEnginePipeline, InputConditioning, RAW_INPUT
 from core.texture_piezo.gating.window_config import ONSET_SKIP_S
 from core.texture_piezo.gating.quality_gate import IdleBaseline, MICRO_CHUNK_S
 from core.texture_piezo.gating.segmentation import ActiveSampleQueue
 from core.texture_piezo.gating.time_window import first_index_at_or_after
 
+# Engine for the live path when the loaded model declares no EngineConfig of its own
+# (every hand-crafted-feature runtime): continuous leak timing, no force stage -- those models read none.
+# A self-describing model supplies its own config.
+LIVE_ENGINE_CONFIG = EngineConfig(timing=TimingPolicy(mode=TimingMode.CONTINUOUS), compute_force=False)
+
+
+def resolve_live_engine_config(bundle_config: EngineConfig | None = None) -> EngineConfig:
+    """Loader hook: the EngineConfig the live path must run for a model bundle -- the
+    bundle's own config, or the placeholder ``LIVE_ENGINE_CONFIG`` without one."""
+    return LIVE_ENGINE_CONFIG if bundle_config is None else bundle_config
+
 
 class ContinuousSampleStore:
     """Owns the continuous raw+derived sample store used once an idle
-    baseline exists (the ActiveSampleQueue path) -- the 6 parallel arrays
-    (raw/integrated/shear_jerk_lr/shear_jerk_tb/normal_jerk/timestamps)
-    ActiveSampleQueue's absolute (start_idx, end_idx) index pairs reference,
-    plus the 3 index trackers (_store_base_abs/_store_next_abs/
-    _chunk_cursor_abs) needed to translate those absolute indices into
-    slices of the (periodically trimmed) arrays. Extracted unchanged from
-    TouchIdStreamProcessor -- see that class's docstring for how this fits
-    into push_chunk."""
+    baseline exists (the ActiveSampleQueue path): the raw sweeps the idle gate
+    reads, one array per requested ENGINE channel name (what a model's window is
+    cut from), and the timestamps -- all parallel -- plus the 3 index trackers
+    (_store_base_abs/_store_next_abs/_chunk_cursor_abs) needed to translate
+    ActiveSampleQueue's absolute indices into slices of the (periodically
+    trimmed) arrays.
 
-    def __init__(self, pzt_columns: list[str]) -> None:
+    ``channel_names`` are engine channel names (``channel_names.py``); every one of them
+    is trimmed and sliced in lockstep, so padding/short-window logic, which only moves
+    absolute indices, treats force like every other channel."""
+
+    def __init__(self, pzt_columns: list[str], channel_names: Sequence[str] = DEFAULT_CHANNELS) -> None:
         self.pzt_columns = list(pzt_columns)
+        self.channel_names = tuple(channel_names)
         self.reset()
 
     def reset(self) -> None:
         """(Re)initialize the store to empty -- called on construction and
         whenever the caller drops its ActiveSampleQueue (see
         TouchIdStreamProcessor._store_reset)."""
-        n_pzt = len(self.pzt_columns)
-        self._store_raw = np.empty((0, n_pzt))
-        self._store_integrated = np.empty((0, n_pzt))
-        self._store_shear_jerk_lr = np.empty(0)
-        self._store_shear_jerk_tb = np.empty(0)
-        self._store_normal_jerk = np.empty(0)
+        self._store_raw = np.empty((0, len(self.pzt_columns)))  # the idle gate's input, sensor-column order
+        self._store_channels = {name: np.empty(0) for name in self.channel_names}
         self._store_ts = np.empty(0)
         self._store_base_abs = 0  # abs index of store[0]
         self._store_next_abs = 0  # abs index just past the last appended sample
@@ -79,14 +94,11 @@ class ContinuousSampleStore:
         """Append this tick's newly-pushed raw+derived samples to the
         continuous store, in lockstep, at the running absolute index
         ActiveSampleQueue's yielded (start_idx, end_idx) pairs reference."""
-        pzt_columns = self.pzt_columns
-        raw = np.stack([channel_samples[col] for col in pzt_columns], axis=1)
-        integrated = np.stack([derived['integrated'][col] for col in pzt_columns], axis=1)
+        raw = np.stack([channel_samples[col] for col in self.pzt_columns], axis=1)
+        named = named_engine_channels(self.pzt_columns, channel_samples, derived, self.channel_names)
         self._store_raw = np.concatenate([self._store_raw, raw], axis=0)
-        self._store_integrated = np.concatenate([self._store_integrated, integrated], axis=0)
-        self._store_shear_jerk_lr = np.concatenate([self._store_shear_jerk_lr, derived['shear_jerk_lr']])
-        self._store_shear_jerk_tb = np.concatenate([self._store_shear_jerk_tb, derived['shear_jerk_tb']])
-        self._store_normal_jerk = np.concatenate([self._store_normal_jerk, derived['normal_jerk']])
+        for name, values in named.items():
+            self._store_channels[name] = np.concatenate([self._store_channels[name], values])
         self._store_ts = np.concatenate([self._store_ts, np.asarray(timestamps, dtype=np.float64)])
         self._store_next_abs += len(raw)
 
@@ -113,145 +125,105 @@ class ContinuousSampleStore:
             return
         trim_to_abs = self._store_base_abs + trim_n
         self._store_raw = self._store_raw[trim_n:]
-        self._store_integrated = self._store_integrated[trim_n:]
-        self._store_shear_jerk_lr = self._store_shear_jerk_lr[trim_n:]
-        self._store_shear_jerk_tb = self._store_shear_jerk_tb[trim_n:]
-        self._store_normal_jerk = self._store_normal_jerk[trim_n:]
+        self._store_channels = {name: values[trim_n:] for name, values in self._store_channels.items()}
         self._store_ts = self._store_ts[trim_n:]
         self._store_base_abs = trim_to_abs
 
     def slice(self, start_abs: int, end_abs: int):
         """Slice the continuous store at an absolute (start_idx, end_idx)
-        pair from ActiveSampleQueue -- returns (window_adc, window_integrated,
-        window_shear_jerk_lr, window_shear_jerk_tb, window_normal_jerk, window_ts), or None
-        if the range has already been trimmed out (shouldn't happen given
+        pair from ActiveSampleQueue -- returns ``(channels, window_ts)`` where
+        ``channels`` maps each requested engine channel name to its samples -- or
+        None if the range has already been trimmed out (shouldn't happen given
         trim()'s safety margin, but guarded rather than slicing garbage)."""
         if start_abs < self._store_base_abs:
             return None
         start_i = start_abs - self._store_base_abs
         end_i = end_abs - self._store_base_abs
-        return (
-            self._store_raw[start_i:end_i],
-            self._store_integrated[start_i:end_i],
-            self._store_shear_jerk_lr[start_i:end_i],
-            self._store_shear_jerk_tb[start_i:end_i],
-            self._store_normal_jerk[start_i:end_i],
-            self._store_ts[start_i:end_i],
-        )
+        channels = {name: values[start_i:end_i] for name, values in self._store_channels.items()}
+        return channels, self._store_ts[start_i:end_i]
 
 
 class DerivedChannelPipeline:
-    """Owns the CausalDerivedChannels instance, the per-column causal
-    median-3 raw despike filters, and the leading-warmup-sample drop logic
-    -- everything push_chunk needs to turn a freshly-arrived raw chunk into
-    a (possibly warmup-trimmed) derived chunk, before either windowing
-    branch sees it. Extracted unchanged from TouchIdStreamProcessor -- see
-    that class's docstring for how this fits into push_chunk."""
+    """TouchID's adapter over ``PiezoEnginePipeline`` (median-N -> capture-start
+    settle -> derived channels -> warmup drop), keeping the two-call tick
+    contract the GUI relies on: ``filter_raw`` (despiked, full-length, also
+    feeds the Signal Stream plot and idle-baseline accumulation) then
+    ``process`` (settle + derived + warmup drop, outputs aligned with
+    timestamps).
 
-    def __init__(self, pzt_columns: list[str]) -> None:
+    Live timing: the engine's force stage runs on the uniform ``i / fs`` grid of
+    the GLOBAL post-settle sample index (what training uses), so live timestamps
+    are deliberately NOT forwarded to it -- they are wall-clock based, can jitter or
+    go backwards, and force integrates against them. A model whose features read no
+    force sets ``EngineConfig.compute_force=False`` and the stage is skipped."""
+
+    def __init__(
+        self,
+        pzt_columns: list[str],
+        config: EngineConfig = LIVE_ENGINE_CONFIG,
+        input_conditioning: InputConditioning = RAW_INPUT,
+    ) -> None:
         self.pzt_columns = list(pzt_columns)
-
-        # Persistent streaming state for the "integrated"/shear-jerk/normal-jerk
-        # derived channels -- one instance for this pipeline's whole
-        # lifetime, .process()'d on each newly-pushed chunk so its bounded
-        # windowed sums and unbounded causal medians carry forward
-        # continuously instead of restarting every window.
-        self.derived_channels = CausalDerivedChannels(pzt_columns=self.pzt_columns)
-
-        # Persistent per-channel causal median-3 despike state -- the same
-        # single shared implementation texture_piezo's offline
-        # load_calibration_csv path uses (via the batch causal_median_filter_3
-        # wrapper), so live/replay raw is despiked identically to offline raw.
-        self._raw_filter = {col: data_mod._CausalMedian3() for col in self.pzt_columns}
-        # Fail-fast marker: push_chunk's settle trim assumes filter_raw()
-        # already ran on this tick's channel_samples (filter-then-trim is
-        # the enforced order everywhere else via preprocess_capture_start;
-        # filter_raw can't be folded into that same call here since its
-        # output also feeds the Signal Stream plot and idle-baseline
-        # accumulation, not just push_chunk) -- catch a caller that forgets
-        # the call or reorders it, instead of silently letting an unfiltered
-        # blip slip through.
+        self._engine = PiezoEnginePipeline(self.pzt_columns, config, input_conditioning=input_conditioning)
+        # Fail-fast marker: process() assumes filter_raw() already ran on this
+        # tick's channel_samples -- catch a caller that forgets or reorders
+        # the call, instead of silently letting an unfiltered blip slip in.
         self._raw_filtered_this_tick = False
 
+    @property
+    def engine_config(self) -> EngineConfig:
+        return self._engine.config
+
+    def adopt_state_from(self, other: "DerivedChannelPipeline") -> None:
+        """Continue ``other``'s stream (median window, settle gate, derived sums and
+        medians, force stage) instead of starting every stage cold."""
+        self._engine.adopt_state_from(other._engine)
+        self._raw_filtered_this_tick = other._raw_filtered_this_tick
+
     def filter_raw(self, channel_samples: dict) -> dict:
-        """Causal median-3 despike -- same _CausalMedian3 primitive/algorithm
-        texture_piezo's offline load_calibration_csv path uses, so live and
-        offline raw are despiked identically. Must be called ONCE per tick,
-        before channel_samples is used for anything else (the Signal Stream
-        plot, idle-baseline accumulation, AND push_chunk) -- callers must not
-        filter twice."""
-        filtered = {
-            col: np.array([self._raw_filter[col].push(v) for v in np.asarray(channel_samples[col]).reshape(-1)])
-            for col in self.pzt_columns
-        }
+        """Causal median-N despike (engine median stage). Must be called ONCE
+        per tick, before channel_samples is used for anything else -- callers
+        must not filter twice."""
+        filtered = self._engine.filter_raw(channel_samples)
         self._raw_filtered_this_tick = True
         return filtered
 
     def process(self, channel_samples: dict, timestamps: np.ndarray, fs: float) -> tuple[dict, dict, np.ndarray]:
-        """Advance the causal derived-channel state by exactly this newly-
-        pushed chunk, then drop the leading still-invalid warmup samples
-        (moving-sum window fill time and/or capture-start settle, whichever
-        is longer) from raw/derived/timestamps together, before either
-        windowing branch in push_chunk sees them -- see
-        TouchIdStreamProcessor.push_chunk's docstring for the full
-        rationale. Raises RuntimeError if filter_raw() was not called this
-        tick first."""
+        """Settle drop, derived channels and warmup drop for this tick's
+        already-``filter_raw``ed chunk; returns (raw, derived, timestamps)
+        trimmed together. Raises RuntimeError if filter_raw() was not called
+        this tick first."""
         if not self._raw_filtered_this_tick:
             raise RuntimeError(
                 "push_chunk called without a matching filter_raw() call this tick -- "
                 "the capture-start settle trim assumes raw was already blip-filtered"
             )
         self._raw_filtered_this_tick = False
-
-        samples_seen_before = self.derived_channels.samples_seen
-        derived = self.derived_channels.process(channel_samples, sample_rate_hz=fs)
-        warmup_sample_count = max(
-            self.derived_channels.warmup_sample_count,
-            data_mod.capture_start_settle_sample_count(fs),
-        )
-        warmup_remaining = max(0, warmup_sample_count - samples_seen_before)
-
+        result = self._engine.process_filtered(channel_samples, sample_rate_hz=fs)
+        derived = {
+            "integrated": dict(result.integrated),
+            "shear_jerk_lr": result.shear_jerk_lr,
+            "shear_jerk_tb": result.shear_jerk_tb,
+            "normal_jerk": result.normal_jerk,
+        }
+        if self.engine_config.compute_force:
+            derived["shear_force_lr"] = result.shear_force_lr
+            derived["shear_force_tb"] = result.shear_force_tb
+            derived["normal_force"] = result.normal_force
         timestamps = np.asarray(timestamps).reshape(-1)
-        drop_count = min(len(timestamps), warmup_remaining)
-        if drop_count:
-            channel_samples, derived, timestamps = self._drop_leading_warmup_samples(
-                channel_samples, derived, timestamps, drop_count
-            )
-
-        return channel_samples, derived, timestamps
-
-    @staticmethod
-    def _drop_leading_warmup_samples(
-        channel_samples: dict, derived: dict, timestamps: np.ndarray, drop_count: int,
-    ) -> tuple[dict, dict, np.ndarray]:
-        """Drop the same leading `drop_count` samples from raw, derived, and
-        timestamps together so every array a caller might zip stays aligned."""
-        trimmed_channel_samples = {
-            col: np.asarray(values).reshape(-1)[drop_count:] for col, values in channel_samples.items()
-        }
-        trimmed_derived = {
-            "integrated": {
-                col: np.asarray(values)[drop_count:] for col, values in derived["integrated"].items()
-            },
-            "shear_jerk_lr": np.asarray(derived["shear_jerk_lr"])[drop_count:],
-            "shear_jerk_tb": np.asarray(derived["shear_jerk_tb"])[drop_count:],
-            "normal_jerk": np.asarray(derived["normal_jerk"])[drop_count:],
-        }
-        return trimmed_channel_samples, trimmed_derived, timestamps[drop_count:]
+        return dict(result.raw), derived, timestamps[result.dropped_leading.total:]
 
 
 @dataclass
 class ReadyWindow:
     """One classifier-ready window, plus the bookkeeping the caller needs to
-    paint it and submit it. frag_id is None in the fixed-grid fallback branch
-    (no fragment concept there -- see _touchid_region_color_for_span's
-    docstring in gui/inference_panel.py for how callers use this)."""
+    paint it and submit it. ``window`` carries exactly the engine channels the
+    loaded model asked for, by name, at native length and the window's sample rate.
+    frag_id is None in the fixed-grid fallback branch (no fragment concept there --
+    see _touchid_region_color_for_span's docstring in gui/inference_panel.py for how
+    callers use this)."""
 
-    window_adc: np.ndarray
-    window_integrated: np.ndarray
-    window_shear_jerk_lr: np.ndarray
-    window_shear_jerk_tb: np.ndarray
-    window_normal_jerk: np.ndarray
+    window: LiveWindow
     window_ts: np.ndarray
     frag_id: int | None
 
@@ -269,34 +241,39 @@ class TouchIdStreamProcessor:
         span_stale_timeout_s: float,
         idle_baseline: IdleBaseline | None,
         onset_skip_s: float = ONSET_SKIP_S,
+        input_conditioning: InputConditioning = RAW_INPUT,
+        engine_config: EngineConfig = LIVE_ENGINE_CONFIG,
+        required_channels: Sequence[str] = DEFAULT_CHANNELS,
     ) -> None:
         self.pzt_columns = list(pzt_columns)
+        self.required_channels = tuple(required_channels)
         self.window_size_s = float(window_size_s)
         self.hop_size_s = float(hop_size_s)
         self.span_stale_timeout_s = float(span_stale_timeout_s)
         self.idle_baseline = idle_baseline
         self.onset_skip_s = float(onset_skip_s)
 
-        # Causal derivation + raw despike + warmup-drop logic (see
-        # DerivedChannelPipeline). self.derived_channels is exposed as a
-        # pass-through property below since existing callers (tests, GUI)
-        # already reach into processor.derived_channels directly.
-        self._derived_pipeline = DerivedChannelPipeline(pzt_columns=self.pzt_columns)
+        # Causal derivation + raw despike + warmup-drop logic (see DerivedChannelPipeline).
+        self._derived_pipeline = DerivedChannelPipeline(
+            pzt_columns=self.pzt_columns, config=engine_config, input_conditioning=input_conditioning,
+        )
+
+        if needs_force(self.required_channels) and not self.engine_config.compute_force:
+            raise EngineConfigMismatchError(
+                f"the model reads force channels {[n for n in self.required_channels if n in FORCE_COLUMNS]} but the "
+                "engine config has compute_force=False"
+            )
 
         self._last_sweep_ts: float | None = None
         self._reset_fixed_grid_buffers()
         self._store_reset()
 
     def _reset_fixed_grid_buffers(self) -> None:
-        """Fixed-grid fallback path (used only while idle_baseline is None).
-        _derived_buffer is a second RollingBuffer, pushed in lockstep with
-        _buffer on the same hop cadence, so get_window() on both together
-        yields perfectly aligned raw-ADC and derived-channel slices for one
-        window."""
-        n_pzt = len(self.pzt_columns)
-        self._buffer = RollingBuffer(n_channels=n_pzt, window_size_s=self.window_size_s, hop_size_s=self.hop_size_s)
-        self._derived_buffer = RollingBuffer(
-            n_channels=n_pzt + 3, window_size_s=self.window_size_s, hop_size_s=self.hop_size_s,
+        """Fixed-grid fallback path (used only while idle_baseline is None): one
+        RollingBuffer over the requested engine channels, so a window's channels are
+        aligned by construction."""
+        self._buffer = RollingBuffer(
+            n_channels=len(self.required_channels), window_size_s=self.window_size_s, hop_size_s=self.hop_size_s,
         )
 
     def _restart_windowing_if_timeline_broke(self, timestamps: np.ndarray) -> None:
@@ -311,26 +288,22 @@ class TouchIdStreamProcessor:
         self._last_sweep_ts = float(timestamps[-1])
 
     @property
-    def derived_channels(self) -> CausalDerivedChannels:
-        """Pass-through to the pipeline's CausalDerivedChannels instance --
-        kept as a public attribute since existing callers (tests,
-        gui/inference_panel.py) already reach into it directly, including
-        replacing it wholesale (gui/inference_panel.py's
-        _touchid_new_processor swaps in a caller-provided instance so its
-        causal state carries over across a config change), hence the
-        setter."""
-        return self._derived_pipeline.derived_channels
+    def engine_config(self) -> EngineConfig:
+        return self._derived_pipeline.engine_config
 
-    @derived_channels.setter
-    def derived_channels(self, value: CausalDerivedChannels) -> None:
-        self._derived_pipeline.derived_channels = value
+    def adopt_engine_state_from(self, other: "TouchIdStreamProcessor") -> None:
+        """Continue ``other``'s sample stream: its whole engine state (median window,
+        settle gate, bounded sums, causal medians, force stage) stays valid across a
+        window/hop resize because the raw stream is unbroken (gui/inference_panel.py's
+        _rebuild_touchid_buffers). The windowing/queue state is NOT taken over."""
+        self._derived_pipeline.adopt_state_from(other._derived_pipeline)
 
     def _store_reset(self) -> None:
         """(Re)initialize the continuous raw+derived sample store (used only
         once an idle baseline exists) and drop the ActiveSampleQueue built
         on top of it -- it's rebuilt lazily (see _ensure_active_queue) once a
         measured fs is available again."""
-        self._store = ContinuousSampleStore(pzt_columns=self.pzt_columns)
+        self._store = ContinuousSampleStore(pzt_columns=self.pzt_columns, channel_names=self.required_channels)
         self.active_queue: ActiveSampleQueue | None = None
 
     def _ensure_active_queue(self) -> None:
@@ -347,9 +320,9 @@ class TouchIdStreamProcessor:
         self._store._chunk_cursor_abs = self._store._store_next_abs
 
     def filter_raw(self, channel_samples: dict) -> dict:
-        """Causal median-3 despike -- same _CausalMedian3 primitive/algorithm
-        texture_piezo's offline load_calibration_csv path uses, so live and
-        offline raw are despiked identically. Must be called ONCE per tick,
+        """Causal median-N despike (the engine's CausalMedianN, the same stage
+        training uses), so live and offline raw are despiked identically.
+        Must be called ONCE per tick,
         before channel_samples is used for anything else (the Signal Stream
         plot, idle-baseline accumulation, AND push_chunk) -- callers must not
         filter twice."""
@@ -376,17 +349,15 @@ class TouchIdStreamProcessor:
         seen live for that exact recording, reproducing identical
         segmentation decisions.
 
-        The first data_mod.total_warmup_sample_count (moving-sum window fill
-        time) of any stream's derived channels are dropped here, before
-        either windowing branch sees them -- CausalDerivedChannels.process()
-        itself never trims (batch and streaming must return bit-identical,
-        un-opinionated output), so withholding the still-invalid leading
-        samples is this caller's job, the same as analysis_workbench.py's
-        batch trim. The session's first data_mod.CAPTURE_START_SETTLE_S is
-        dropped the same way (mux/analog settling at the very start of a
-        session, unrelated to the window-fill warmup above) -- whichever of
-        the two warmups is longer wins, via a single samples_seen-relative
-        cutoff.
+        Leading samples are dropped by the engine pipeline, in this order:
+        the session's first capture_start_settle_sample_count(fs) raw samples
+        (mux/analog settling) BEFORE the derived stage sees them, then the
+        engine's common window-fill warmup (config.leading_warmup_samples,
+        max(integration, jerk window) - 1 = 29)
+        from its outputs -- so a fresh stream loses settle + warmup samples
+        in total (640 at 1527 Hz), the same as training. Sources already
+        median-filtered / settle-trimmed upstream (Analysis snapshot replay)
+        declare it via ``input_conditioning`` so neither stage runs twice.
         """
         channel_samples, derived, timestamps = self._derived_pipeline.process(
             channel_samples, timestamps, fs,
@@ -396,46 +367,23 @@ class TouchIdStreamProcessor:
         self._restart_windowing_if_timeline_broke(timestamps)
 
         if self.idle_baseline is None:
-            return self._push_chunk_fixed_grid(channel_samples, derived, timestamps)
+            return self._push_chunk_fixed_grid(channel_samples, derived, timestamps, fs)
         return self._push_chunk_active_queue(channel_samples, derived, timestamps, fs, now_t)
 
     def _push_chunk_fixed_grid(
-        self, channel_samples: dict, derived: dict, timestamps: np.ndarray,
+        self, channel_samples: dict, derived: dict, timestamps: np.ndarray, fs: float,
     ) -> list[ReadyWindow]:
         """No baseline captured yet -- classify every window on the plain
         fixed window_size_s/hop_size_s grid unconditionally (matches
         is_window_quality's old no-op-without-a-baseline behavior)."""
-        pzt_columns = self.pzt_columns
-        derived_channel_samples = {f'integrated_{col}': derived['integrated'][col] for col in pzt_columns}
-        derived_channel_samples['shear_jerk_lr'] = derived['shear_jerk_lr']
-        derived_channel_samples['shear_jerk_tb'] = derived['shear_jerk_tb']
-        derived_channel_samples['normal_jerk'] = derived['normal_jerk']
-        self._buffer.push(channel_samples, timestamps)
-        self._derived_buffer.push(derived_channel_samples, timestamps)
-
+        named = named_engine_channels(self.pzt_columns, channel_samples, derived, self.required_channels)
+        self._buffer.push(named, timestamps)
         window = self._buffer.get_window()
         if window is None:
             return []
-        window_adc, window_ts = window
-        derived_window = self._derived_buffer.get_window()
-        if derived_window is None:
-            return []
-        derived_window_adc, _derived_ts = derived_window
-        n_pzt = len(pzt_columns)
-        window_integrated = derived_window_adc[:, :n_pzt]
-        window_shear_jerk_lr = derived_window_adc[:, n_pzt]
-        window_shear_jerk_tb = derived_window_adc[:, n_pzt + 1]
-        window_normal_jerk = derived_window_adc[:, n_pzt + 2]
-
-        return [ReadyWindow(
-            window_adc=window_adc,
-            window_integrated=window_integrated,
-            window_shear_jerk_lr=window_shear_jerk_lr,
-            window_shear_jerk_tb=window_shear_jerk_tb,
-            window_normal_jerk=window_normal_jerk,
-            window_ts=window_ts,
-            frag_id=None,
-        )]
+        stacked, window_ts = window
+        live_window = LiveWindow.from_stacked(stacked, self.required_channels, fs)
+        return [ReadyWindow(window=live_window, window_ts=window_ts, frag_id=None)]
 
     def _push_chunk_active_queue(
         self, channel_samples: dict, derived: dict, timestamps: np.ndarray, fs: float, now_t: float,
@@ -481,17 +429,8 @@ class TouchIdStreamProcessor:
             sliced = store.slice(start_abs, end_abs)
             if sliced is None:
                 continue
-            window_adc = sliced[0]
-            window_integrated, window_shear_jerk_lr, window_shear_jerk_tb, window_normal_jerk, window_ts = sliced[1:]
-            ready.append(ReadyWindow(
-                window_adc=window_adc,
-                window_integrated=window_integrated,
-                window_shear_jerk_lr=window_shear_jerk_lr,
-                window_shear_jerk_tb=window_shear_jerk_tb,
-                window_normal_jerk=window_normal_jerk,
-                window_ts=window_ts,
-                frag_id=frag_id,
-            ))
+            channels, window_ts = sliced
+            ready.append(ReadyWindow(window=LiveWindow(channels, fs), window_ts=window_ts, frag_id=frag_id))
 
         store.trim(queue, self.window_size_s, self.span_stale_timeout_s)
         return ready

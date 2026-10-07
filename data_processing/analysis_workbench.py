@@ -26,39 +26,21 @@ from constants.pzt_blip_filter import (
     PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES,
     normalize_pzt_blip_filter_window,
 )
-from constants.pzt_force import (
-    PZT_FORCE_DEFAULT_SETTINGS,
-    PZT_FORCE_PIC_COULOMB_TO_COULOMB,
-)
-from constants.shear import (
-    SHEAR_POSITION_BOTTOM,
-    SHEAR_POSITION_CENTER,
-    SHEAR_POSITION_LEFT,
-    SHEAR_POSITION_RIGHT,
-    SHEAR_POSITION_TOP,
-    SHEAR_SENSOR_POSITIONS,
-)
+from constants.shear import SHEAR_SENSOR_POSITIONS
 from data_processing.adc_filter_engine import ADCFilterEngine
-from core.piezo_engine.normal_force_calculator import NormalForceCalculator
-from core.piezo_engine.force_integrator import (
-    PztChannelPhysicalParams,
-    PztForceChannelIntegrator,
-    compute_pzt_force_rate_series,
-    pzt_capacitance_to_farads,
-    pzt_capacitance_value_for_position,
+from core.piezo_engine.baseline import preprocess_capture_start, total_warmup_sample_count
+from core.piezo_engine.config import EngineConfig, ForceSettings, TimingMode, TimingPolicy
+from core.piezo_engine.force_stage import ForceStage
+from core.piezo_engine.median import CausalMedianN
+from core.piezo_engine.overlay import JerkOverlayStage
+from core.piezo_engine.pipeline import INPUT_CONDITIONING_METADATA_KEY, conditioning_record
+from core.piezo_engine.timing import (
+    TimingEdgeInputs,
+    normalize_timing_mode,
+    read_block_timing_connected_time_s,
+    resolve_timing_policy,
 )
-from core.piezo_engine.shear_detector import ShearDetector
 from data_processing.signal_integrator import SignalIntegrator
-
-# texture_piezo is a sibling checkout, not a vendored copy of this repo (see
-# inference/_paths.py) -- reuse its own sys.path wiring instead of adding a
-# second one here.
-from inference._paths import TEXTURE_PIEZO_SRC  # noqa: F401  (import side effect: puts texture_piezo/src on sys.path)
-from data import (  # noqa: E402
-    IncrementalMedian,
-    preprocess_capture_start,
-    total_warmup_sample_count,
-)
 
 
 ANALYSIS_TIMESTAMP_COLUMNS = {"timestamp", "timestamp_s"}
@@ -156,12 +138,13 @@ def _load_filtered_snapshot(
     every downstream consumer. A filter failure leaves the snapshot's raw
     data intact with a warning, instead of failing the whole load.
     """
+    snapshot.metadata[INPUT_CONDITIONING_METADATA_KEY] = conditioning_record(None, 0)
     if not enabled:
         return snapshot
     try:
-        snapshot.data = _apply_pzt_blip_filter(
-            snapshot, snapshot.data, normalize_pzt_blip_filter_window(window),
-        )
+        normalized_window = normalize_pzt_blip_filter_window(window)
+        snapshot.data = _apply_pzt_blip_filter(snapshot, snapshot.data, normalized_window)
+        snapshot.metadata[INPUT_CONDITIONING_METADATA_KEY] = conditioning_record(normalized_window, 0)
     except Exception as exc:
         warnings = snapshot.metadata.setdefault("analysis_warnings", [])
         if not isinstance(warnings, list):
@@ -351,15 +334,18 @@ def load_exported_csv_snapshot(
         source_id=f"csv:{csv_path.resolve()}|json:{metadata_path.resolve()}",
         sample_rate_hz=_metadata_sample_rate_hz(metadata, data, timestamps),
     )
+    applied_median_window: list[int] = []
+
     def _blip_filter(values: np.ndarray) -> np.ndarray:
         # Pass-through when disabled -- preprocess_capture_start must still
         # be called (not skipped) so the settle trim keeps happening.
         if not blip_filter_enabled:
             return values
         try:
-            return _apply_pzt_blip_filter(
-                snapshot, values, normalize_pzt_blip_filter_window(blip_filter_window_samples),
-            )
+            window = normalize_pzt_blip_filter_window(blip_filter_window_samples)
+            filtered = _apply_pzt_blip_filter(snapshot, values, window)
+            applied_median_window[:] = [window]
+            return filtered
         except Exception as exc:
             warnings = snapshot.metadata.setdefault("analysis_warnings", [])
             if not isinstance(warnings, list):
@@ -375,6 +361,9 @@ def load_exported_csv_snapshot(
     # again the way it already did once (see its docstring for what broke).
     snapshot.data, settle_count = preprocess_capture_start(
         snapshot.data, snapshot.sample_rate_hz, blip_filter=_blip_filter,
+    )
+    snapshot.metadata[INPUT_CONDITIONING_METADATA_KEY] = conditioning_record(
+        applied_median_window[0] if applied_median_window else None, settle_count,
     )
     if settle_count > 0:
         snapshot.timestamps_s = snapshot.timestamps_s[settle_count:]
@@ -430,37 +419,9 @@ def prepare_analysis_data(
         traces.append(AnalysisTrace(label=label, x=x_base[:, column], y=y_values, group="signal"))
 
     force_traces = build_force_traces(snapshot, axis_mode)
-    pzt_leak_dt_s: float | None = None
-    pzt_pre_sample_decay_by_label: dict[str, float] = {}
-    try:
-        pzt_leak_dt_s, pzt_timing_status = resolve_analysis_pzt_mux_leak_dt_s(
-            snapshot,
-            pzt_force_settings or {},
-        )
-        pzt_pre_sample_decay_by_label = resolve_analysis_pzt_pre_sample_decay_dt_s(
-            snapshot,
-            pzt_force_settings or {},
-        )
-        if pzt_timing_status:
-            status_parts.append(pzt_timing_status)
-    except Exception as exc:
-        status_parts.append(f"PZT force timing skipped: {exc}")
-    resolved_flags = overlay_flags or {}
-    median_by_position: dict[str, np.ndarray] | None = None
-    if any(
-        bool(resolved_flags.get(key, False))
-        for key in ("shear_force", "normal_force", "shear", "normal", "baseline_removed")
-    ):
-        # Force's per-channel rate stage and the Shear/Normal Jerk overlay
-        # both causal-median-baseline the SAME raw per-position voltage --
-        # compute it once here and share it, instead of each side running
-        # its own independent _expanding_median over identical raw data.
-        resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
-        if resolved_positions is not None:
-            _position_channels, volts_by_position = resolved_positions
-            median_by_position = {
-                position: _expanding_median(volts) for position, volts in volts_by_position.items()
-            }
+    pzt_timing, timing_status = resolve_analysis_force_timing(snapshot, pzt_force_settings or {})
+    if timing_status:
+        status_parts.append(timing_status)
     try:
         force_traces.extend(
             build_force_based_shear_normal_traces(
@@ -469,12 +430,7 @@ def prepare_analysis_data(
                 axis_mode=axis_mode,
                 overlay_flags=overlay_flags or {},
                 vref_voltage=vref_voltage,
-                settings=ShearNormalForceSettings(
-                    pzt_force_settings=pzt_force_settings or {},
-                    leak_dt_s=pzt_leak_dt_s,
-                    pre_sample_decay_dt_s_by_label=pzt_pre_sample_decay_by_label,
-                ),
-                median_by_position=median_by_position,
+                settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings or {}, timing=pzt_timing),
             )
         )
     except Exception as exc:
@@ -488,84 +444,61 @@ def prepare_analysis_data(
         vref_voltage=vref_voltage,
         integration_window_samples=integration_window_samples,
         hpf_cutoff_hz=hpf_cutoff_hz,
-        median_by_position=median_by_position,
     )
     return AnalysisPreparedData(traces, force_traces, overlays, x_label, x_units, " | ".join(status_parts))
 
 
-def resolve_analysis_pzt_mux_leak_dt_s(
-    snapshot: AnalysisSourceSnapshot,
-    settings: Mapping[str, object],
-) -> tuple[float | None, str]:
-    """Resolve MUX-connected leak exposure for Shear Force / Normal Force.
+def resolve_analysis_timing(
+    snapshot: AnalysisSourceSnapshot, settings: Mapping[str, object],
+) -> tuple[TimingPolicy, str]:
+    """Resolve MUX leak timing for Shear Force / Normal Force with the engine's resolver.
 
-    Feeds ``_compute_shear_normal_from_channel_rate``'s per-channel RC-charge
-    rate stage. "PZT Channel Force" (the standalone per-channel display
-    feature this used to also gate/feed) has been removed; resolution is now
-    unconditional on ``settings["mux_timing_mode"]`` alone.
+    This is the Analysis edge of ``core.piezo_engine.timing``: it supplies the two
+    things only a snapshot knows -- the block-timing sidecar value (read next to the
+    capture CSV named by ``source_id``) and the snapshot's own sample rate -- and
+    returns the policy plus the status line shown in the Analysis tab.
     """
-    mode = _normalize_pzt_mux_timing_mode(settings.get("mux_timing_mode", "auto"))
-    if mode == "continuous":
-        return None, "PZT MUX timing: Continuous leak uses full trace dt."
-
-    if mode == "manual":
-        value = _optional_float(settings.get("mux_connected_time_s"))
-        if value is None or value <= 0.0:
-            raise ValueError("manual PZT MUX connected time must be greater than zero")
-        return float(value), f"PZT MUX timing: Manual {float(value) * 1000.0:.3f} ms."
-
-    if mode == "infer_from_total_sample_rate":
-        fs = float(snapshot.sample_rate_hz or _metadata_sample_rate_hz(snapshot.metadata, snapshot.data, snapshot.timestamps_s))
-        if fs <= 0.0:
-            raise ValueError("sample rate unavailable for inferred PZT MUX connected time")
-        value = 1.0 / fs
-        return value, f"PZT MUX timing: Inferred {value * 1000.0:.3f} ms from total sample rate."
-
-    value, source = _auto_pzt_mux_connected_time_s(snapshot)
-    if value is None or value <= 0.0:
-        raise ValueError("PZT MUX connected time unavailable; choose Manual or Infer from total sample rate")
-    return value, f"PZT MUX timing: Auto {value * 1000.0:.3f} ms from {source}."
+    edge = TimingEdgeInputs(
+        block_timing_connected_time_s=_block_timing_for_auto_mode(snapshot, settings),
+        sample_rate_hz=_snapshot_sample_rate_hz(snapshot) or None,
+    )
+    return resolve_timing_policy(snapshot.metadata, settings, edge)
 
 
-def resolve_analysis_pzt_pre_sample_decay_dt_s(
-    snapshot: AnalysisSourceSnapshot,
-    settings: Mapping[str, object],
-) -> dict[str, float]:
-    """Return exact per-label PZT pre-sample decay from the physical MUX map.
+def _block_timing_for_auto_mode(snapshot: AnalysisSourceSnapshot, settings: Mapping[str, object]) -> float | None:
+    """The sidecar is only consulted by AUTO timing; reading it in other modes would re-read a
+    possibly still-growing CSV on every re-render for nothing. An unknown mode raises in the resolver."""
+    try:
+        mode = normalize_timing_mode(settings.get("mux_timing_mode", TimingMode.AUTO.value))
+    except ValueError:
+        return None
+    if mode is not TimingMode.AUTO:
+        return None
+    return read_block_timing_connected_time_s(snapshot.metadata, _snapshot_capture_csv_path(snapshot))
 
-    Unknown mappings intentionally receive no correction; column position is
-    not a physical ADC-input mapping. Feeds Shear Force / Normal Force;
-    unconditional now that "PZT Channel Force" no longer gates it.
+
+def resolve_analysis_force_timing(
+    snapshot: AnalysisSourceSnapshot, settings: Mapping[str, object],
+) -> tuple[TimingPolicy, str]:
+    """:func:`resolve_analysis_timing`, but an unresolvable timing is a status message, not an error.
+
+    The force traces are still built then, with the continuous leak (full trace dt),
+    exactly as the tab always did.
     """
-    metadata = snapshot.metadata if isinstance(snapshot.metadata, Mapping) else {}
-    timing = metadata.get("timing", {}) if isinstance(metadata, Mapping) else {}
-    if not isinstance(timing, Mapping):
-        return {}
-    by_label_exact = timing.get("pzt_pre_sample_decay_s_by_label", {})
-    if isinstance(by_label_exact, Mapping):
-        result: dict[str, float] = {}
-        for label, value in by_label_exact.items():
-            try:
-                parsed = float(value)
-            except (TypeError, ValueError):
-                continue
-            if parsed >= 0.0:
-                result[str(label)] = parsed
-        if result:
-            return result
-    by_input = timing.get("pzt_pre_sample_decay_s_by_adc_input", {})
-    by_label = timing.get("pzt_adc_input_by_label", {})
-    if not isinstance(by_input, Mapping) or not isinstance(by_label, Mapping):
-        return {}
-    result: dict[str, float] = {}
-    for label, adc_input in by_label.items():
-        try:
-            value = float(by_input[str(int(adc_input))])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if value >= 0.0:
-            result[str(label)] = value
-    return result
+    try:
+        return resolve_analysis_timing(snapshot, settings)
+    except Exception as exc:
+        return TimingPolicy(mode=TimingMode.CONTINUOUS), f"PZT force timing skipped: {exc}"
+
+
+def _snapshot_capture_csv_path(snapshot: AnalysisSourceSnapshot) -> Path | None:
+    if not snapshot.source_id.startswith("csv:"):
+        return None
+    return Path(snapshot.source_id.split("|", 1)[0].removeprefix("csv:"))
+
+
+def _snapshot_sample_rate_hz(snapshot: AnalysisSourceSnapshot) -> float:
+    return float(snapshot.sample_rate_hz or _metadata_sample_rate_hz(snapshot.metadata, snapshot.data, snapshot.timestamps_s))
 
 
 def build_trace_x_axis(snapshot: AnalysisSourceSnapshot, axis_mode: str) -> tuple[np.ndarray, str, str]:
@@ -673,114 +606,6 @@ def filter_offline_data(snapshot: AnalysisSourceSnapshot, filter_settings: dict)
     return engine.filter_block(runtime, np.asarray(snapshot.data, dtype=np.float32).copy())
 
 
-def _expanding_median(values: np.ndarray) -> np.ndarray:
-    """Causal (past-only) running median.
-
-    Delegates to texture_piezo's ``data.IncrementalMedian`` -- the single
-    shared two-heap implementation TouchID's live/offline paths already use
-    (see ``inference/stream_processor.py``) -- instead of a second,
-    independently maintained copy of the same algorithm.
-    """
-    return IncrementalMedian().push_many(np.asarray(values, dtype=np.float64))
-
-
-def integrate_voltage_series_causal_median(
-    voltage_by_key: Mapping,
-    *,
-    integration_window_samples: int,
-    sample_rate_hz: float = 0.0,
-    mode: str = "sum",
-    return_centered: bool = False,
-    baseline_by_key: Mapping | None = None,
-) -> dict | tuple[dict, dict]:
-    """Shear/normal integration path: causal median baseline removal + a
-    moving rectangular reduction, mirroring the calibration notebook's shear
-    pipeline (``_causal_median_baseline`` in ``calibration_utils.py``)
-    instead of the HPF-based ``SignalIntegrator`` used for the generic
-    "Integration" overlay trace.
-
-    ``mode="sum"`` (default) is today's moving rectangular SUM -- an integral
-    that grows with window length, used unchanged by the Shear/Normal Jerk
-    overlay traces. ``mode="average"`` divides by the number of samples
-    actually included at each index, which keeps the output in the same
-    voltage scale as the input -- a smoothed voltage, not an accumulated
-    integral -- so it can be fed through exactly one downstream RC-charge
-    integration afterward without double-integrating.
-
-    The moving-sum window's own fill time (``window - 1`` samples) is
-    dropped from this function's own output, via
-    ``data.total_warmup_sample_count`` (the same helper TouchID's
-    ``CausalDerivedChannels`` uses, so the two paths can't drift apart).
-    Every caller gets already-warmed-up data with no separate trimming
-    step of their own; callers that plot
-    this against a shared x/time axis must drop the same leading samples
-    from that axis, via :func:`_causal_median_warmup_count`.
-
-    ``return_centered=True`` additionally returns the per-key, already-
-    warmup-trimmed ``raw - _expanding_median(raw)`` array computed
-    internally (pre-moving-window) as a second dict, so callers that need
-    to visualize/verify baseline removal use the EXACT SAME centered array
-    fed into this function's moving-window reduction, instead of a second,
-    independently recomputed ``_expanding_median`` call.
-
-    ``baseline_by_key``, when given, supplies an already-computed per-key
-    ``_expanding_median(raw)`` (UNTRIMMED -- same length as the raw series)
-    so a caller that also needs this same baseline elsewhere (e.g. the
-    Shear/Normal Force pipeline) can share one computation instead of each
-    side recomputing the causal median independently on the same raw
-    voltage. Falls back to computing it here when not given.
-    """
-    if mode not in ("sum", "average"):
-        raise ValueError(f"unsupported integrate_voltage_series_causal_median mode '{mode}'")
-    window = max(1, int(integration_window_samples))
-    warmup = _causal_median_warmup_count(sample_rate_hz, window)
-    result: dict = {}
-    centered_by_key: dict = {}
-    for key, raw_values in voltage_by_key.items():
-        raw = np.asarray(raw_values, dtype=np.float64).reshape(-1)
-        if raw.size == 0:
-            result[key] = np.empty(0, dtype=np.float64)
-            centered_by_key[key] = np.empty(0, dtype=np.float64)
-            continue
-
-        baseline = (
-            baseline_by_key[key]
-            if baseline_by_key is not None and key in baseline_by_key
-            else _expanding_median(raw)
-        )
-        centered = raw - baseline
-        centered_by_key[key] = centered[warmup:]
-
-        cumsum = np.concatenate([[0.0], np.cumsum(centered)])
-        end_idx = np.arange(len(centered))
-        start_idx = np.maximum(0, end_idx - window + 1)
-        window_sum = cumsum[end_idx + 1] - cumsum[start_idx]
-        if mode == "average":
-            window_counts = (end_idx - start_idx + 1).astype(np.float64)
-            values = window_sum / window_counts
-        else:
-            values = window_sum
-        result[key] = values[warmup:]
-
-    if return_centered:
-        return result, centered_by_key
-    return result
-
-
-def _causal_median_warmup_count(sample_rate_hz: float, integration_window_samples: int = 0) -> int:
-    """Leading samples a causal-median-baselined series must drop.
-
-    Thin wrapper around ``data.total_warmup_sample_count`` -- the single
-    source of truth for this number, shared with TouchID -- that fails soft
-    (returns the window-only warmup) when ``sample_rate_hz`` isn't known,
-    matching this file's existing convention for an unavailable overlay
-    sample rate (see ``_overlay_sample_rate_hz``).
-    """
-    if sample_rate_hz <= 0.0:
-        return max(0, int(integration_window_samples) - 1)
-    return total_warmup_sample_count(sample_rate_hz, integration_window_samples)
-
-
 def moving_window_warmup_count(integration_window_samples: int) -> int:
     """Leading sample count a ``integration_window_samples`` moving window drops.
 
@@ -790,18 +615,6 @@ def moving_window_warmup_count(integration_window_samples: int) -> int:
     series functions already dropped from their own output.
     """
     return max(0, int(integration_window_samples) - 1)
-
-
-def _trim_x_to_moving_window_warmup(window_samples: int, x: np.ndarray) -> np.ndarray:
-    """Drop the leading x/time samples that a moving-window series already dropped.
-
-    ``integrate_voltage_series_causal_median`` and the ``SignalIntegrator``
-    path (via :func:`integrate_voltage_series`) drop their own first
-    ``moving_window_warmup_count(window_samples)`` outputs internally (see
-    those functions' docstrings); the shared x/time axis plotted alongside
-    them must drop the same leading samples to stay aligned.
-    """
-    return x[moving_window_warmup_count(window_samples):]
 
 
 def build_overlay_traces(
@@ -814,7 +627,6 @@ def build_overlay_traces(
     vref_voltage: float,
     integration_window_samples: int,
     hpf_cutoff_hz: float,
-    median_by_position: Mapping[str, np.ndarray] | None = None,
 ) -> list[AnalysisTrace]:
     if not any(
         bool(overlay_flags.get(key, False))
@@ -850,58 +662,25 @@ def build_overlay_traces(
 
     # Shear/normal use a causal median baseline (matching the calibration
     # notebook's shear pipeline) rather than the HPF-based SignalIntegrator
-    # used for the generic "Integration" overlay trace below — a Butterworth
+    # used for the generic "Integration" overlay trace -- a Butterworth
     # high-pass filter here washed out the slow shear response.
-    sample_rate_hz = _overlay_sample_rate_hz(snapshot)
-    integrated, centered_by_position = integrate_voltage_series_causal_median(
-        volts_by_position,
-        integration_window_samples=integration_window_samples,
-        sample_rate_hz=sample_rate_hz,
-        return_centered=True,
-        baseline_by_key=median_by_position,
-    )
-
-    trimmed_x = x[_causal_median_warmup_count(sample_rate_hz, integration_window_samples):]
+    overlay = JerkOverlayStage(max(1, int(integration_window_samples))).push(volts_by_position)
+    trimmed_x = x[overlay.dropped_leading:]
     if overlay_flags.get("baseline_removed", False):
         for position in SHEAR_SENSOR_POSITIONS:
             overlays.append(
                 AnalysisTrace(
                     f"{position} Baseline Removed [V]",
                     trimmed_x,
-                    np.asarray(centered_by_position[position], dtype=np.float64),
+                    np.asarray(overlay.baseline_removed[position], dtype=np.float64),
                     "derived",
                 )
             )
-
-    if not any(bool(overlay_flags.get(key, False)) for key in ("shear", "normal")):
-        return overlays
-
-    shear_detector = ShearDetector()
-    normal_calculator = NormalForceCalculator()
-    shear_jerk_lr: list[float] = []
-    shear_jerk_tb: list[float] = []
-    normal_jerk: list[float] = []
-
-    # integrate_voltage_series_causal_median already dropped its own leading
-    # warmup samples -- every position's array is the same, already-trimmed
-    # length, shorter than snapshot.sweep_count.
-    trimmed_count = len(next(iter(integrated.values()))) if integrated else 0
-    for row_index in range(trimmed_count):
-        values = {
-            position: float(np.asarray(integrated[position], dtype=np.float64)[row_index])
-            for position in SHEAR_SENSOR_POSITIONS
-        }
-        shear = shear_detector.detect(values)
-        normal_result = normal_calculator.compute(shear.residual)
-        shear_jerk_lr.append(float(shear.b_lr))
-        shear_jerk_tb.append(float(shear.b_tb))
-        normal_jerk.append(float(normal_result.total_force))
-
     if overlay_flags.get("shear", False):
-        overlays.append(AnalysisTrace("Shear L/R Jerk [V]", trimmed_x, np.asarray(shear_jerk_lr, dtype=np.float64), "derived"))
-        overlays.append(AnalysisTrace("Shear T/B Jerk [V]", trimmed_x, np.asarray(shear_jerk_tb, dtype=np.float64), "derived"))
+        overlays.append(AnalysisTrace("Shear L/R Jerk [V]", trimmed_x, overlay.shear_jerk_lr, "derived"))
+        overlays.append(AnalysisTrace("Shear T/B Jerk [V]", trimmed_x, overlay.shear_jerk_tb, "derived"))
     if overlay_flags.get("normal", False):
-        overlays.append(AnalysisTrace("Normal Jerk [V]", trimmed_x, np.asarray(normal_jerk, dtype=np.float64), "derived"))
+        overlays.append(AnalysisTrace("Normal Jerk [V]", trimmed_x, overlay.normal_jerk, "derived"))
     return overlays
 
 
@@ -931,316 +710,25 @@ def _resolve_shear_position_channels_and_volts(
     return position_channels, volts_by_position
 
 
-def _shear_normal_channel_physical_params(
-    pzt_force_settings: Mapping[str, object], sensor_position: str,
-) -> PztChannelPhysicalParams:
-    """Per-position RC-charge physical constants for the Shear/Normal Force rate stage.
-
-    Mirrors ``_new_shear_normal_force_integrator``'s settings resolution so
-    the per-channel rate and the downstream combined-stage integrator agree
-    on capacitance/rleak/d33, but returns the plain physical-constants
-    dataclass ``compute_pzt_force_rate_series`` needs rather than a live
-    integrator.
-    """
-    supplied = dict(pzt_force_settings or {})
-    resolved = {**PZT_FORCE_DEFAULT_SETTINGS, **supplied}
-    capacitance_f = pzt_capacitance_to_farads(
-        pzt_capacitance_value_for_position(supplied, sensor_position),
-        str(resolved["capacitance_unit"]),
-    )
-    d33_c_per_n = float(resolved["d33_pc_per_n"]) * PZT_FORCE_PIC_COULOMB_TO_COULOMB
-    off_mux_raw = resolved.get("off_mux_rleak_ohm")
-    off_mux_rleak_ohm = (
-        float(off_mux_raw)
-        if bool(resolved.get("off_mux_leak_enabled", False)) and off_mux_raw not in (None, "")
-        else None
-    )
-    return PztChannelPhysicalParams(
-        capacitance_f=capacitance_f,
-        rleak_ohm=float(resolved["rleak_ohm"]),
-        d33_c_per_n=d33_c_per_n,
-        off_mux_rleak_ohm=off_mux_rleak_ohm,
-    )
-
-
-# Trailing-average window (samples) used only to smooth the per-channel dF
-# fed into shear detection -- suppresses noise in the shear estimate without
-# smoothing the raw Normal Jerk signal it's subtracted from.
-SHEAR_JERK_SMOOTHING_WINDOW_SAMPLES = 6
-
-
-def _trailing_moving_average(raw: np.ndarray, window: int) -> np.ndarray:
-    """Causal trailing average of ``raw`` over up to ``window`` past samples.
-
-    Index ``i`` averages samples ``max(0, i-window+1) .. i`` -- a partial,
-    shrinking window near the start rather than a dropped/NaN warmup -- so
-    the output is always the same length as the input.
-    """
-    cumsum = np.concatenate([[0.0], np.cumsum(raw)])
-    end_idx = np.arange(len(raw))
-    start_idx = np.maximum(0, end_idx - window + 1)
-    window_counts = (end_idx - start_idx + 1).astype(np.float64)
-    return (cumsum[end_idx + 1] - cumsum[start_idx]) / window_counts
-
-
-def _shear_normal_jerk_from_rates(
-    rate_by_position: dict[str, np.ndarray], window: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Combine per-channel raw dF rates into Shear/Normal Jerk.
-
-    Shear is detected from a ``window``-sample trailing average of each
-    outer channel's raw dF (to suppress noise in the shear estimate), but
-    that smoothed shear component is subtracted from the RAW instantaneous
-    dF at each position to produce Normal Jerk -- Normal Force itself stays
-    fully instantaneous/raw, only the shear removed from it is smoothed.
-    """
-    smoothed_rate_by_position = {
-        position: _trailing_moving_average(rate_by_position[position], window)
-        for position in (SHEAR_POSITION_LEFT, SHEAR_POSITION_RIGHT, SHEAR_POSITION_TOP, SHEAR_POSITION_BOTTOM)
-    }
-
-    shear_detector = ShearDetector()
-    normal_calculator = NormalForceCalculator()
-    sample_count = len(next(iter(rate_by_position.values()))) if rate_by_position else 0
-    shear_jerk_lr = np.zeros(sample_count, dtype=np.float64)
-    shear_jerk_tb = np.zeros(sample_count, dtype=np.float64)
-    normal_jerk = np.zeros(sample_count, dtype=np.float64)
-    for row_index in range(sample_count):
-        smoothed_values = {
-            position: float(smoothed_rate_by_position[position][row_index])
-            for position in (SHEAR_POSITION_LEFT, SHEAR_POSITION_RIGHT, SHEAR_POSITION_TOP, SHEAR_POSITION_BOTTOM)
-        }
-        smoothed_values[SHEAR_POSITION_CENTER] = float(rate_by_position[SHEAR_POSITION_CENTER][row_index])
-        shear = shear_detector.detect(smoothed_values)
-        residual = {
-            position: float(rate_by_position[position][row_index]) - shear.strain_vector[position]
-            for position in SHEAR_SENSOR_POSITIONS
-        }
-        normal_result = normal_calculator.compute(residual)
-        shear_jerk_lr[row_index] = shear.b_lr
-        shear_jerk_tb[row_index] = shear.b_tb
-        normal_jerk[row_index] = normal_result.total_force
-
-    return shear_jerk_lr, shear_jerk_tb, normal_jerk
-
-
 @dataclass(frozen=True, slots=True)
 class ShearNormalForceSettings:
-    """Bundled user/config settings for the Shear/Normal Force pipeline.
-
-    Covers only the true settings params shared by
-    ``_compute_shear_normal_from_channel_rate`` and
-    ``build_force_based_shear_normal_traces`` -- ``pzt_force_settings``,
-    ``leak_dt_s``, and ``pre_sample_decay_dt_s_by_label``. Deliberately
-    excludes ``median_by_position``: that is a computed numpy-array cache
-    shared with ``integrate_voltage_series_causal_median``, not user config,
-    so bundling it here would give this object two unrelated reasons to
-    change.
-    """
+    """Bundled user/config settings for the Shear/Normal Force traces: the Analysis
+    tab's PZT force settings mapping (resolved by ``ForceSettings.from_mapping``, partial
+    mappings resolve against the base profile) and the resolved MUX leak timing."""
 
     pzt_force_settings: Mapping[str, object]
-    leak_dt_s: float | None = None
-    pre_sample_decay_dt_s_by_label: Mapping[str, float] | None = None
+    timing: TimingPolicy
 
 
-def _compute_shear_normal_from_channel_rate(
-    snapshot: AnalysisSourceSnapshot,
-    data: np.ndarray,
-    *,
-    vref_voltage: float,
-    settings: ShearNormalForceSettings,
-    median_by_position: Mapping[str, np.ndarray] | None = None,
-) -> tuple[dict[str, tuple[int, str]], np.ndarray, np.ndarray, np.ndarray] | None:
-    """Per-channel physically-correct force-RATE ("jerk") pipeline for Shear/Normal Force.
+def _timing_for_labels(timing: TimingPolicy, labels: Iterable[str]) -> TimingPolicy:
+    """Keep only the pre-sample decay entries of the five force channels.
 
-    Each of the five C/L/R/T/B positions is baseline-centered with the same
-    causal expanding median Shear/Normal Jerk uses (``_expanding_median`` --
-    deliberately NOT PZT Channel Force's single scalar Vmid), then converted
-    to a per-sample RC-charge force RATE via
-    :func:`~core.piezo_engine.force_integrator.compute_pzt_force_rate_series`
-    using THAT position's own capacitance (center vs outer -- this is what
-    fixes Normal Force silently mixing the two) and MUX leak timing. This
-    stage is otherwise stateless: no hysteresis, no accumulation, no
-    natural-zero/reset. Only once these five physically comparable rate
-    series exist are they combined via ``ShearDetector``/
-    ``NormalForceCalculator`` -- the nonlinear event/reset machine never runs
-    per-channel, only once afterward on the combined result in
-    ``build_force_based_shear_normal_traces``. Returns ``None`` when the five
-    C/L/R/T/B positions aren't resolvable.
-
-    ``median_by_position``, when given, supplies an already-computed
-    per-position ``_expanding_median(raw_voltage)`` (UNTRIMMED -- same length
-    as ``raw_voltage``) so the caller can share one causal-median computation
-    with ``integrate_voltage_series_causal_median`` instead of each
-    recomputing it independently on the same raw voltage. Falls back to
-    computing it here when not given (e.g. Force enabled without Jerk/
-    baseline-removed this render).
+    Unknown mappings intentionally receive no correction (a metadata map may carry
+    other channels' labels), whereas the engine refuses a map that matches nothing.
     """
-    resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
-    if resolved_positions is None:
-        return None
-    position_channels, volts_by_position = resolved_positions
-
-    pre_sample_by_label = settings.pre_sample_decay_dt_s_by_label or {}
-    time_base_s = build_trace_time_axis_seconds(snapshot)
-    rate_by_position: dict[str, np.ndarray] = {}
-    for position in SHEAR_SENSOR_POSITIONS:
-        column, label = position_channels[position]
-        raw_voltage = np.asarray(volts_by_position[position], dtype=np.float64)
-        median = (
-            median_by_position[position]
-            if median_by_position is not None and position in median_by_position
-            else _expanding_median(raw_voltage)
-        )
-        centered = raw_voltage - median
-        time_s = np.asarray(time_base_s[:, column], dtype=np.float64) if time_base_s.size else np.empty(0)
-        rate_by_position[position] = compute_pzt_force_rate_series(
-            centered,
-            time_s,
-            _shear_normal_channel_physical_params(settings.pzt_force_settings, position),
-            leak_dt_s=settings.leak_dt_s,
-            pre_sample_decay_dt_s=pre_sample_by_label.get(label),
-        )
-
-    shear_jerk_lr, shear_jerk_tb, normal_jerk = _shear_normal_jerk_from_rates(
-        rate_by_position, SHEAR_JERK_SMOOTHING_WINDOW_SAMPLES
-    )
-
-    return position_channels, shear_jerk_lr, shear_jerk_tb, normal_jerk
-
-
-def _role_for_shear_normal_position(sensor_position: str) -> str:
-    """Map a Shear/Normal Force integrator's sensor position to its role.
-
-    Position "C" (center) feeds Normal Force; "L"/"T" (outer) feed the two
-    Shear Force components. Used to pick each integrator's own
-    ``shear_force_*``/``normal_force_*`` threshold settings below.
-    """
-    return "normal" if sensor_position == "C" else "shear"
-
-
-def _shear_normal_role_threshold(
-    supplied: Mapping[str, object],
-    resolved: Mapping[str, object],
-    role: str,
-    sub_key: str,
-    *,
-    legacy_shared_key: str | None = None,
-) -> float:
-    """Resolve a shear/normal-specific threshold, preferring an explicit caller override.
-
-    ``role_key`` is always ``{role}_force_{sub_key}`` (e.g.
-    ``normal_force_noise_threshold_n`` for ``sub_key="noise_threshold_n"``,
-    ``normal_force_zero_band_min_n`` for ``sub_key="zero_band_min_n"``) --
-    matching the actual key names in
-    ``constants.pzt_force.PZT_FORCE_DEFAULT_SETTINGS``.
-
-    Precedence: an explicitly supplied role-specific key wins; otherwise an
-    explicitly supplied ``legacy_shared_key`` (e.g. ``force_zero_band_min_n``,
-    or plain ``noise_threshold_n`` for a caller that only sets the pre-split
-    generic key) is honored, when the caller passes one; otherwise falls back
-    to the role-specific default. Note the generic ``noise_threshold_n``
-    fallback is NOT the same as the old pre-force-rate ``noise_threshold_v``
-    (a different, volt-scale quantity from when this stage's input was a
-    voltage rather than a force-rate) -- callers migrating an old saved
-    ``*_threshold_v`` value must do so explicitly before calling this (see
-    the Analysis panel's settings-load migration), not rely on this fallback
-    to bridge the unit change.
-    """
-    role_key = f"{role}_force_{sub_key}"
-    if role_key in supplied:
-        return float(supplied[role_key])
-    if legacy_shared_key is not None and legacy_shared_key in supplied:
-        return float(supplied[legacy_shared_key])
-    return float(resolved[role_key])
-
-
-def _new_shear_normal_force_integrator(
-    settings: Mapping[str, object], sensor_position: str,
-) -> PztForceChannelIntegrator:
-    """Build one independent RC-charge integrator for a Shear/Normal Force series.
-
-    Mirrors the settings resolution ``calculate_pzt_force_from_settings``
-    uses internally, but returns a live integrator instance instead of
-    running it over an array — the moving-average Shear/Normal series are
-    already centered, so they must never be re-centered by a second Vmid
-    estimate the way a fresh ``calculate_pzt_force_from_voltage`` call would.
-    Invalid capacitance/rleak/d33 raise via the integrator's own
-    ``__post_init__`` validation.
-
-    Noise threshold and zero-band thresholds are read from this integrator's
-    own ``shear_force_*``/``normal_force_*`` settings rather than the shared
-    ``noise_threshold_v``/``force_zero_band_min_n``/``force_zero_min_event_peak_n``
-    keys used by PZT Channel Force — Shear and Normal residuals differ enough
-    in typical magnitude that one shared volt/newton threshold isn't right
-    for both.
-
-    ``accumulate_raw=True``: the combined shear/normal jerk series fed to this
-    integrator is already a physically-converted force RATE (each channel's
-    own ``compute_pzt_force_rate_series`` output, linearly combined) — NOT a
-    voltage. Without this flag ``process_centered_sample`` would re-run the
-    RC charge-to-force formula on an already-converted value, a second
-    Farad/(Coulomb/Newton) conversion that is dimensionally wrong.
-
-    Units: ``shear_force_noise_threshold_n`` / ``normal_force_noise_threshold_n``
-    (renamed from the legacy ``*_threshold_v`` names — see
-    ``_legacy_shear_normal_noise_threshold_n`` for old-profile migration) and
-    ``*_zero_band_min_n`` / ``*_zero_min_event_peak_n`` in
-    ``constants.pzt_force`` are all newton-scale, matching what this
-    combined-stage integrator actually receives. The numeric defaults are
-    still placeholders pending real-capture calibration (see comments at
-    their definition) — the unit/naming mismatch is fixed, the actual
-    calibrated values are not.
-    """
-    supplied = dict(settings or {})
-    resolved = {**PZT_FORCE_DEFAULT_SETTINGS, **supplied}
-    role = _role_for_shear_normal_position(sensor_position)
-    capacitance_f = pzt_capacitance_to_farads(
-        pzt_capacitance_value_for_position(supplied, sensor_position),
-        str(resolved["capacitance_unit"]),
-    )
-    d33_c_per_n = float(resolved["d33_pc_per_n"]) * PZT_FORCE_PIC_COULOMB_TO_COULOMB
-    off_mux_raw = resolved.get("off_mux_rleak_ohm")
-    off_mux_rleak_ohm = (
-        float(off_mux_raw)
-        if bool(resolved.get("off_mux_leak_enabled", False)) and off_mux_raw not in (None, "")
-        else None
-    )
-    return PztForceChannelIntegrator(
-        capacitance_f=capacitance_f,
-        rleak_ohm=float(resolved["rleak_ohm"]),
-        d33_c_per_n=d33_c_per_n,
-        noise_threshold_v=_shear_normal_role_threshold(
-            supplied, resolved, role, "noise_threshold_n", legacy_shared_key="noise_threshold_n"
-        ),
-        off_mux_rleak_ohm=off_mux_rleak_ohm,
-        accumulate_raw=True,
-        force_zero_band_fraction=float(resolved["force_zero_band_fraction"]),
-        force_zero_band_min_n=_shear_normal_role_threshold(
-            supplied, resolved, role, "zero_band_min_n", legacy_shared_key="force_zero_band_min_n"
-        ),
-        force_zero_min_event_peak_n=_shear_normal_role_threshold(
-            supplied, resolved, role, "zero_min_event_peak_n", legacy_shared_key="force_zero_min_event_peak_n"
-        ),
-        quiet_hold_release_fraction=float(resolved["quiet_hold_release_fraction"]),
-        quiet_hold_clear_s=float(resolved["quiet_hold_clear_s"]),
-        stuck_force_failsafe_enabled=bool(resolved["stuck_force_failsafe_enabled"]),
-        stuck_force_quiet_hold_s=float(resolved["stuck_force_quiet_hold_s"]),
-        stuck_force_decay_tau_s=float(resolved["stuck_force_decay_tau_s"]),
-    )
-
-
-def _integrate_causal_series(
-    values: np.ndarray, time_s: np.ndarray, integrator: PztForceChannelIntegrator,
-) -> np.ndarray:
-    """Replay an already-centered scalar series through one RC integrator, causally."""
-    values = np.asarray(values, dtype=np.float64).reshape(-1)
-    times = np.asarray(time_s, dtype=np.float64).reshape(-1)
-    out = np.zeros(values.size, dtype=np.float64)
-    for index in range(values.size):
-        step = integrator.process_centered_sample(float(values[index]), float(times[index]))
-        out[index] = step.accumulated_force_n
-    return out
+    used = set(labels)
+    decay = {label: value for label, value in timing.pre_sample_decay_s_by_label.items() if label in used}
+    return TimingPolicy(mode=timing.mode, leak_dt_s=timing.leak_dt_s, pre_sample_decay_s_by_label=decay)
 
 
 def build_force_based_shear_normal_traces(
@@ -1251,74 +739,41 @@ def build_force_based_shear_normal_traces(
     overlay_flags: Mapping[str, bool],
     vref_voltage: float,
     settings: ShearNormalForceSettings,
-    median_by_position: Mapping[str, np.ndarray] | None = None,
 ) -> list[AnalysisTrace]:
-    """Combine per-channel force RATE, then integrate the combined result once each.
+    """Shear Force L/R, Shear Force T/B and Normal Force traces from the engine's ``ForceStage``.
 
-    Each of the five C/L/R/T/B channels is first converted to a physically
-    correct, per-channel force RATE (own capacitance, own MUX leak timing,
-    stateless -- see ``_compute_shear_normal_from_channel_rate``). Only after
-    those five are physically comparable are they combined into
-    shear-free Normal and the two shear components; each combined series is
-    then integrated through its OWN independent ``PztForceChannelIntegrator``
-    -- exactly one true (stateful, thresholded, resettable) integration stage
-    per output, applied to the combined signal rather than per channel. This
-    keeps the nonlinear event machine from ever seeing five independently
-    resetting channels, and keeps shear/normal separation from ever mixing
-    center and outer capacitance. Fully independent of "PZT Channel Force"
-    (its own accumulators) and of the Shear/Normal Jerk display checkboxes
-    (its own moving-sum voltage computation) -- only needs valid numeric PZT
-    force settings and all five C/L/R/T/B positions.
+    The snapshot columns are already conditioned (median-filtered and settle-trimmed
+    by the loader), so they go straight into the force stage with the snapshot's own
+    timestamps; the stage is used untrimmed, so the traces span every snapshot row
+    (the force path has no warmup trim). Needs all five C/L/R/T/B positions and valid
+    numeric PZT force settings; independent of the Jerk display checkboxes.
     """
     if not any(bool(overlay_flags.get(key, False)) for key in ("shear_force", "normal_force")):
         return []
 
-    computed = _compute_shear_normal_from_channel_rate(
-        snapshot, data,
-        vref_voltage=vref_voltage,
-        settings=settings,
-        median_by_position=median_by_position,
-    )
-    if computed is None:
+    resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
+    if resolved_positions is None:
         raise ValueError("Shear Force / Normal Force requires all five C/L/R/T/B channels")
-    position_channels, shear_jerk_lr, shear_jerk_tb, normal_jerk = computed
+    position_channels, volts_by_position = resolved_positions
+    labels_by_position = {position: label for position, (_column, label) in position_channels.items()}
 
+    config = EngineConfig(
+        timing=_timing_for_labels(settings.timing, labels_by_position.values()),
+        force=ForceSettings.from_mapping(settings.pzt_force_settings),
+        vref_voltage=vref_voltage,
+    )
     time_base_s = build_trace_time_axis_seconds(snapshot)
     row_time_s = time_base_s[:, 0] if time_base_s.size else np.empty(0, dtype=np.float64)
+    forces = ForceStage(labels_by_position, config).push(volts_by_position, row_time_s)
 
     x_matrix, _label, _units = build_trace_x_axis(snapshot, axis_mode)
-    center_column = position_channels["C"][0]
-    x = x_matrix[:, center_column] if x_matrix.size else np.empty(0, dtype=np.float64)
-
-    # The moving-sum window feeding shear_jerk_lr/tb/normal_jerk needs
-    # data.total_warmup_sample_count real samples to fill -- drop the still-
-    # invalid leading jerk samples BEFORE they reach the stateful Force
-    # integrator below, not after: that integrator is a causal accumulator,
-    # so a warmup-contaminated sample would otherwise get folded into its
-    # running force state even if the display were trimmed afterward.
-    warmup = _causal_median_warmup_count(_overlay_sample_rate_hz(snapshot))
-    shear_jerk_lr = shear_jerk_lr[warmup:]
-    shear_jerk_tb = shear_jerk_tb[warmup:]
-    normal_jerk = normal_jerk[warmup:]
-    row_time_s = row_time_s[warmup:]
-    x = x[warmup:]
-
-    normal_force = _integrate_causal_series(
-        normal_jerk, row_time_s, _new_shear_normal_force_integrator(settings.pzt_force_settings, "C")
-    )
-    shear_force_lr = _integrate_causal_series(
-        shear_jerk_lr, row_time_s, _new_shear_normal_force_integrator(settings.pzt_force_settings, "L")
-    )
-    shear_force_tb = _integrate_causal_series(
-        shear_jerk_tb, row_time_s, _new_shear_normal_force_integrator(settings.pzt_force_settings, "T")
-    )
-
+    x = x_matrix[:, position_channels["C"][0]] if x_matrix.size else np.empty(0, dtype=np.float64)
     traces: list[AnalysisTrace] = []
     if overlay_flags.get("shear_force", False):
-        traces.append(AnalysisTrace("Shear Force L/R [N]", x, shear_force_lr, "force"))
-        traces.append(AnalysisTrace("Shear Force T/B [N]", x, shear_force_tb, "force"))
+        traces.append(AnalysisTrace("Shear Force L/R [N]", x, forces.shear_force_lr, "force"))
+        traces.append(AnalysisTrace("Shear Force T/B [N]", x, forces.shear_force_tb, "force"))
     if overlay_flags.get("normal_force", False):
-        traces.append(AnalysisTrace("Normal Force [N]", x, normal_force, "force"))
+        traces.append(AnalysisTrace("Normal Force [N]", x, forces.normal_force, "force"))
     return traces
 
 
@@ -1377,10 +832,9 @@ def integrate_voltage_series(
 ) -> dict:
     """This is a single one-shot call over an entire loaded capture (a fresh
     ``SignalIntegrator`` every call, never carried across calls the way live
-    streaming usage of ``SignalIntegrator`` is), so -- like
-    ``integrate_voltage_series_causal_median`` -- it drops its own leading
-    warmup outputs before returning, rather than emitting partial-window
-    values from a cold start. Uses ``total_warmup_sample_count`` (the same
+    streaming usage of ``SignalIntegrator`` is), so -- like the engine's jerk
+    overlay -- it drops its own leading warmup outputs before returning,
+    rather than emitting partial-window values from a cold start. Uses ``total_warmup_sample_count`` (the same
     warmup the jerk-overlay traces already trim), not just
     ``moving_window_warmup_count`` -- the window-fill count alone left this
     trace's own baseline still visibly converging after the window filled,
@@ -1427,19 +881,14 @@ def _is_resistance_like_label(label: str) -> bool:
 def _median_filter_columns(raw_columns: np.ndarray, window: int) -> np.ndarray:
     """Offline causal median-of-N filter, one full-capture pass (no carried state).
 
-    Mirrors ``PztBlipFilterMixin._pzt_blip_filtered_columns`` in
-    ``pzt_blip_filter.py`` so isolated single-sample spikes are rejected the
-    same way here as during live binary ingest; the analysis workbench loads
-    a whole capture at once, so there is no cross-block history to carry.
+    Delegates to the engine's ``CausalMedianN`` (the same stage live and
+    training use) so isolated single-sample spikes are rejected identically
+    everywhere; the analysis workbench loads a whole capture at once, so one
+    call over the whole array is the whole stream.
     """
     window = normalize_pzt_blip_filter_window(window)
-    if raw_columns.shape[0] < window:
-        return raw_columns.copy()
-    windows = np.lib.stride_tricks.sliding_window_view(raw_columns, window, axis=0)
-    median = np.median(windows, axis=-1)
-    filtered = raw_columns.copy()
-    filtered[window - 1:] = median
-    return filtered
+    stage = CausalMedianN(window, n_columns=raw_columns.shape[1])
+    return stage.process(raw_columns).astype(raw_columns.dtype, copy=False)
 
 
 def _apply_pzt_blip_filter(
@@ -1792,117 +1241,6 @@ def _overlay_sample_rate_hz(snapshot: AnalysisSourceSnapshot) -> float:
         if diffs.size:
             return float(1.0 / np.median(diffs))
     return 0.0
-
-
-def _normalize_pzt_mux_timing_mode(value) -> str:
-    normalized = str(value or "auto").strip().lower().replace("-", "_").replace(" ", "_")
-    aliases = {
-        "infer": "infer_from_total_sample_rate",
-        "infer_from_rate": "infer_from_total_sample_rate",
-        "infer_from_sample_rate": "infer_from_total_sample_rate",
-        "total_sample_rate": "infer_from_total_sample_rate",
-        "continuous_leak": "continuous",
-    }
-    normalized = aliases.get(normalized, normalized)
-    if normalized not in {"auto", "manual", "infer_from_total_sample_rate", "continuous"}:
-        return "auto"
-    return normalized
-
-
-def _auto_pzt_mux_connected_time_s(snapshot: AnalysisSourceSnapshot) -> tuple[float | None, str]:
-    timing = snapshot.metadata.get("timing", {}) if isinstance(snapshot.metadata, dict) else {}
-    direct_value = _optional_float(snapshot.metadata.get("pzt_mux_connected_time_s")) if isinstance(snapshot.metadata, Mapping) else None
-    if direct_value is not None and direct_value > 0.0:
-        return direct_value, str(snapshot.metadata.get("pzt_mux_connected_time_source") or "metadata timing")
-    if isinstance(timing, Mapping):
-        value = _optional_float(timing.get("pzt_mux_connected_time_s"))
-        if value is not None and value > 0.0:
-            return value, str(timing.get("pzt_mux_connected_time_source") or "metadata timing")
-
-    calculated = _adc_mux_sensor_connected_time_s(snapshot.metadata)
-    if calculated is not None:
-        return calculated, "adc_mux_timing.calculated_timing.t_connected_us"
-
-    sidecar_value = _pzt_mux_connected_time_from_block_timing(snapshot)
-    if sidecar_value is not None and sidecar_value > 0.0:
-        return sidecar_value, "block_timing_csv avg_dt_us"
-
-    if isinstance(timing, Mapping):
-        value_us = _optional_float(timing.get("adc_active_sample_interval_us"))
-        source_key = "adc_active_sample_interval_us"
-        if value_us is None or value_us <= 0.0:
-            value_us = _optional_float(timing.get("arduino_sample_time_us"))
-            source_key = "arduino_sample_time_us"
-        if value_us is not None and value_us > 0.0:
-            return value_us / 1_000_000.0, f"metadata timing.{source_key}"
-    return None, ""
-
-
-def _adc_mux_sensor_connected_time_s(metadata: Mapping[str, object]) -> float | None:
-    """Read the calculated physical MUX connection duration from capture metadata."""
-    candidates = []
-    if isinstance(metadata, Mapping):
-        candidates.append(metadata.get("adc_mux_timing"))
-        timing = metadata.get("timing")
-        if isinstance(timing, Mapping):
-            candidates.append(timing.get("adc_mux_timing"))
-    for candidate in candidates:
-        if not isinstance(candidate, Mapping):
-            continue
-        calculated_timing = candidate.get("calculated_timing")
-        if not isinstance(calculated_timing, Mapping):
-            continue
-        value = _optional_float(calculated_timing.get("t_connected_us"))
-        if value is not None and value > 0.0:
-            return value / 1_000_000.0
-    return None
-
-
-def _pzt_mux_connected_time_from_block_timing(snapshot: AnalysisSourceSnapshot) -> float | None:
-    if not isinstance(snapshot.metadata, dict):
-        return None
-    candidate = snapshot.metadata.get("block_timing_csv")
-    timing = snapshot.metadata.get("timing", {})
-    if not candidate and isinstance(timing, Mapping):
-        candidate = timing.get("block_timing_csv")
-    if not candidate:
-        return None
-
-    sidecar_path = Path(str(candidate)).expanduser()
-    if not sidecar_path.is_absolute() and snapshot.source_id.startswith("csv:"):
-        try:
-            csv_part = snapshot.source_id.split("|", 1)[0]
-            csv_path = Path(csv_part.removeprefix("csv:"))
-            sidecar_path = csv_path.parent / sidecar_path
-        except Exception:
-            pass
-    if not sidecar_path.exists():
-        return None
-
-    values_us: list[float] = []
-    try:
-        with sidecar_path.open("r", encoding="utf-8", newline="") as handle:
-            reader = csv.DictReader(handle)
-            if reader.fieldnames and "avg_dt_us" in reader.fieldnames:
-                for row in reader:
-                    value = _optional_float(row.get("avg_dt_us"))
-                    if value is not None and value > 0.0:
-                        values_us.append(value)
-            else:
-                handle.seek(0)
-                positional = csv.reader(handle)
-                next(positional, None)
-                for row in positional:
-                    if len(row) > 3:
-                        value = _optional_float(row[3])
-                        if value is not None and value > 0.0:
-                            values_us.append(value)
-    except Exception:
-        return None
-
-    if not values_us:
-        return None
-    return float(np.median(np.asarray(values_us, dtype=np.float64))) / 1_000_000.0
 
 
 def _force_times(owner) -> np.ndarray:

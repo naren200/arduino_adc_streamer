@@ -34,7 +34,6 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from types import SimpleNamespace
 
 from inference._paths import TEXTURE_PIEZO_MODELS, TEXTURE_PIEZO_ROOT
 
@@ -167,28 +166,11 @@ def _candidates(model_type: str) -> list[ModelArtifacts]:
     return found
 
 
-def probe_config(artifacts: ModelArtifacts) -> SimpleNamespace:
-    """The minimal duck-typed config an ArchSpec.load() reads.
-
-    Deliberately not an InferenceConfig: InferenceConfig's own defaults call
-    back into discovery, so building one here to probe a candidate would
-    recurse.
-    """
-    config = SimpleNamespace(
-        class_names=list(DEFAULT_CLASS_NAMES),
-        scaler_path=str(artifacts.scaler_path) if artifacts.scaler_path else "",
-        raw_norm_stats_path=str(artifacts.raw_norm_stats_path) if artifacts.raw_norm_stats_path else "",
-        feature_names_path=str(artifacts.feature_names_path) if artifacts.feature_names_path else "",
-    )
-    setattr(config, f"{artifacts.model_type}_model_path", str(artifacts.checkpoint_path))
-    return config
-
-
 def _probe(artifacts: ModelArtifacts) -> str | None:
     from .architectures import ARCH_REGISTRY
 
     try:
-        ARCH_REGISTRY[artifacts.model_type].load(probe_config(artifacts), artifacts.version)
+        ARCH_REGISTRY[artifacts.model_type].load(artifacts, DEFAULT_CLASS_NAMES)
     except Exception as exc:  # noqa: BLE001 -- any failure means "not offerable"
         reason = f"{type(exc).__name__}: {str(exc).splitlines()[0]}"
         missing = [role for role in ARCH_SIDECAR_ROLES[artifacts.model_type] if getattr(artifacts, role) is None]

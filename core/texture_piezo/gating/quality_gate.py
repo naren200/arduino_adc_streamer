@@ -1,7 +1,7 @@
 """
 Idle Baseline + Per-Chunk Activity Test
 =========================================
-Ported from texture_piezo/src/touchid_inference/quality_gate.py for
+Ported from texture_piezo's former quality-gate module for
 arduino_adc_streamer standalone inference.
 
 Fits a per-channel mean/std "idle" baseline from a short no-contact capture
@@ -24,8 +24,8 @@ different noise floors) and the labeled only_wood_and_idle_v2 capture:
     noisier sessions). k=8 still flags ~96% of true-contact samples in the
     labeled wood capture, so it isn't so loose it misses real touches.
   - Gaps between labeled texture events are NOT clean idle (they contain
-    settle/creep dynamics -- see clip_windowing_utils_v1.py's own module
-    docstring) and were excluded from this validation for that reason.
+    settle/creep dynamics -- see the training repository's
+    clip-windowing module docstring) and were excluded from this validation for that reason.
 """
 
 from __future__ import annotations

@@ -5,10 +5,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 
-from core.texture_piezo.application.stream_processor import TouchIdStreamProcessor
+from core.texture_piezo.application.stream_processor import LIVE_ENGINE_CONFIG, TouchIdStreamProcessor
 from core.texture_piezo.gating.quality_gate import IdleBaseline
 
-import data as data_mod  # noqa: E402  (sys.path wired by core.texture_piezo.application.stream_processor's import above)
+from core.piezo_engine import baseline as data_mod
 
 PZT_COLUMNS = [f"PZT3_{c}" for c in "BLCRT"]
 
@@ -34,17 +34,14 @@ def _timestamps(start: float, n: int, fs: float) -> np.ndarray:
 
 
 def _warm_up(processor: TouchIdStreamProcessor, fs: float, t: float = 0.0) -> float:
-    """Push push_chunk's full leading-sample drop (max of
-    CausalDerivedChannels' own moving-sum window-fill warmup and the
-    session's capture-start settle trim -- see push_chunk's docstring)
+    """Push push_chunk's full leading-sample drop (the session's
+    capture-start settle trim PLUS the engine's common window-fill
+    warmup -- see push_chunk's docstring)
     through the processor with idle-valued samples before a test's real
     assertions, so those samples' own ready-window count isn't silently
     short by the drop that push_chunk applies. Returns the timestamp to
     resume pushing from."""
-    n = max(
-        data_mod.total_warmup_sample_count(fs, processor.derived_channels.jerk_window_samples),
-        data_mod.capture_start_settle_sample_count(fs),
-    )
+    n = LIVE_ENGINE_CONFIG.leading_warmup_samples + data_mod.capture_start_settle_sample_count(fs)
     processor.push_chunk(processor.filter_raw(_chunk(n, 0.0)), _timestamps(t, n, fs), fs, now_t=t)
     return t + n / fs
 
@@ -85,7 +82,7 @@ class FixedGridFallbackTests(unittest.TestCase):
         self.assertEqual(len(ready), 1)
         window = ready[0]
         self.assertIsNone(window.frag_id)
-        self.assertEqual(len(window.window_adc), 100)
+        self.assertEqual(window.window.n_samples, 100)
         self.assertEqual(len(window.window_ts), 100)
 
     def test_every_window_is_classified_unconditionally_even_when_flat_idle(self):
@@ -143,7 +140,7 @@ class ActiveSampleQueuePathTests(unittest.TestCase):
         self.assertGreater(len(ready), 0)
         for window in ready:
             self.assertIsNotNone(window.frag_id)
-            self.assertEqual(len(window.window_adc), 100)  # window_size_s=0.1 @ 1000Hz
+            self.assertEqual(window.window.n_samples, 100)  # window_size_s=0.1 @ 1000Hz
 
     def test_now_t_is_never_read_from_wall_clock(self):
         """A caller-supplied now_t far in the "past" (e.g. a replay's
@@ -197,7 +194,8 @@ class SameHopCadenceReproducibilityTests(unittest.TestCase):
         windows_b = self._run(baseline)
         self.assertEqual(len(windows_a), len(windows_b))
         for wa, wb in zip(windows_a, windows_b):
-            np.testing.assert_array_equal(wa.window_adc, wb.window_adc)
+            for name in wa.window.channels:
+                np.testing.assert_array_equal(wa.window.channels[name], wb.window.channels[name])
             np.testing.assert_array_equal(wa.window_ts, wb.window_ts)
             self.assertEqual(wa.frag_id, wb.frag_id)
 
@@ -252,10 +250,9 @@ class ChunkInvarianceTests(unittest.TestCase):
 
     def _assert_stores_equal(self, proc_whole, proc_split) -> None:
         np.testing.assert_array_equal(proc_whole._store._store_raw, proc_split._store._store_raw)
-        np.testing.assert_array_equal(proc_whole._store._store_integrated, proc_split._store._store_integrated)
-        np.testing.assert_array_equal(proc_whole._store._store_shear_jerk_lr, proc_split._store._store_shear_jerk_lr)
-        np.testing.assert_array_equal(proc_whole._store._store_shear_jerk_tb, proc_split._store._store_shear_jerk_tb)
-        np.testing.assert_array_equal(proc_whole._store._store_normal_jerk, proc_split._store._store_normal_jerk)
+        assert proc_whole._store._store_channels.keys() == proc_split._store._store_channels.keys()
+        for name, values in proc_whole._store._store_channels.items():
+            np.testing.assert_array_equal(values, proc_split._store._store_channels[name])
         np.testing.assert_array_equal(proc_whole._store._store_ts, proc_split._store._store_ts)
         self.assertEqual(proc_whole._store._store_base_abs, proc_split._store._store_base_abs)
         self.assertEqual(proc_whole._store._store_next_abs, proc_split._store._store_next_abs)
@@ -294,30 +291,22 @@ class ChunkInvarianceTests(unittest.TestCase):
 
         # Guard against the comparisons above going vacuous: the differential
         # channels must actually carry signal for this test to mean anything.
-        self.assertGreater(np.abs(proc_whole._store._store_shear_jerk_lr).max(), 0)
-        self.assertGreater(np.abs(proc_whole._store._store_shear_jerk_tb).max(), 0)
+        self.assertGreater(np.abs(proc_whole._store._store_channels['shear_jerk_lr']).max(), 0)
+        self.assertGreater(np.abs(proc_whole._store._store_channels['shear_jerk_tb']).max(), 0)
 
         self._assert_stores_equal(proc_whole, proc_split)
 
     def test_store_arrays_identical_when_warmup_itself_spans_the_chunk_boundary(self):
         """Same as above, but skips _warm_up -- the leading-sample warmup
-        drop (push_chunk's samples_seen_before-relative cutoff, see
-        _drop_leading_warmup_samples) happens inside a single push for the
+        drop (the pipeline's settle gate plus its samples_seen-relative
+        warmup cutoff) happens inside a single push for the
         whole run and is itself split across several small pushes for the
         split run. This is the exact logic moving into DerivedChannelPipeline
         in the refactor, so it needs its own chunk-invariance coverage."""
         baseline = _make_baseline()
         fs = 1000.0
         rng = np.random.default_rng(1)
-        warmup_n = max(
-            data_mod.total_warmup_sample_count(
-                fs, TouchIdStreamProcessor(
-                    pzt_columns=PZT_COLUMNS, window_size_s=0.1, hop_size_s=0.05,
-                    span_stale_timeout_s=1.0, idle_baseline=baseline,
-                ).derived_channels.jerk_window_samples,
-            ),
-            data_mod.capture_start_settle_sample_count(fs),
-        )
+        warmup_n = LIVE_ENGINE_CONFIG.leading_warmup_samples + data_mod.capture_start_settle_sample_count(fs)
         total_n = warmup_n + 150
         raw_by_col = self._per_column_signal(rng, total_n)
         ts_all = _timestamps(0.0, total_n, fs)
@@ -332,8 +321,8 @@ class ChunkInvarianceTests(unittest.TestCase):
         sizes.append(total_n - sum(sizes))
         self._push_as_chunks(proc_split, fs, ts_all, raw_by_col, sizes)
 
-        self.assertGreater(np.abs(proc_whole._store._store_shear_jerk_lr).max(), 0)
-        self.assertGreater(np.abs(proc_whole._store._store_shear_jerk_tb).max(), 0)
+        self.assertGreater(np.abs(proc_whole._store._store_channels['shear_jerk_lr']).max(), 0)
+        self.assertGreater(np.abs(proc_whole._store._store_channels['shear_jerk_tb']).max(), 0)
 
         self._assert_stores_equal(proc_whole, proc_split)
 

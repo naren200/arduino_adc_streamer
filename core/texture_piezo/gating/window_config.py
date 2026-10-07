@@ -1,7 +1,7 @@
 """
 Inference Config
 =================
-Ported from texture_piezo/src/touchid_inference/config.py for
+Ported from texture_piezo's former window-config module for
 arduino_adc_streamer standalone inference.
 
 Independent config surface for texture_piezo's inference-stage logic
@@ -10,7 +10,7 @@ partial_window_utils.fast_forward_extract_windows).
 
 Deliberately NOT read from configs/config.yaml -- that file's
 data.window_size_s/hop_size_s govern TRAINING/VALIDATION clip windowing
-(see clip_windowing_utils_v1.py) and are unrelated to how the live/offline
+(in the training repository) and are unrelated to how the live/offline
 inference pipeline windows a stream. The two are coincidentally similar in
 places (window=0.5s matches training here) but are not meant to be coupled;
 changing one must not silently change the other.

@@ -7,11 +7,10 @@ produce IDENTICAL numbers from identical input, by construction -- there is
 no separate "live" vs "offline" algorithm, only how much input each caller
 has accumulated so far.
 
-Ported math (unchanged): data.integrate_voltage_series_causal_median's
-bounded windowed sum (PZT-integration channels) and
-shear_normal_utils_v1.compute_shear_normal_series's windowed-mean-minus-
-causal-median centering + ShearDetector/NormalForceCalculator (shear/
-normal channels). Both are re-expressed here as O(1)-amortized-per-sample
+Ported math (unchanged): the bounded windowed sum of the PZT-integration
+channels and the windowed-mean-minus-causal-median centering +
+ShearDetector/NormalForceCalculator of the shear/normal channels (the
+former batch functions of texture_piezo's data / shear_normal_utils_v1). Both are re-expressed here as O(1)-amortized-per-sample
 streaming state (bounded ring buffers + running sums, plus
 data.IncrementalMedian for the unbounded causal median) instead of
 recomputing over ever-growing history on every call.
@@ -41,24 +40,20 @@ from core.piezo_engine.baseline import (
     total_warmup_sample_count,
 )
 from core.piezo_engine.batch import compute_shear_normal_batch
+from core.piezo_engine.config import (
+    DEFAULT_INTEGRATION_WINDOW_SAMPLES,
+    DEFAULT_JERK_INTEGRATION_WINDOW_SAMPLES,
+    DEFAULT_VREF_VOLTAGE,
+)
 
 # Rewired per task: these two classes now come from this repo's own
 # core/piezo_engine modules instead of texture_piezo's shear_normal_utils_v1.
+from core.piezo_engine.channel_names import CHANNEL_LABELS
 from core.piezo_engine.shear_detector import ShearDetector
 from core.piezo_engine.normal_force_calculator import NormalForceCalculator
 
-from constants.shear import SHEAR_SENSOR_POSITIONS as SENSOR_POSITIONS
+from core.piezo_engine.shear_constants import SHEAR_SENSOR_POSITIONS as SENSOR_POSITIONS
 
-# Ported from texture_piezo/src/data.py (DEFAULT_INTEGRATION_WINDOW_SAMPLES)
-# and shear_normal_utils_v1.py (DEFAULT_JERK_INTEGRATION_WINDOW_SAMPLES,
-# DEFAULT_VREF_VOLTAGE, IADC_RESOLUTION_BITS) as plain literals -- this repo
-# has its own `constants/pressure_map.py` copy of the first and
-# `constants/plotting.py` copy of the third, but they are duplicated here
-# rather than imported so this module's defaults can never drift if either
-# of those unrelated-purpose constants modules changes for its own reasons.
-DEFAULT_INTEGRATION_WINDOW_SAMPLES = 30
-DEFAULT_JERK_INTEGRATION_WINDOW_SAMPLES = 22
-DEFAULT_VREF_VOLTAGE = 3.3
 _IADC_RESOLUTION_BITS = 12
 
 
@@ -73,20 +68,13 @@ def counts_to_volts(values, vref_voltage: float = DEFAULT_VREF_VOLTAGE) -> np.nd
     max_adc_value = float((2 ** _IADC_RESOLUTION_BITS) - 1)
     return (np.asarray(values, dtype=np.float64) / max_adc_value) * float(vref_voltage)
 
-# Positional channel-suffix order for one PZT sensor board. Must match
-# clip_windowing_utils_v1.CHANNEL_LABELS / PZT_COLUMNS ordering -- duplicated
-# here as a plain literal (not imported) to avoid a circular import, since
-# clip_windowing_utils_v1 imports drag_detection_utils_v1, which imports this
-# module.
-_CHANNEL_LABELS = ["B", "L", "C", "R", "T"]
 
 
 class _BoundedSum:
     """Bounded moving-window rectangular sum: an O(1)-amortized-per-push
-    ring buffer + running total, matching integrate_voltage_series_causal_median's
-    "cumsum over the trailing `window` raw samples" semantics exactly
-    (including its behavior in the first `window - 1` samples, where the sum
-    only covers however many samples have arrived so far).
+    ring buffer + running total, i.e. the sum over the trailing `window`
+    samples (including the first `window - 1` outputs, where the sum only
+    covers however many samples have arrived so far).
 
     State (ring buffer, head, count, total) is stored as numpy
     arrays/scalars and advanced a whole chunk at a time via `push_many`, one
@@ -127,12 +115,12 @@ class CausalDerivedChannels:
     ) -> None:
         self.pzt_columns = list(pzt_columns)
         if column_map is None:
-            if len(self.pzt_columns) != len(_CHANNEL_LABELS):
+            if len(self.pzt_columns) != len(CHANNEL_LABELS):
                 raise ValueError(
                     "column_map must be given explicitly when pzt_columns does not "
                     "have exactly 5 entries in canonical B/L/C/R/T order"
                 )
-            column_map = dict(zip(_CHANNEL_LABELS, self.pzt_columns))
+            column_map = dict(zip(CHANNEL_LABELS, self.pzt_columns))
         self.column_map = dict(column_map)
         self.integration_window_samples = int(integration_window_samples)
         self.jerk_window_samples = int(jerk_window_samples)

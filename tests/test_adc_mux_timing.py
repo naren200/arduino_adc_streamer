@@ -14,11 +14,7 @@ from data_processing.adc_mux_timing import (
     estimate_repeat_pair_interval_from_measurements,
     get_adc_mux_timing_calculator,
 )
-from data_processing.analysis_workbench import (
-    AnalysisSourceSnapshot,
-    resolve_analysis_pzt_pre_sample_decay_dt_s,
-    resolve_analysis_pzt_mux_leak_dt_s,
-)
+from data_processing.analysis_workbench import AnalysisSourceSnapshot, resolve_analysis_timing
 
 
 def calculate(**overrides):
@@ -413,11 +409,9 @@ def test_analysis_force_auto_mode_uses_calculated_sensor_connected_duration():
         },
     )
 
-    leak_dt_s, status = resolve_analysis_pzt_mux_leak_dt_s(
-        snapshot, {"enabled": True, "mux_timing_mode": "auto"}
-    )
+    policy, status = resolve_analysis_timing(snapshot, {"enabled": True, "mux_timing_mode": "auto"})
 
-    assert leak_dt_s == pytest.approx(timing.sensor_connected_s)
+    assert policy.leak_dt_s == pytest.approx(timing.sensor_connected_s)
     assert "t_connected_s" in status
 
 
@@ -438,7 +432,8 @@ def test_force_pre_sample_decay_uses_explicit_physical_mux_mapping():
         },
     )
 
-    decay_by_label = resolve_analysis_pzt_pre_sample_decay_dt_s(snapshot, {"enabled": True})
+    policy, _status = resolve_analysis_timing(snapshot, {"enabled": True, "mux_timing_mode": "manual", "mux_connected_time_s": 2e-5})
+    decay_by_label = policy.pre_sample_decay_s_by_label
 
     assert decay_by_label["PZT1_C"] == pytest.approx(5.80e-6)
     assert decay_by_label["PZT2_C"] == pytest.approx(3.80e-6)

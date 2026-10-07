@@ -6,7 +6,7 @@ to/from ~/.adc_streamer/touchid/idle_baseline.json.
 
 The actual baseline-fitting/activity-test logic (IdleBaseline dataclass,
 fit_idle_baseline, chunk_is_active, idle_gap_chunks_cap) moved to
-texture_piezo's src/touchid_inference/quality_gate.py -- it's pure
+texture_piezo's former quality-gate module -- it's pure
 array-in/array-out inference logic with no dependency on this app's settings
 layer, so it belongs there alongside segmentation.py and window_padding.py.
 This module keeps only the settings I/O that's genuinely specific to the

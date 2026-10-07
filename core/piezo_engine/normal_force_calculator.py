@@ -9,7 +9,7 @@ signed total force plus a global force-center readout.
 
 Dependencies:
     Python math utilities, collection mappings, dataclasses, and
-    constants.shear.
+    shear_constants.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from constants.shear import (
+from core.piezo_engine.shear_constants import (
     DEFAULT_NORMAL_FORCE_SENSOR_SPACING_MM,
     NORMAL_FORCE_DENOMINATOR_EPSILON,
     NORMAL_FORCE_SENSOR_COUNT,

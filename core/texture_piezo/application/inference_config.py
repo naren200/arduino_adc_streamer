@@ -3,26 +3,23 @@ Inference Config
 =================
 Configuration for the TouchID inference pipeline. Sizing constants here are
 intentionally independent literals, decoupled from texture_piezo's training
-config (WINDOW_SIZE_S / HOP_SIZE_S in clip_windowing_utils_v1.py) so that
+window constants so that
 inference sizing can be tuned without affecting training.
 """
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.texture_piezo.models import model_discovery
-from inference._paths import TEXTURE_PIEZO_MODELS, TEXTURE_PIEZO_SRC
 from core.texture_piezo.models.model_discovery import DEFAULT_CLASS_NAMES
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 
 from core.texture_piezo.gating.quality_gate import DEFAULT_K
 from core.texture_piezo.gating.window_config import ONSET_SKIP_S
 
-sys.path.insert(0, str(TEXTURE_PIEZO_SRC))
-from clip_windowing_utils_v1 import CHANNEL_LABELS  # noqa: E402
+from core.piezo_engine.channel_names import CHANNEL_LABELS
 
 # texture_piezo's channel-suffix order (B/L/C/R/T) for one PZT sensor board,
 # independent of which physical sensor number it's wired up as -- see

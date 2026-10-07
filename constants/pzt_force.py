@@ -1,98 +1,18 @@
-"""PZT force reconstruction defaults and unit constants."""
+"""PZT force reconstruction constants.
 
-PZT_FORCE_DEFAULT_SETTINGS = {
-    "enabled": False,
-    # The center sensor can use a different capacitance from the four outer
-    # sensors in each five-channel PZT package. Both defaults preserve the
-    # previous single-value behavior.
-    "center_capacitance_value": 150.0,
-    "outer_capacitance_value": 150.0,
-    # Retained only to read settings saved by releases with one Cpzt value.
-    # New settings persist the center/outer values above.
-    "capacitance_value": 150.0,
-    "capacitance_unit": "pF",
-    "rleak_ohm": 1_000_000.0,
-    "d33_pc_per_n": 600.0,
-    "noise_threshold_v": 0.01,
-    # Shear Force / Normal Force run their own independent RC integrators
-    # (see build_force_based_shear_normal_traces) on the COMBINED per-channel
-    # force-RATE signal (see compute_pzt_force_rate_series), not on raw
-    # volts -- unlike PZT Channel Force's raw-voltage-gated integrator, these
-    # thresholds gate a force-rate quantity in newtons, so they are named
-    # and unit-suffixed accordingly (renamed from the old *_v names; a
-    # volt-tuned value cannot be mechanically converted into this quantity,
-    # since the combined signal already mixes multiple channels' differing
-    # capacitances through ShearDetector's nonlinear opposite-sign-pair
-    # logic -- no single scalar conversion factor applies). PLACEHOLDER
-    # STARTING VALUES, not derived: chosen to sit below the zero-band-min/
-    # min-event-peak defaults below (a noise floor should gate quieter than
-    # those), consistent with the ~2x gap the old volt-tuned defaults had
-    # relative to their own zero-band-min. Requires real-capture calibration.
-    "shear_force_noise_threshold_n": 0.005,
-    "normal_force_noise_threshold_n": 0.005,
-    "quiet_duration_s": 2.0,
-    "noise_sigma_multiplier": 5.0,
-    "mux_timing_mode": "auto",
-    "mux_connected_time_s": 0.030,
-    "mux_connected_time_source": "",
-    "off_mux_leak_enabled": False,
-    "off_mux_rleak_ohm": None,
-    "channel_calibration": {},
-    # Visualization-only default for new settings. Persisted user values keep
-    # their existing value when loaded.
-    "display_max_force_n": 0.25,
-    # Force-specific shear-arrow parameters (newtons, not the Jerk display's
-    # volts). With the default 0.25 N color max and a ~5 mm package radius, a
-    # full-scale shear draws a full-radius arrow.
-    "force_arrow_gain_mm_per_n": 20.0,
-    # Matches the existing display noise floor (force_alpha_floor_n default
-    # 0.0025 N) so noise-level shear draws no arrow.
-    "force_arrow_min_threshold_n": 0.0025,
-    # Natural-reset event-machine tunables (PztForceChannelIntegrator).
-    "force_zero_band_fraction": 0.1,
-    "force_zero_band_min_n": 0.02,
-    "shear_force_zero_band_min_n": 0.02,
-    "normal_force_zero_band_min_n": 0.02,
-    "force_zero_min_event_peak_n": 0.05,
-    "shear_force_zero_min_event_peak_n": 0.05,
-    "normal_force_zero_min_event_peak_n": 0.05,
-    # At quiet-hold expiry, the residual must have declined to within this
-    # fraction of the event's own peak before it is released/zeroed; a
-    # residual still near peak is presumed a held press whose voltage has
-    # merely decayed quiet, not a real release, and is left for the
-    # stuck-force fail-safe below to eventually resolve.
-    "quiet_hold_release_fraction": 0.5,
-    "quiet_hold_clear_s": 0.15,
-    # Stuck-force fail-safe (replaces reset_after_quiet_samples).
-    "stuck_force_failsafe_enabled": True,
-    "stuck_force_quiet_hold_s": 1.0,
-    "stuck_force_decay_tau_s": 1.0,
-}
+Force defaults and unit constants are defined in the piezo engine
+(``core/piezo_engine/force_settings.py``) and re-exported here; only
+GUI-only constants are defined in this module.
+"""
 
-# Analysis tab defaults, overriding the shared baseline above with values
-# matched to this project's PZT5-array calibration runs. Kept separate from
-# PZT_FORCE_DEFAULT_SETTINGS so Pressure Map (gui/signal_integration_panel.py)
-# keeps its own independent defaults untouched.
-ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS = {
-    **PZT_FORCE_DEFAULT_SETTINGS,
-    "d33_pc_per_n": 120.0,
-    "noise_threshold_v": 0.05,
-    "shear_force_noise_threshold_n": 0.01,
-    "normal_force_noise_threshold_n": 0.01,
-    "quiet_duration_s": 0.5,
-    "noise_sigma_multiplier": 8.0,
-    "off_mux_leak_enabled": False,
-    "off_mux_rleak_ohm": None,
-    "stuck_force_quiet_hold_s": 0.5,
-    "stuck_force_decay_tau_s": 0.5,
-    "force_zero_band_min_n": 0.05,
-    "shear_force_zero_band_min_n": 0.05,
-    "normal_force_zero_band_min_n": 0.05,
-}
+from core.piezo_engine.force_settings import (  # noqa: F401  (re-exports)
+    ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS,
+    PZT_FORCE_DEFAULT_SETTINGS,
+    PZT_FORCE_MAD_TO_SIGMA,
+    PZT_FORCE_NOISE_PERCENTILE,
+    PZT_FORCE_PIC_COULOMB_TO_COULOMB,
+)
 
 PZT_FORCE_CAPACITANCE_UNITS = ("pF", "nF", "F")
 PZT_FORCE_MUX_TIMING_MODES = ("Auto", "Manual", "Infer from total sample rate", "Continuous")
 PZT_FORCE_DEFAULT_MUX_CONNECTED_TIME_S = 0.030
-PZT_FORCE_PIC_COULOMB_TO_COULOMB = 1e-12
-PZT_FORCE_MAD_TO_SIGMA = 1.4826
-PZT_FORCE_NOISE_PERCENTILE = 95.0

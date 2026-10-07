@@ -129,57 +129,6 @@ class IncrementalMedian:
         return out
 
 
-class _CausalMedian3:
-    """Causal median filter, window = (i-2, i-1, i). One push() call advances
-    the series by exactly one sample and returns the filtered value. Removes
-    isolated single-sample spikes (the previous/next sample outvote it in the
-    median) while only lightly lagging genuine multi-sample transitions.
-    """
-
-    def __init__(self) -> None:
-        self._history: list[float] = []  # holds up to the 2 most recent raw samples
-
-    def push(self, value: float) -> float:
-        value = float(value)
-        h = self._history
-        n = len(h)
-        # Scalar median-of-<=3 by selection, not np.median(): identical
-        # output (np.median of an odd count returns the exact middle
-        # element with no arithmetic; of an even count it's the mean of
-        # the two middle elements, which for n=2 is just their mean) but
-        # without paying numpy's general-purpose dispatch overhead on a
-        # 1-3 element list 1.4M times -- that dispatch cost, not the
-        # median computation itself, was ~90% of this filter's runtime
-        # (profiled: 22s of a 45s file build). math.isnan check reproduces
-        # np.median's NaN-poisons-the-window behavior, since sorted()
-        # would otherwise give NaN a position-dependent, incorrect rank.
-        if n == 0:
-            filtered = value
-        elif n == 1:
-            a = h[0]
-            filtered = float("nan") if (math.isnan(a) or math.isnan(value)) else (a + value) / 2.0
-        else:
-            a, b = h
-            if math.isnan(a) or math.isnan(b) or math.isnan(value):
-                filtered = float("nan")
-            else:
-                # Compare-swap median-of-3 (selection, no arithmetic) --
-                # matches np.median's exact-middle-element output for an
-                # odd count bit-for-bit, unlike a+b+c-min-max which
-                # recombines via floating-point addition/subtraction and
-                # can round differently.
-                x, y, z = a, b, value
-                if x > y:
-                    x, y = y, x
-                if y > z:
-                    y, z = z, y
-                if x > y:
-                    x, y = y, x
-                filtered = y
-        self._history = (h + [value])[-2:]
-        return filtered
-
-
 @njit(cache=True)
 def bounded_sum_batch(values, ring, ring_head, ring_count, total):
     """Fixed-window running sum over `values`, resuming from (ring,
@@ -281,7 +230,7 @@ def preprocess_capture_start(values: np.ndarray, sample_rate_hz: float, *, blip_
 
     `blip_filter` is injected (not fixed here) because the three callers
     genuinely use different filters -- windowed `_median_filter_columns`
-    with RS-column exclusion (Analysis), plain `causal_median_filter_3`
+    with RS-column exclusion (Analysis), the engine's `CausalMedianN`
     (saved/training-data) -- forcing them onto one filter implementation
     would be a bigger, unwanted change than fixing the ordering bug calls
     for. What every caller DOES share, and what actually drifted apart

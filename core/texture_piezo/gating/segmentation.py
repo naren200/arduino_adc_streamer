@@ -35,7 +35,7 @@ the caller's own continuous raw/derived buffers, plus each fragment's real
 start/end timestamps for visualization/analysis), never a copy of the
 underlying sample data.
 
-Ported from texture_piezo/src/touchid_inference/segmentation.py for
+Ported from texture_piezo's former segmentation module for
 arduino_adc_streamer standalone inference chunking/gating.
 """
 

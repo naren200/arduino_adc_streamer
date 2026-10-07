@@ -2,7 +2,7 @@
 NormalForceCalculator.compute() once per sample.
 
 Ported from texture_piezo/src/shear_normal_utils_v1.py's
-compute_shear_normal_batch, rewired to this repo's constants.shear position
+compute_shear_normal_batch, rewired to this repo's shear_constants position
 labels/constants in place of texture_piezo's own module-local copies (same
 values, ``C``/``L``/``R``/``T``/``B`` and friends -- see
 core/piezo_engine/shear_detector.py, which already made this same swap).
@@ -14,7 +14,7 @@ from collections.abc import Mapping
 
 import numpy as np
 
-from constants.shear import (
+from core.piezo_engine.shear_constants import (
     NORMAL_FORCE_SENSOR_COUNT,
     SHEAR_POSITION_BOTTOM,
     SHEAR_POSITION_CENTER,

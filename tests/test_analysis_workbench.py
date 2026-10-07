@@ -15,7 +15,6 @@ from data_processing.analysis_workbench import (
     AnalysisSourceSnapshot,
     ShearNormalForceSettings,
     _build_offline_stream_index_map,
-    _expanding_median,
     _load_filtered_snapshot,
     _owner_analysis_timing_metadata,
     build_force_based_shear_normal_traces,
@@ -23,12 +22,12 @@ from data_processing.analysis_workbench import (
     build_overlay_traces,
     build_snapshot_from_archive,
     counts_to_volts,
-    integrate_voltage_series_causal_median,
     load_exported_csv_snapshot,
     prepare_analysis_data,
     reorder_circular_capture,
-    resolve_analysis_pzt_mux_leak_dt_s,
+    resolve_analysis_timing,
 )
+from core.piezo_engine.config import TimingMode, TimingPolicy
 from core.piezo_engine.normal_force_calculator import NormalForceCalculator
 from core.piezo_engine.force_integrator import (
     PztChannelPhysicalParams,
@@ -40,6 +39,15 @@ from core.piezo_engine.force_integrator import (
     pzt_capacitance_to_farads,
 )
 from core.piezo_engine.shear_detector import ShearDetector
+
+
+
+CONTINUOUS_TIMING = TimingPolicy(mode=TimingMode.CONTINUOUS)
+
+
+def _running_median(values: np.ndarray) -> np.ndarray:
+    """Causal (past-and-current) median of every prefix, spelled out with np.median."""
+    return np.array([np.median(values[: index + 1]) for index in range(len(values))])
 
 
 class OfflineStreamIndexMapTests(unittest.TestCase):
@@ -124,56 +132,6 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         self.assertEqual(owner.finalize_calls, 1)
         self.assertEqual(snapshot.source_id, "in_memory")
         np.testing.assert_array_equal(snapshot.data, owner.raw_data_buffer)
-
-    def test_causal_median_integration_matches_expanding_baseline(self):
-        # window=2 -> index 0 has no full window and is dropped entirely;
-        # only indices 1-3 (each backed by a genuine 2-sample window) remain.
-        result = integrate_voltage_series_causal_median(
-            {"C": np.asarray([0.0, 0.0, 10.0, 10.0])},
-            integration_window_samples=2,
-        )
-
-        np.testing.assert_allclose(result["C"], [0.0, 10.0, 15.0])
-
-    def test_causal_median_integration_average_mode_divides_by_actual_window_fill(self):
-        # Same series/window as the sum-mode test above: window=2, so index 0
-        # (partial 1-sample window) is dropped from both outputs, and every
-        # remaining index has a full 2-sample window.
-        sum_result = integrate_voltage_series_causal_median(
-            {"C": np.asarray([0.0, 0.0, 10.0, 10.0])},
-            integration_window_samples=2,
-        )
-        avg_result = integrate_voltage_series_causal_median(
-            {"C": np.asarray([0.0, 0.0, 10.0, 10.0])},
-            integration_window_samples=2,
-            mode="average",
-        )
-
-        # index 1: window-fill count 2 -> sum/2
-        # index 2: window-fill count 2 -> sum/2
-        # index 3: window-fill count 2 -> sum/2
-        expected = np.asarray(sum_result["C"]) / 2.0
-        np.testing.assert_allclose(avg_result["C"], expected)
-        # Sanity: average never exceeds the peak per-sample deviation the way
-        # a growing sum would over a longer window.
-        self.assertTrue(np.all(np.abs(avg_result["C"]) <= 10.0 + 1e-9))
-
-    def test_causal_median_integration_drops_leading_samples_shorter_than_window(self):
-        # A whole capture shorter than the window has no genuine full window
-        # anywhere -- output must be empty, not partial-window values.
-        result = integrate_voltage_series_causal_median(
-            {"C": np.asarray([1.0, 2.0])},
-            integration_window_samples=5,
-        )
-        self.assertEqual(result["C"].size, 0)
-
-    def test_causal_median_integration_rejects_unknown_mode(self):
-        with self.assertRaises(ValueError):
-            integrate_voltage_series_causal_median(
-                {"C": np.asarray([0.0, 1.0])},
-                integration_window_samples=2,
-                mode="bogus",
-            )
 
     def test_reorder_circular_capture_returns_oldest_to_newest(self):
         data = np.asarray(
@@ -455,7 +413,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
 
         self.assertIn("PZT force timing skipped", prepared.status)
 
-    def test_resolve_analysis_pzt_mux_leak_dt_prefers_metadata_timing(self):
+    def test_resolve_analysis_timing_prefers_metadata_timing(self):
         snapshot = AnalysisSourceSnapshot(
             data=np.asarray([[1], [2]], dtype=np.float32),
             timestamps_s=np.asarray([0.0, 0.1], dtype=np.float64),
@@ -468,12 +426,12 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             sample_rate_hz=10.0,
         )
 
-        leak_dt, status = resolve_analysis_pzt_mux_leak_dt_s(snapshot, {"enabled": True, "mux_timing_mode": "auto"})
+        policy, status = resolve_analysis_timing(snapshot, {"enabled": True, "mux_timing_mode": "auto"})
 
-        self.assertAlmostEqual(leak_dt, 0.030)
+        self.assertAlmostEqual(policy.leak_dt_s, 0.030)
         self.assertIn("arduino_sample_time_us", status)
 
-    def test_resolve_analysis_pzt_mux_leak_dt_reads_block_timing_sidecar(self):
+    def test_resolve_analysis_timing_reads_block_timing_sidecar(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             csv_path = temp_path / "capture.csv"
@@ -497,9 +455,9 @@ class AnalysisWorkbenchTests(unittest.TestCase):
                 sample_rate_hz=10.0,
             )
 
-            leak_dt, status = resolve_analysis_pzt_mux_leak_dt_s(snapshot, {"enabled": True, "mux_timing_mode": "auto"})
+            policy, status = resolve_analysis_timing(snapshot, {"enabled": True, "mux_timing_mode": "auto"})
 
-        self.assertAlmostEqual(leak_dt, 0.0305)
+        self.assertAlmostEqual(policy.leak_dt_s, 0.0305)
         self.assertIn("block_timing_csv", status)
 
     def test_owner_timing_metadata_prefers_calculator_over_cached_average(self):
@@ -530,7 +488,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         self.assertEqual(result["pzt_mux_connected_time_s"], 45e-6)
         self.assertEqual(result["pzt_mux_connected_time_source"], "_cached_avg_sample_time_sec")
 
-    def test_resolve_analysis_pzt_mux_leak_dt_uses_calculator_value_end_to_end(self):
+    def test_resolve_analysis_timing_uses_calculator_value_end_to_end(self):
         owner = SimpleNamespace(
             current_mcu="Array_PZT_PZR1.7",
             config={"osr": 4, "gain": 1, "repeat": 4, "channels": [1], "use_ground": False, "buffer": 10},
@@ -550,9 +508,9 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             sample_rate_hz=10.0,
         )
 
-        leak_dt, status = resolve_analysis_pzt_mux_leak_dt_s(snapshot, {"enabled": True, "mux_timing_mode": "auto"})
+        policy, status = resolve_analysis_timing(snapshot, {"enabled": True, "mux_timing_mode": "auto"})
 
-        self.assertAlmostEqual(leak_dt, calculated.sensor_connected_s)
+        self.assertAlmostEqual(policy.leak_dt_s, calculated.sensor_connected_s)
         self.assertIn("adc_mux_timing.t_connected_s", status)
 
     def test_pzt_capacitance_units_convert_to_farads(self):
@@ -854,7 +812,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         # baseline-removed overlay should collapse the drifted region back
         # toward zero once the median has caught up, while still showing
         # the pulse clearly.
-        # _expanding_median is a median over ALL past samples (no decay), so
+        # The causal median is a median over ALL past samples (no decay), so
         # it only "catches up" to a level shift once samples at the new
         # level outnumber everything seen before, including the warmup
         # preamble this helper prepends -- use a long-enough hold at the
@@ -901,11 +859,9 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         pulse_value = center_trace.y[pulse_index]
         self.assertGreater(abs(pulse_value), 0.3, center_trace.y)
 
-    def test_baseline_removed_overlay_matches_integration_centered_array(self):
-        # Single-source-of-truth check: the overlay's values must be the
-        # exact same centered array integrate_voltage_series_causal_median
-        # computes internally for the Shear/Normal Jerk path -- not a second,
-        # independently recomputed _expanding_median call.
+    def test_baseline_removed_overlay_equals_volts_minus_the_running_median(self):
+        # The overlay's values are the centered array the Shear/Normal Jerk
+        # path sums: volts minus the causal (past-and-current) median.
         data = np.asarray(
             [
                 [200, 300, -300, 100, -100],
@@ -937,21 +893,11 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         )
         by_label = {trace.label: trace for trace in overlays}
 
-        volts_by_position = {
-            position: counts_to_volts(data[:, index], vref_voltage)
-            for index, position in enumerate(["C", "L", "R", "T", "B"])
-        }
-        _integrated, centered_by_position = integrate_voltage_series_causal_median(
-            volts_by_position,
-            integration_window_samples=1,
-            sample_rate_hz=100.0,
-            return_centered=True,
-        )
-
-        for position in ["C", "L", "R", "T", "B"]:
+        for index, position in enumerate(["C", "L", "R", "T", "B"]):
+            volts = counts_to_volts(data[:, index], vref_voltage)
             np.testing.assert_array_equal(
                 by_label[f"{position} Baseline Removed [V]"].y,
-                centered_by_position[position],
+                volts - _running_median(volts),
             )
 
     def test_force_based_shear_normal_traces_match_reference_integration(self):
@@ -992,7 +938,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             axis_mode="samples",
             overlay_flags={"shear_force": True, "normal_force": True},
             vref_voltage=vref_voltage,
-            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings),
+            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings, timing=CONTINUOUS_TIMING),
         )
         by_label = {trace.label: trace for trace in traces}
         self.assertEqual(
@@ -1024,7 +970,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
 
         rate_by_position = {
             position: compute_pzt_force_rate_series(
-                volts_by_position[position] - _expanding_median(volts_by_position[position]),
+                volts_by_position[position] - _running_median(volts_by_position[position]),
                 snapshot.timestamps_s,
                 _channel_params(position),
             )
@@ -1103,67 +1049,6 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             {"Shear L/R Jerk [V]", "Shear T/B Jerk [V]", "Normal Jerk [V]"},
         )
 
-    def test_force_based_shear_normal_traces_matches_with_shared_median_baseline(self):
-        # prepare_analysis_data hoists one _expanding_median(raw) per
-        # position and shares it between Force and the Shear/Normal Jerk
-        # overlay instead of each computing it independently -- passing that
-        # precomputed (UNTRIMMED) baseline in must reproduce bit-for-bit the
-        # same output as build_force_based_shear_normal_traces computing its
-        # own baseline internally.
-        data = np.asarray(
-            [
-                [200, 300, -300, 100, -100],
-                [260, 500, -420, 140, -140],
-                [260, 500, -420, 140, -140],
-                [180, 260, -260, 80, -80],
-            ],
-            dtype=np.float32,
-        )
-        timestamps_s = np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64)
-        snapshot = AnalysisSourceSnapshot(
-            data=data,
-            timestamps_s=timestamps_s,
-            channel_labels=["C", "L", "R", "T", "B"],
-            metadata={"configuration": {"channels": [1, 2, 3, 4, 5], "repeat_count": 1}},
-            source_id="unit",
-            sample_rate_hz=100.0,
-        )
-        pzt_force_settings = {
-            "enabled": True,
-            "center_capacitance_value": 150.0,
-            "outer_capacitance_value": 150.0,
-            "capacitance_unit": "pF",
-            "rleak_ohm": 1_000_000.0,
-            "d33_pc_per_n": 600.0,
-            "noise_threshold_n": 0.0,
-        }
-        vref_voltage = 3.3
-
-        unshared_traces = build_force_based_shear_normal_traces(
-            snapshot, snapshot.data, axis_mode="samples",
-            overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=vref_voltage,
-            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings),
-        )
-
-        volts_by_position = {
-            position: counts_to_volts(data[:, index], vref_voltage)
-            for index, position in enumerate(["C", "L", "R", "T", "B"])
-        }
-        median_by_position = {
-            position: _expanding_median(volts) for position, volts in volts_by_position.items()
-        }
-        shared_traces = build_force_based_shear_normal_traces(
-            snapshot, snapshot.data, axis_mode="samples",
-            overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=vref_voltage,
-            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings),
-            median_by_position=median_by_position,
-        )
-
-        unshared_by_label = {trace.label: trace for trace in unshared_traces}
-        shared_by_label = {trace.label: trace for trace in shared_traces}
-        for label in ("Normal Force [N]", "Shear Force L/R [N]", "Shear Force T/B [N]"):
-            np.testing.assert_array_equal(shared_by_label[label].y, unshared_by_label[label].y)
-
     def test_force_based_shear_normal_traces_fixes_capacitance_mixing(self):
         # Original bug: Normal Force summed raw voltage across C (center
         # capacitance) and L/R/T/B (outer capacitance) BEFORE any
@@ -1208,7 +1093,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         traces = build_force_based_shear_normal_traces(
             snapshot, snapshot.data, axis_mode="samples",
             overlay_flags={"normal_force": True}, vref_voltage=vref_voltage,
-            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings),
+            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings, timing=CONTINUOUS_TIMING),
         )
         normal_force = next(trace.y for trace in traces if trace.label == "Normal Force [N]")
 
@@ -1223,7 +1108,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             for index, position in enumerate(["C", "L", "R", "T", "B"])
         }
         centered_by_position = {
-            position: volts_by_position[position] - _expanding_median(volts_by_position[position])
+            position: volts_by_position[position] - _running_median(volts_by_position[position])
             for position in ["C", "L", "R", "T", "B"]
         }
         detector = ShearDetector()
@@ -1265,7 +1150,8 @@ class AnalysisWorkbenchTests(unittest.TestCase):
                 snapshot, snapshot.data, axis_mode="samples",
                 overlay_flags={"normal_force": True}, vref_voltage=3.3,
                 settings=ShearNormalForceSettings(
-                    pzt_force_settings={"center_capacitance_value": 150.0, "outer_capacitance_value": 150.0}
+                    pzt_force_settings={"center_capacitance_value": 150.0, "outer_capacitance_value": 150.0},
+                    timing=CONTINUOUS_TIMING,
                 ),
             )
 
@@ -1296,7 +1182,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         traces = build_force_based_shear_normal_traces(
             snapshot, snapshot.data, axis_mode="samples",
             overlay_flags={"normal_force": True}, vref_voltage=3.3,
-            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings),
+            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings, timing=CONTINUOUS_TIMING),
         )
         normal_force = next(trace.y for trace in traces if trace.label == "Normal Force [N]")
         self.assertTrue(np.all(np.abs(normal_force) < 1e-6), msg=f"drifted: {normal_force}")
@@ -1365,7 +1251,8 @@ class AnalysisWorkbenchTests(unittest.TestCase):
                     **base_settings,
                     "normal_force_noise_threshold_n": 100.0,
                     "shear_force_noise_threshold_n": 0.0,
-                }
+                },
+                timing=CONTINUOUS_TIMING,
             ),
         )
         by_label = {trace.label: trace for trace in traces}
@@ -1381,7 +1268,8 @@ class AnalysisWorkbenchTests(unittest.TestCase):
                     **base_settings,
                     "normal_force_noise_threshold_n": 0.0,
                     "shear_force_noise_threshold_n": 100.0,
-                }
+                },
+                timing=CONTINUOUS_TIMING,
             ),
         )
         by_label = {trace.label: trace for trace in traces}
@@ -1414,7 +1302,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         traces = build_force_based_shear_normal_traces(
             snapshot, snapshot.data, axis_mode="samples",
             overlay_flags={"shear_force": True, "normal_force": True}, vref_voltage=3.3,
-            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings),
+            settings=ShearNormalForceSettings(pzt_force_settings=pzt_force_settings, timing=CONTINUOUS_TIMING),
         )
         by_label = {trace.label: trace for trace in traces}
         # Threshold of 100N silences everything, matching pre-split behavior.

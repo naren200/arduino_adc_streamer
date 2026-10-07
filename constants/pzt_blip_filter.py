@@ -1,17 +1,14 @@
-"""Defaults for the PZT ADC single-sample blip filter."""
+"""Defaults for the PZT ADC single-sample blip filter.
+
+The window bounds and normalisation are defined by the piezo engine
+(``core/piezo_engine/median.py``) and re-exported here.
+"""
+
+from core.piezo_engine.median import (
+    DEFAULT_MEDIAN_WINDOW_SAMPLES as PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES,
+    MEDIAN_WINDOW_MAX_SAMPLES as PZT_BLIP_FILTER_MAX_WINDOW_SAMPLES,
+    MEDIAN_WINDOW_MIN_SAMPLES as PZT_BLIP_FILTER_MIN_WINDOW_SAMPLES,
+    normalize_median_window as normalize_pzt_blip_filter_window,
+)
 
 PZT_BLIP_FILTER_DEFAULT_ENABLED = True
-PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES = 3
-PZT_BLIP_FILTER_MIN_WINDOW_SAMPLES = 3
-PZT_BLIP_FILTER_MAX_WINDOW_SAMPLES = 15
-
-
-def normalize_pzt_blip_filter_window(window_samples: int) -> int:
-    """Clamp to the supported range and force odd (a median needs a middle element)."""
-    window = int(window_samples)
-    if window % 2 == 0:
-        window += 1
-    return min(
-        PZT_BLIP_FILTER_MAX_WINDOW_SAMPLES,
-        max(PZT_BLIP_FILTER_MIN_WINDOW_SAMPLES, window),
-    )

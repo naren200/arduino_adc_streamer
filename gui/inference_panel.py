@@ -2,7 +2,7 @@
 Inference (TouchID) Panel GUI Component
 ========================================
 Live texture-classification tab: buffers incoming PZT sweeps, runs the
-texture_piezo feature pipeline + ANN v2 model on a rolling window, and
+texture_piezo model runtime on a rolling window of named engine channels, and
 displays smoothed class probabilities.
 """
 
@@ -43,13 +43,21 @@ from core.texture_piezo.application.inference_config import (
     save_touchid_settings,
     set_model_version,
 )
-from core.texture_piezo.models.architectures import ARCH_REGISTRY, CHECKPOINT_DEFAULT
+from core.texture_piezo.models.architectures import ARCH_REGISTRY
+from core.texture_piezo.models.model_discovery import CHECKPOINT_DEFAULT
 from core.texture_piezo.application.mode import TouchIdMode
 from core.texture_piezo.application.quality_gate_settings import load_idle_baseline, save_idle_baseline
 from core.texture_piezo.application.replay_fastforward import ReplayFastForward
 from core.texture_piezo.application.smoothing import WindowedVoteSmoother, is_guilty_candidate
 from core.texture_piezo.gating.quality_gate import IDLE_CAPTURE_DURATION_S, fit_idle_baseline
+from core.piezo_engine.pipeline import (
+    INPUT_CONDITIONING_METADATA_KEY, RAW_INPUT, input_conditioning_from_record,
+)
 from core.texture_piezo.application.stream_processor import TouchIdStreamProcessor
+from core.texture_piezo.application.live_model import (
+    engine_config_for_model, ingest_filter_warning, required_channels_for_model,
+)
+from core.piezo_engine.config import EngineConfigMismatchError
 from constants.plotting import PLOT_COLORS
 
 # Display label (combo box text) -> InferenceConfig.model_type key. Built from
@@ -141,12 +149,8 @@ class InferencePanelMixin:
 
         self.touchid_classifier = None
         self.touchid_classifier_error = None
-        try:
-            self.touchid_classifier = TextureClassifier(self.touchid_config)
-        except Exception as exc:
-            # Missing/incompatible model artifacts must not crash GUI construction —
-            # the tab degrades to a status message and no-ops the per-hop prediction.
-            self.touchid_classifier_error = str(exc)
+        self._touchid_ingest_warning = None
+        self._touchid_load_classifier()
 
         self.touchid_show_smoothed = True
 
@@ -487,16 +491,9 @@ class InferencePanelMixin:
         # room for the plots below.
         summary_row = QHBoxLayout()
 
-        self.touchid_status_label = QLabel(
-            'Model not loaded: ' + self.touchid_classifier_error
-            if self.touchid_classifier_error
-            else f'Model loaded ({self.touchid_config.model_type.upper()})'
-        )
-        self.touchid_status_label.setStyleSheet(
-            'color: #cc0000; font-weight: bold;'
-            if self.touchid_classifier_error
-            else f'color: {_TOUCHID_STATUS_OK_COLOR}; font-weight: bold;'
-        )
+        status_text, status_style = self._touchid_model_status()
+        self.touchid_status_label = QLabel(status_text)
+        self.touchid_status_label.setStyleSheet(status_style)
         summary_row.addWidget(self.touchid_status_label)
 
         summary_row.addSpacing(16)
@@ -641,18 +638,85 @@ class InferencePanelMixin:
 
         return tab
 
-    def _touchid_new_processor(self, derived_channels=None, idle_baseline=None) -> TouchIdStreamProcessor:
+    def _touchid_load_classifier(self):
+        """Load the configured model. A failure never raises into the GUI: it is kept as
+        ``touchid_classifier_error`` (classifier stays None, so nothing is inferred). A model
+        whose engine config this engine cannot run (does not rebuild, or computes no force the model reads) is refused the same way, with a message
+        that says so."""
+        try:
+            classifier = TextureClassifier(self.touchid_config)
+            engine_config_for_model(classifier)
+            self.touchid_classifier = classifier
+        except EngineConfigMismatchError as exc:
+            self.touchid_classifier_error = f'engine config mismatch, model refused: {exc}'
+        except Exception as exc:
+            # Missing/incompatible model artifacts must not crash GUI construction -
+            # the tab degrades to a status message and no-ops the per-hop prediction.
+            self.touchid_classifier_error = str(exc)
+        self._touchid_ingest_warning = self._touchid_current_ingest_warning()
+
+    def _touchid_engine_config(self):
+        """The EngineConfig every live processor runs: the loaded model's own, else the
+        default force-less one (no model loaded, or a runtime that declares none)."""
+        return engine_config_for_model(self.touchid_classifier)
+
+    def _touchid_current_ingest_warning(self):
+        enabled = bool(getattr(self, 'pzt_blip_filter_enabled', False))
+        return ingest_filter_warning(self.touchid_classifier, enabled)
+
+    def _touchid_model_status(self):
+        """(text, stylesheet) of the model status label."""
+        if self.touchid_classifier_error:
+            return 'Model not loaded: ' + self.touchid_classifier_error, 'color: #cc0000; font-weight: bold;'
+        text = f'Model loaded ({self.touchid_config.model_type.upper()})'
+        if self._touchid_ingest_warning:
+            return f'{text} - WARNING: {self._touchid_ingest_warning}', 'color: #e68a00; font-weight: bold;'
+        return text, f'color: {_TOUCHID_STATUS_OK_COLOR}; font-weight: bold;'
+
+    def _touchid_refresh_model_status(self):
+        text, style = self._touchid_model_status()
+        self.touchid_status_label.setText(text)
+        self.touchid_status_label.setStyleSheet(style)
+
+    def _touchid_check_ingest_filter_warning(self):
+        """Edge-triggered: the GUI ingest blip filter can be toggled after the model was
+        loaded, so re-evaluate every tick but surface only a change of state."""
+        message = self._touchid_current_ingest_warning()
+        if message == self._touchid_ingest_warning:
+            return
+        self._touchid_ingest_warning = message
+        if hasattr(self, 'touchid_status_label'):
+            self._touchid_refresh_model_status()
+        if message and hasattr(self, 'log_status'):
+            self.log_status('TouchID WARNING: ' + message)
+
+    def _touchid_rebuild_processor_if_engine_config_changed(self):
+        """A model swap can change the engine config; the running processor's causal state
+        belongs to the old one, so start a fresh stream (same as a sensor switch)."""
+        if self.touchid_processor.engine_config == self._touchid_engine_config():
+            return
+        self.touchid_processor = self._touchid_new_processor()
+        self._touchid_reset_region_coloring()
+        self._touchid_reset_read_cursor()
+
+    def _touchid_new_processor(
+        self, continue_from=None, idle_baseline=None, input_conditioning=RAW_INPUT,
+    ) -> TouchIdStreamProcessor:
         """Build a fresh TouchIdStreamProcessor at the current config/idle
-        baseline. Pass `derived_channels` to carry an existing
-        CausalDerivedChannels instance's causal state (bounded sums, causal
-        medians) forward into the new processor instead of starting it fresh
+        baseline. Pass `continue_from` (the previous processor) to carry its
+        whole engine state (median window, settle gate, bounded sums, causal
+        medians, force stage) forward into the new processor instead of
+        starting it fresh
         -- used by _rebuild_touchid_buffers (see its docstring for why a
         window/hop resize is NOT a discontinuity in the underlying raw
         sample stream, unlike a sensor switch or a new idle baseline). Pass
         `idle_baseline` to override self.touchid_idle_baseline for this one
         processor -- used by on_touchid_run_on_source_clicked to prefer a
         replay source's own "baseline"-labeled samples over the live/global
-        one."""
+        one. Pass `input_conditioning` when the fed samples were already
+        median-filtered and/or settle-trimmed upstream (Analysis snapshot
+        replay), so the engine does not apply those stages a second time."""
+        engine_config = self._touchid_engine_config()
         processor = TouchIdStreamProcessor(
             pzt_columns=self.touchid_config.pzt_columns,
             window_size_s=self.touchid_config.window_size_s,
@@ -660,9 +724,12 @@ class InferencePanelMixin:
             span_stale_timeout_s=self.touchid_config.span_stale_timeout_s,
             idle_baseline=idle_baseline if idle_baseline is not None else self.touchid_idle_baseline,
             onset_skip_s=self.touchid_config.onset_skip_s,
+            input_conditioning=input_conditioning,
+            engine_config=engine_config,
+            required_channels=required_channels_for_model(self.touchid_classifier),
         )
-        if derived_channels is not None:
-            processor.derived_channels = derived_channels
+        if continue_from is not None and continue_from.engine_config == engine_config:
+            processor.adopt_engine_state_from(continue_from)
         return processor
 
     def _touchid_reset_read_cursor(self):
@@ -695,8 +762,8 @@ class InferencePanelMixin:
 
     def _rebuild_touchid_buffers(self):
         """Recreate touchid_processor at the current window/hop sizing.
-        Carries the existing derived_channels instance forward -- its causal
-        state (bounded sums, causal medians) stays valid across a
+        Carries the existing engine state forward -- its causal state
+        (median window, bounded sums, causal medians, force stage) stays valid across a
         window/hop resize since the underlying raw sample stream is
         unbroken; only the windowing (not the derivation) is changing.
         window_size_s/hop_size_s feed directly into ActiveSampleQueue's own
@@ -706,9 +773,7 @@ class InferencePanelMixin:
         will simply refill it (unlike a sensor switch, there's no
         discontinuity here, just an easier restart than trying to re-derive
         queue bookkeeping for the old sizing's spans)."""
-        self.touchid_processor = self._touchid_new_processor(
-            derived_channels=self.touchid_processor.derived_channels
-        )
+        self.touchid_processor = self._touchid_new_processor(continue_from=self.touchid_processor)
         self._touchid_reset_region_coloring()
 
     def on_touchid_window_changed(self, value):
@@ -1012,17 +1077,9 @@ class InferencePanelMixin:
         self.touchid_classifier_error = None
         self._touchid_reset_smoother()
 
-        try:
-            self.touchid_classifier = TextureClassifier(self.touchid_config)
-        except Exception as exc:
-            self.touchid_classifier_error = str(exc)
-
-        if self.touchid_classifier_error:
-            self.touchid_status_label.setText('Model not loaded: ' + self.touchid_classifier_error)
-            self.touchid_status_label.setStyleSheet('color: #cc0000; font-weight: bold;')
-        else:
-            self.touchid_status_label.setText(f'Model loaded ({self.touchid_config.model_type.upper()})')
-            self.touchid_status_label.setStyleSheet(f'color: {_TOUCHID_STATUS_OK_COLOR}; font-weight: bold;')
+        self._touchid_load_classifier()
+        self._touchid_refresh_model_status()
+        self._touchid_rebuild_processor_if_engine_config_changed()
 
         if hasattr(self, 'log_status'):
             self.log_status(
@@ -1123,7 +1180,15 @@ class InferencePanelMixin:
         # live-captured global baseline.
         replay_baseline = self._touchid_file_idle_baseline(snapshot, channel_indices, fs)
         self._touchid_replay_idle_baseline = replay_baseline
-        self.touchid_processor = self._touchid_new_processor(idle_baseline=replay_baseline)
+        # The snapshot loader records which of median / settle-trim it already
+        # applied; the engine runs only the stages that were not (no stamp
+        # means raw).
+        replay_conditioning = input_conditioning_from_record(
+            snapshot.metadata.get(INPUT_CONDITIONING_METADATA_KEY),
+        )
+        self.touchid_processor = self._touchid_new_processor(
+            idle_baseline=replay_baseline, input_conditioning=replay_conditioning,
+        )
         if replay_baseline is not None and replay_baseline is not self.touchid_idle_baseline:
             self._update_touchid_idle_gate_label(
                 f"using this file's own 'baseline' label ({replay_baseline.captured_duration_s:.1f}s)"
@@ -1209,7 +1274,7 @@ class InferencePanelMixin:
             # -- but unlike live, nothing here drops the rest going forward:
             # touchid_worker_busy gates the very next tick (see top of this
             # method), so the next hop can't start until this result is back.
-            self._touchid_submit_window(ready_windows[-1], fs)
+            self._touchid_submit_window(ready_windows[-1])
 
     def on_touchid_stop_replay_clicked(self):
         """Stop an in-progress 'Run on Analysis Source' replay early.
@@ -1556,6 +1621,7 @@ class InferencePanelMixin:
     def update_touchid_display(self):
         if not self.should_update_touchid_display():
             return
+        self._touchid_check_ingest_filter_warning()
 
         index_map = self._touchid_channel_index_map()
         if index_map is None:
@@ -1679,9 +1745,9 @@ class InferencePanelMixin:
         ready_windows = self.touchid_processor.push_chunk(
             channel_samples, sweep_timestamps, fs, now_t=time.monotonic(),
         )
-        self._touchid_handle_ready_windows(ready_windows, fs)
+        self._touchid_handle_ready_windows(ready_windows)
 
-    def _touchid_handle_ready_windows(self, ready_windows: list, fs: float):
+    def _touchid_handle_ready_windows(self, ready_windows: list):
         """Paint the "being inferenced" highlight for only the newest window
         this tick's push_chunk produced, then submit that same window to the
         classify worker -- matching touchid_worker_busy's existing policy:
@@ -1716,17 +1782,12 @@ class InferencePanelMixin:
         if self.touchid_worker_busy:
             return
 
-        self._touchid_submit_window(newest, fs)
+        self._touchid_submit_window(newest)
 
-    def _touchid_submit_window(self, window, fs: float):
+    def _touchid_submit_window(self, window):
         self.touchid_worker_busy = True
         self.touchid_classify_worker.submit({
-            'window_adc': window.window_adc,
-            'window_integrated': window.window_integrated,
-            'window_shear_jerk_lr': window.window_shear_jerk_lr,
-            'window_shear_jerk_tb': window.window_shear_jerk_tb,
-            'window_normal_jerk': window.window_normal_jerk,
-            'fs': fs,
+            'window': window.window,
             'classifier': self.touchid_classifier,
             'window_ts': window.window_ts,
         })
