@@ -9,11 +9,11 @@ inference sizing can be tuned without affecting training.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.texture_piezo.models import model_discovery
-from core.texture_piezo.models.model_discovery import DEFAULT_CLASS_NAMES
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 
 from core.texture_piezo.gating.quality_gate import DEFAULT_K
@@ -32,34 +32,33 @@ from core.piezo_engine.channel_names import CHANNEL_LABELS
 DEFAULT_PZT_SENSOR_NUMBER = "5"
 
 TOUCHID_SETTINGS_PAYLOAD_KEY = "touchid_settings"
+MODEL_FALLBACK_LOG_EVENT = "touchid_saved_model_fallback"
 
-def _default_path(model_type: str) -> str:
-    """Newest loadable checkpoint for `model_type`, or "" when none is on disk.
+logger = logging.getLogger(__name__)
 
-    Empty rather than a guessed filename: a path that doesn't exist fails at
-    load time with a confusing FileNotFoundError, while "" makes it obvious
-    that discovery found nothing for this architecture.
-    """
-    artifacts = model_discovery.newest_artifacts(model_type)
-    return str(artifacts.checkpoint_path) if artifacts else ""
+@dataclass(frozen=True)
+class ModelSelection:
+    """Which discovered checkpoint of one architecture is selected. Paths are never stored:
+    discovery resolves the checkpoint and its sidecars from this at load time."""
 
-
-def _default_sidecar(attr: str) -> str:
-    """The named sidecar belonging to the default architecture's own default
-    checkpoint, or "" when that architecture doesn't use one.
-
-    Deliberately does not fall back to another architecture's sidecar: these
-    fields are only read by the architecture they belong to, and borrowing
-    ANN's scaler while penta is active would put a misleading path in the
-    saved settings file. Switching architectures calls set_model_version,
-    which fills them in from the newly selected checkpoint.
-    """
-    artifacts = model_discovery.newest_artifacts(DEFAULT_MODEL_TYPE)
-    resolved = getattr(artifacts, attr, None) if artifacts else None
-    return str(resolved) if resolved is not None else ""
+    version: str
+    checkpoint: str
 
 
-DEFAULT_MODEL_TYPE = "penta"
+def _default_selections() -> dict[str, ModelSelection]:
+    """The default checkpoint of every architecture that has a loadable one (see model_discovery.default_for_family)."""
+    defaults = {key: model_discovery.default_for_family(key) for key in model_discovery.family_keys()}
+    return {key: _selection_of(artifacts) for key, artifacts in defaults.items() if artifacts}
+
+
+def _selection_of(artifacts) -> ModelSelection:
+    return ModelSelection(artifacts.version, artifacts.checkpoint)
+
+
+def default_model_type() -> str:
+    """The family of the default model (model_discovery.default_model); the empty string when nothing is loadable."""
+    default = model_discovery.default_model().artifacts
+    return default.model_type if default else ""
 
 
 @dataclass
@@ -81,27 +80,23 @@ class InferenceConfig:
                                      # higher = only stronger-than-idle-noise signals get inferenced
     onset_skip_s: float = ONSET_SKIP_S  # ActiveSampleQueue's fresh-onset settling-transient skip, user-adjustable --
                                          # NOT re-applied when a touch merely resumes after a brief dip
-    model_type: str = DEFAULT_MODEL_TYPE  # "ann" | "cnn" | "quad" | "penta" — which architecture is active
-    # Every model path below is discovered from TEXTURE_PIEZO_MODELS at
-    # instantiation, never hardcoded to a filename: each defaults to the
-    # newest loadable version's default checkpoint for that architecture
-    # (see model_discovery.newest_artifacts). Drop a new checkpoint plus its
-    # sidecars into the models folder and it becomes the default with no code
-    # change; a checkpoint whose artifacts don't actually load is not offered.
-    ann_model_path: str = field(default_factory=lambda: _default_path("ann"))
-    cnn_model_path: str = field(default_factory=lambda: _default_path("cnn"))
-    quad_model_path: str = field(default_factory=lambda: _default_path("quad"))
-    penta_model_path: str = field(default_factory=lambda: _default_path("penta"))
-    chunk_model_path: str = field(default_factory=lambda: _default_path("chunk"))
-    # Sidecars are resolved per version alongside the checkpoint they belong
-    # to, so they track whichever architecture's default is sidecar-backed.
-    scaler_path: str = field(default_factory=lambda: _default_sidecar("scaler_path"))
-    raw_norm_stats_path: str = field(default_factory=lambda: _default_sidecar("raw_norm_stats_path"))
-    # Frozen, ordered feature-name manifest the active checkpoint was trained
-    # on. Resolved per version by discovery because texture_piezo has written
-    # these under several naming conventions over time.
-    feature_names_path: str = field(default_factory=lambda: _default_sidecar("feature_names_path"))
-    class_names: list[str] = field(default_factory=lambda: list(DEFAULT_CLASS_NAMES))
+    model_type: str = field(default_factory=default_model_type)  # a catalog family key — which architecture is active
+    # Selected checkpoint per architecture, discovered at instantiation, never hardcoded to a
+    # filename: each defaults to model_discovery.default_for_family (the explicit default pointer for its
+    # family, else the first loadable bundle in stable order). An architecture with nothing loadable has
+    # no entry. Switching `model_type` needs nothing else: the bundle is resolved from the selection by
+    # discovery on each load.
+    selections: dict[str, ModelSelection] = field(default_factory=_default_selections)
+    # Set by load_touchid_settings when the saved model selection could not be
+    # restored; empty when the selection was restored or nothing was saved.
+    model_fallback_message: str = ""
+
+    @property
+    def class_names(self) -> list[str]:
+        """The class order of the selected model's bundle; empty when the active architecture has no loadable model."""
+        selection = self.selections.get(self.model_type)
+        artifacts = model_discovery.artifacts_for(self.model_type, selection.version, selection.checkpoint) if selection else None
+        return list(artifacts.class_names) if artifacts else []
 
 
 def pzt_columns_for_sensor(sensor_number: str) -> list[str]:
@@ -119,16 +114,11 @@ def pzt_sensor_number_of(pzt_columns: list[str]) -> str:
     return DEFAULT_PZT_SENSOR_NUMBER
 
 
-def _model_path_attr(model_type: str) -> str:
-    return f"{model_type}_model_path"
-
-
 def discover_model_versions(model_type: str) -> list[str]:
-    """Versions of `model_type` that are actually usable, newest last.
+    """Weights versions of `model_type` that are actually usable, in natural order.
 
-    "Usable" means the checkpoint and its resolved sidecars load -- see
-    model_discovery, which probes each candidate instead of checking that
-    files with the expected names exist.
+    "Usable" means the bundle loads -- see model_discovery, which probes each
+    candidate instead of trusting that its header parses.
     """
     seen = {found.artifacts.version for found in model_discovery.loadable(model_type)}
     return sorted(seen, key=model_discovery.version_sort_key)
@@ -137,8 +127,8 @@ def discover_model_versions(model_type: str) -> list[str]:
 def discover_checkpoints(model_type: str, version: str) -> list[str]:
     """Usable checkpoint tags for `model_type`'s `version` -- tags are free-form
     (e.g. "best_working_09_17_2026"), not a fixed enum. [CHECKPOINT_DEFAULT]
-    alone means an untagged single-file version. Ordered CHECKPOINT_DEFAULT
-    first, then CHECKPOINT_TAGS priority, then any other tag alphabetically."""
+    alone means a single-checkpoint version. Ordered CHECKPOINT_DEFAULT
+    first, then the other tags in natural order."""
     return [
         found.artifacts.checkpoint
         for found in model_discovery.loadable(model_type)
@@ -147,41 +137,27 @@ def discover_checkpoints(model_type: str, version: str) -> list[str]:
 
 
 def model_version_of(config: InferenceConfig) -> str | None:
-    """Best-effort extraction of the version suffix (e.g. "v2b") config is currently set to."""
-    artifacts = _current_artifacts(config)
-    return artifacts.version if artifacts else None
+    """The version (e.g. "v2b") selected for the active architecture, or None when it has no loadable model."""
+    selection = config.selections.get(config.model_type)
+    return selection.version if selection else None
 
 
 def model_checkpoint_of(config: InferenceConfig) -> str:
-    """Best-effort extraction of the checkpoint tag (e.g. "best") config is
-    currently set to, or CHECKPOINT_DEFAULT for an untagged/unrecognized path."""
-    artifacts = _current_artifacts(config)
-    return artifacts.checkpoint if artifacts else model_discovery.CHECKPOINT_DEFAULT
-
-
-def _current_artifacts(config: InferenceConfig):
-    current = Path(getattr(config, _model_path_attr(config.model_type), ""))
-    for found in model_discovery.discover(config.model_type):
-        if found.artifacts.checkpoint_path == current:
-            return found.artifacts
-    return None
+    """The checkpoint tag (e.g. "best") selected for the active architecture, CHECKPOINT_DEFAULT when untagged or unselected."""
+    selection = config.selections.get(config.model_type)
+    return selection.checkpoint if selection else model_discovery.CHECKPOINT_DEFAULT
 
 
 def set_model_version(config: InferenceConfig, version: str, checkpoint: str = "default") -> None:
-    """Point config at the discovered artifacts for `version`/`checkpoint` of the
-    currently active architecture (config.model_type), including whichever
-    sidecars that version resolved to. Leaves other architectures' paths
-    untouched so switching back to one doesn't lose its own version selection.
+    """Select `version`/`checkpoint` of the currently active architecture (config.model_type).
+    Leaves other architectures' selections untouched so switching back to one doesn't lose it.
 
-    Paths come from discovery rather than being rebuilt from a naming
-    convention: the same architecture's checkpoints are not all named alike
-    (texture_ann_v3.pt vs ann_v3b_best.pt), and rebuilding silently produced
-    paths that did not exist.
+    The selection is validated against discovery (the identity in each bundle's header).
     """
     artifacts = model_discovery.artifacts_for(config.model_type, version, checkpoint)
     if artifacts is None:
         # A version need not have an untagged checkpoint -- ann v3b exists only
-        # as ann_v3b_best.pt. Callers that just pick a version (the GUI's
+        # as the tagged "best". Callers that just pick a version (the GUI's
         # Version combo) pass the "default" tag, so fall back to that version's
         # highest-priority available tag rather than rejecting the selection.
         available = discover_checkpoints(config.model_type, version)
@@ -194,11 +170,7 @@ def set_model_version(config: InferenceConfig, version: str, checkpoint: str = "
 
 
 def _apply_artifacts(config: InferenceConfig, artifacts) -> None:
-    setattr(config, _model_path_attr(artifacts.model_type), str(artifacts.checkpoint_path))
-    for attr in ("scaler_path", "raw_norm_stats_path", "feature_names_path"):
-        resolved = getattr(artifacts, attr)
-        if resolved is not None:
-            setattr(config, attr, str(resolved))
+    config.selections[artifacts.model_type] = _selection_of(artifacts)
 
 
 def _get_last_touchid_settings_path() -> Path:
@@ -225,6 +197,59 @@ def save_touchid_settings(config: InferenceConfig) -> Path:
         },
     }
     return save_settings_payload(_get_last_touchid_settings_path(), payload)
+
+
+@dataclass(frozen=True)
+class SavedModelSelection:
+    model_type: str | None
+    version: str | None
+    checkpoint: str | None
+
+    @classmethod
+    def from_payload(cls, payload: dict) -> "SavedModelSelection":
+        return cls(payload.get("model_type"), payload.get("model_version"), payload.get("model_checkpoint"))
+
+
+def _restore_saved_model_selection(config: InferenceConfig, saved: SavedModelSelection) -> None:
+    """Apply the saved model type/version/checkpoint by name. A selection that no
+    longer resolves keeps the default model instead of raising, and is reported
+    through a WARNING log event and `config.model_fallback_message`."""
+    if saved.model_type is not None and saved.model_type not in model_discovery.family_keys():
+        _use_default_model(config, saved)
+        return
+    if saved.model_type is not None:
+        config.model_type = saved.model_type
+    if not saved.version:
+        return
+    available = discover_checkpoints(config.model_type, saved.version)
+    # "default" is tolerated even when the version has only tagged checkpoints:
+    # set_model_version then picks that version's highest-priority tag.
+    is_checkpoint_missing = saved.checkpoint not in (None, model_discovery.CHECKPOINT_DEFAULT, *available)
+    if not available or is_checkpoint_missing:
+        _use_default_model(config, saved)
+        return
+    set_model_version(config, saved.version, saved.checkpoint or model_discovery.CHECKPOINT_DEFAULT)
+
+
+def _use_default_model(config: InferenceConfig, saved: SavedModelSelection) -> None:
+    default = model_discovery.default_for_family(config.model_type)
+    if default is not None:
+        _apply_artifacts(config, default)
+    fallback_version = default.version if default else None
+    fallback_description = f"default {config.model_type} {fallback_version}" if default else f"no loadable {config.model_type} model"
+    logger.warning(
+        MODEL_FALLBACK_LOG_EVENT,
+        extra={
+            "saved_type": saved.model_type,
+            "saved_version": saved.version,
+            "saved_checkpoint": saved.checkpoint,
+            "fallback_version": fallback_version,
+        },
+    )
+    config.model_fallback_message = (
+        f"Saved model {saved.model_type}/{saved.version}/{saved.checkpoint} is unavailable; "
+        f"using {fallback_description}"
+    )
 
 
 def load_touchid_settings(config: InferenceConfig | None = None) -> InferenceConfig:
@@ -260,12 +285,5 @@ def load_touchid_settings(config: InferenceConfig | None = None) -> InferenceCon
             config.idle_gate_k = payload["idle_gate_k"]
         if "onset_skip_s" in payload:
             config.onset_skip_s = payload["onset_skip_s"]
-        if "model_type" in payload and payload["model_type"] in model_discovery.ARCH_STEM_PREFIXES:
-            config.model_type = payload["model_type"]
-        version = payload.get("model_version")
-        if version and version in discover_model_versions(config.model_type):
-            checkpoint = payload.get("model_checkpoint") or "default"
-            if checkpoint not in discover_checkpoints(config.model_type, version):
-                checkpoint = "default"
-            set_model_version(config, version, checkpoint)
+        _restore_saved_model_selection(config, SavedModelSelection.from_payload(payload))
     return config

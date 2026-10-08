@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from core.piezo_engine.config import EngineConfig, TimingMode, TimingPolicy
+from core.piezo_engine.config import ENGINE_CONFIG_KEYS, EngineConfig, TimingMode, TimingPolicy
 from core.piezo_engine.median import CausalMedianN
 from core.piezo_engine.pipeline import (
     ALREADY_CONDITIONED_INPUT,
@@ -234,7 +234,6 @@ def test_compute_force_is_part_of_equality_and_the_canonical_dict():
     on, off = EngineConfig(timing=CONFIG.timing), EngineConfig(timing=CONFIG.timing, compute_force=False)
     assert on.to_dict()["compute_force"] is True and off.to_dict()["compute_force"] is False
     assert on != off
-    assert on.to_dict()["schema_version"] == 4
 
 
 def test_engine_config_round_trips_through_its_canonical_dict_and_json():
@@ -244,10 +243,21 @@ def test_engine_config_round_trips_through_its_canonical_dict_and_json():
     assert EngineConfig.from_dict(json.loads(json.dumps(config.to_dict()))) == config
 
 
-def test_engine_config_from_dict_refuses_a_foreign_schema():
+def test_engine_config_dict_keys_are_exactly_the_declared_key_set():
+    assert set(EngineConfig(timing=CONFIG.timing).to_dict()) == ENGINE_CONFIG_KEYS
+
+
+def test_engine_config_from_dict_refuses_an_extra_key_naming_it():
     record = EngineConfig(timing=CONFIG.timing).to_dict()
-    with pytest.raises(ValueError, match="schema"):
-        EngineConfig.from_dict({**record, "schema_version": record["schema_version"] - 1})
+    with pytest.raises(ValueError, match="unexpected keys .*surprise"):
+        EngineConfig.from_dict({**record, "surprise": 1})
+
+
+def test_engine_config_from_dict_refuses_a_missing_key_naming_it():
+    record = EngineConfig(timing=CONFIG.timing).to_dict()
+    del record["vref_voltage"]
+    with pytest.raises(ValueError, match="missing keys .*vref_voltage"):
+        EngineConfig.from_dict(record)
 
 
 def test_conditioning_record_round_trips_and_missing_record_means_raw():
@@ -255,11 +265,6 @@ def test_conditioning_record_round_trips_and_missing_record_means_raw():
     assert input_conditioning_from_record({}) == RAW_INPUT
     assert input_conditioning_from_record(conditioning_record(None)) == RAW_INPUT
     assert input_conditioning_from_record(conditioning_record(5)) == InputConditioning(5)
-
-
-def test_conditioning_record_reader_ignores_the_legacy_settle_trimmed_key():
-    legacy = {"median_window_samples": 3, "settle_trimmed_samples": 611}
-    assert input_conditioning_from_record(legacy) == InputConditioning(3)
 
 
 def test_upstream_median_window_mismatch_is_logged(caplog):

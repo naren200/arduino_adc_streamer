@@ -39,7 +39,7 @@ SOURCE_DIR_NAME = "src"
 CONFIG_RELATIVE_PATH = Path("configs") / "config.yaml"
 APP_ROOT_CONFIG_KEY = "arduino_adc_streamer_root"
 RUNTIME_PACKAGE = "touchid_inference.runtime"
-TRAIN_CONFIG_EXTRA_KEY = "train_config_path"  # RuntimeArtifacts.extra role (touchid_inference.runtime.api)
+CATALOG_ATTRIBUTE = "model_catalog"
 _RUNTIME_SENTINEL = Path("touchid_inference") / "runtime" / "__init__.py"
 
 # Generic top-level names texture_piezo code imports; each must resolve under <root>/src.
@@ -158,20 +158,43 @@ def runtime_api(root: Path = TEXTURE_PIEZO_ROOT):
     return _activate(Path(root))
 
 
-def runtime_artifacts(artifacts, root: Path = TEXTURE_PIEZO_ROOT):
-    """texture_piezo ``RuntimeArtifacts`` for an app ``ModelArtifacts``, field by field.
+def model_catalog(root: Path = TEXTURE_PIEZO_ROOT):
+    """texture_piezo's ``CatalogEntry`` tuple: every model family with a runtime, as plain data."""
+    runtime = runtime_api(root)
+    if not hasattr(runtime, CATALOG_ATTRIBUTE):
+        raise TexturePiezoUnavailableError(
+            f"texture_piezo checkout is too old: missing {CATALOG_ATTRIBUTE}; update texture_piezo"
+        )
+    return getattr(runtime, CATALOG_ATTRIBUTE)()
 
-    ``extra`` carries the training config of the same texture_piezo checkout the runtime package came from."""
-    return runtime_api(root).RuntimeArtifacts(
-        model_type=artifacts.model_type,
-        version=artifacts.version,
-        checkpoint_path=artifacts.checkpoint_path,
-        checkpoint=artifacts.checkpoint,
-        scaler_path=artifacts.scaler_path,
-        raw_norm_stats_path=artifacts.raw_norm_stats_path,
-        feature_names_path=artifacts.feature_names_path,
-        extra={TRAIN_CONFIG_EXTRA_KEY: Path(root) / CONFIG_RELATIVE_PATH},
-    )
+
+class NotABundleError(ValueError):
+    """The file's content is not a texture_piezo model bundle (re-export it from its notebook)."""
+
+
+def read_model_header(path: Path, root: Path = TEXTURE_PIEZO_ROOT):
+    """texture_piezo's ``ModelHeader`` for the checkpoint at ``path``, read from the file's content.
+
+    Fields: model_family, model_version (code version), weights_version, checkpoint_tag, bundle_id (unique per
+    written bundle), class_names, metrics, eval_protocol; plus ``label`` (family, weights version, tag, created date). Raises ``NotABundleError`` for a file that is not a bundle; a file that claims the schema
+    but is inconsistent raises texture_piezo's own ValueError subclass."""
+    runtime = runtime_api(root)
+    try:
+        return runtime.read_model_header(path)
+    except runtime.NotABundleError as error:
+        raise NotABundleError(str(error)) from error
+
+
+def read_default_models(path: Path | None = None, root: Path = TEXTURE_PIEZO_ROOT):
+    """texture_piezo's ``DefaultModels`` (``app_family`` and ``by_family`` -> ``ModelPointer``) from its tracked
+    ``configs/default_models.json`` (or ``path``). FileNotFoundError / OSError when unreadable, ValueError when invalid."""
+    reader = runtime_api(root).read_default_models
+    return reader() if path is None else reader(path)
+
+
+def runtime_artifacts(artifacts, root: Path = TEXTURE_PIEZO_ROOT):
+    """texture_piezo ``RuntimeArtifacts`` for an app ``ModelArtifacts``: the family and the one bundle file."""
+    return runtime_api(root).RuntimeArtifacts(model_type=artifacts.model_type, checkpoint_path=artifacts.checkpoint_path)
 
 
 def load_runtime(model_type: str, artifacts, class_names: Sequence[str]):

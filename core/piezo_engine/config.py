@@ -35,7 +35,16 @@ DEFAULT_JERK_INTEGRATION_WINDOW_SAMPLES = 22
 # smoothing the raw Normal Jerk signal the shear is subtracted from.
 SHEAR_JERK_SMOOTHING_WINDOW_SAMPLES = 6
 DEFAULT_VREF_VOLTAGE = 3.3
-ENGINE_CONFIG_SCHEMA_VERSION = 4
+ENGINE_CONFIG_KEYS = frozenset({
+    "blip_window_samples",
+    "integration_window_samples",
+    "jerk_window_samples",
+    "smoothing_window_samples",
+    "vref_voltage",
+    "timing",
+    "force",
+    "compute_force",
+})
 
 
 class TimingMode(str, Enum):
@@ -267,7 +276,6 @@ class EngineConfig:
     def to_dict(self) -> dict:
         """JSON-safe canonical form."""
         return {
-            "schema_version": ENGINE_CONFIG_SCHEMA_VERSION,
             "blip_window_samples": int(self.blip_window_samples),
             "integration_window_samples": int(self.integration_window_samples),
             "jerk_window_samples": int(self.jerk_window_samples),
@@ -280,9 +288,8 @@ class EngineConfig:
 
     @classmethod
     def from_dict(cls, record: Mapping) -> "EngineConfig":
-        """Inverse of :meth:`to_dict`; refuses a record written by another schema."""
-        if record.get("schema_version") != ENGINE_CONFIG_SCHEMA_VERSION:
-            raise ValueError(f"engine config schema {record.get('schema_version')!r} != {ENGINE_CONFIG_SCHEMA_VERSION}")
+        """Inverse of :meth:`to_dict`; refuses a record whose keys are not exactly ``ENGINE_CONFIG_KEYS``."""
+        cls._require_exact_keys(record)
         return cls(
             blip_window_samples=record["blip_window_samples"],
             integration_window_samples=record["integration_window_samples"],
@@ -293,3 +300,10 @@ class EngineConfig:
             force=ForceSettings.from_dict(record["force"]),
             compute_force=record["compute_force"],
         )
+
+    @staticmethod
+    def _require_exact_keys(record: Mapping) -> None:
+        missing = sorted(ENGINE_CONFIG_KEYS - record.keys())
+        unexpected = sorted(record.keys() - ENGINE_CONFIG_KEYS)
+        if missing or unexpected:
+            raise ValueError(f"engine config record has missing keys {missing} and unexpected keys {unexpected}")

@@ -32,7 +32,6 @@ def engine_config_for_model(model) -> EngineConfig:
         config = EngineConfig.from_dict(model.engine_config)
     except (KeyError, ValueError, TypeError) as exc:
         raise EngineConfigMismatchError(f"the model's engine config cannot be rebuilt by this engine: {exc}") from exc
-    config = config
     require_engine_supports_model(model, config)
     return config
 

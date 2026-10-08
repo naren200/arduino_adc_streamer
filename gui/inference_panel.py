@@ -27,6 +27,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+import json
+import logging
 import re
 
 from core.texture_piezo.models.classifier import TextureClassifier
@@ -43,7 +45,7 @@ from core.texture_piezo.application.inference_config import (
     save_touchid_settings,
     set_model_version,
 )
-from core.texture_piezo.models.architectures import ARCH_REGISTRY
+from core.texture_piezo.models import model_discovery
 from core.texture_piezo.models.model_discovery import CHECKPOINT_DEFAULT
 from core.texture_piezo.application.mode import TouchIdMode
 from core.texture_piezo.application.quality_gate_settings import load_idle_baseline, save_idle_baseline
@@ -60,14 +62,11 @@ from core.texture_piezo.application.live_model import (
 from core.piezo_engine.config import EngineConfigMismatchError
 from constants.plotting import PLOT_COLORS
 
-# Display label (combo box text) -> InferenceConfig.model_type key. Built from
-# ARCH_REGISTRY so a new architecture registered there (architectures.py)
-# shows up in the combo automatically -- no GUI change needed to add one.
-_MODEL_TYPE_DISPLAY_NAMES = {
-    "ann": "ANN", "cnn": "CNN", "quad": "Quad", "penta": "Penta", "chunk": "Chunk",
-}
-_MODEL_TYPE_LABELS = [_MODEL_TYPE_DISPLAY_NAMES.get(key, key.upper()) for key in ARCH_REGISTRY]
-_MODEL_TYPE_BY_LABEL = {label: key for key, label in zip(ARCH_REGISTRY, _MODEL_TYPE_LABELS)}
+logger = logging.getLogger(__name__)
+
+# What reading the saved settings file can raise: unreadable (OSError) or not valid UTF-8 JSON.
+SETTINGS_FILE_READ_FAILURES = (OSError, json.JSONDecodeError, UnicodeDecodeError)
+SETTINGS_UNREADABLE_LOG_EVENT = "touchid_settings_unreadable"
 
 _PZT_SENSOR_LABEL_RE = re.compile(r"^PZT(\d+)_[BLCRT]$")
 _FALLBACK_PZT_SENSOR_NUMBERS = ["1", "3", "5", "6", "7"]
@@ -83,6 +82,7 @@ _TOUCHID_BELOW_THRESHOLD_COLOR = "#999999"
 # picks up from Windows 11's system dark mode) -- this brighter green keeps
 # contrast in both.
 _TOUCHID_STATUS_OK_COLOR = "#33cc33"
+_TOUCHID_STATUS_WARNING_STYLE = "color: #e68a00; font-weight: bold;"
 
 _TOUCHID_WINDOW_MIN_S = 0.05
 # QDoubleSpinBox needs a finite maximum; this is effectively "no upper limit".
@@ -129,18 +129,22 @@ _TOUCHID_REGION_FALLBACK_COLOR = (255, 235, 59)
 class InferencePanelMixin:
     """Mixin providing the TouchID live-classification tab."""
 
+    @staticmethod
+    def _touchid_config_with_saved_settings(config):
+        """``config`` with the saved settings applied; an unreadable settings file leaves it at defaults."""
+        try:
+            return load_touchid_settings(config)
+        except SETTINGS_FILE_READ_FAILURES as exc:
+            logger.warning(SETTINGS_UNREADABLE_LOG_EVENT, extra={"error_type": type(exc).__name__, "reason": str(exc)})
+            return config
+
     def init_touchid_state(self):
         """Load config, build the inference pipeline objects, and set up the timer.
 
         Called once from __init__, before create_touchid_tab().
         """
         self.touchid_config = InferenceConfig()
-        try:
-            loaded = load_touchid_settings(self.touchid_config)
-            if loaded is not None:
-                self.touchid_config = loaded
-        except Exception:
-            pass
+        self.touchid_config = self._touchid_config_with_saved_settings(self.touchid_config)
 
         self.touchid_smoother = WindowedVoteSmoother(
             class_names=self.touchid_config.class_names,
@@ -364,10 +368,11 @@ class InferencePanelMixin:
 
         control_layout.addWidget(QLabel('Model:'), 0, 7)
         self.touchid_model_type_combo = QComboBox()
-        self.touchid_model_type_combo.addItems(_MODEL_TYPE_LABELS)
-        self.touchid_model_type_combo.setCurrentText(
-            _MODEL_TYPE_DISPLAY_NAMES.get(self.touchid_config.model_type, self.touchid_config.model_type.upper()))
-        self.touchid_model_type_combo.currentTextChanged.connect(self.on_touchid_model_type_changed)
+        for model_type in model_discovery.family_keys():
+            self.touchid_model_type_combo.addItem(model_discovery.display_name_of(model_type), model_type)
+        self.touchid_model_type_combo.setCurrentIndex(
+            max(self.touchid_model_type_combo.findData(self.touchid_config.model_type), 0))
+        self.touchid_model_type_combo.currentIndexChanged.connect(self.on_touchid_model_type_changed)
         control_layout.addWidget(self.touchid_model_type_combo, 0, 8)
 
         control_layout.addWidget(QLabel('Version:'), 0, 9)
@@ -669,8 +674,12 @@ class InferencePanelMixin:
         if self.touchid_classifier_error:
             return 'Model not loaded: ' + self.touchid_classifier_error, 'color: #cc0000; font-weight: bold;'
         text = f'Model loaded ({self.touchid_config.model_type.upper()})'
+        if self.touchid_config.model_fallback_message:
+            text = f'{text} - {self.touchid_config.model_fallback_message}'
+            if not self._touchid_ingest_warning:
+                return text, _TOUCHID_STATUS_WARNING_STYLE
         if self._touchid_ingest_warning:
-            return f'{text} - WARNING: {self._touchid_ingest_warning}', 'color: #e68a00; font-weight: bold;'
+            return f'{text} - WARNING: {self._touchid_ingest_warning}', _TOUCHID_STATUS_WARNING_STYLE
         return text, f'color: {_TOUCHID_STATUS_OK_COLOR}; font-weight: bold;'
 
     def _touchid_refresh_model_status(self):
@@ -953,15 +962,15 @@ class InferencePanelMixin:
             for col in self.touchid_config.pzt_columns:
                 self.touchid_stream_display_samples[col] = self.touchid_stream_display_samples[col][keep]
 
-    def on_touchid_model_type_changed(self, text):
-        """Switch the active architecture (any key in ARCH_REGISTRY) and reload it from disk.
+    def on_touchid_model_type_changed(self, index):
+        """Switch the active architecture (any catalog family) and reload it from disk.
 
         Every model type shares the same InferenceConfig/TextureClassifier/reload
         path — only config.model_type and which weight file gets loaded differ —
         so switching is just: update the type, then run the same reload used by
         the Reload Model Weights button.
         """
-        new_type = _MODEL_TYPE_BY_LABEL.get(text, 'ann')
+        new_type = self.touchid_model_type_combo.itemData(index)
         if new_type == self.touchid_config.model_type:
             return
         self.touchid_config.model_type = new_type
@@ -1075,6 +1084,7 @@ class InferencePanelMixin:
 
         self.touchid_classifier = None
         self.touchid_classifier_error = None
+        self.touchid_config.model_fallback_message = ""
         self._touchid_reset_smoother()
 
         self._touchid_load_classifier()

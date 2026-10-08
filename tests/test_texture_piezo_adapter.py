@@ -6,6 +6,7 @@ throw-away fake checkouts so no real sys.path is touched."""
 import json
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -115,25 +116,37 @@ def test_the_guard_list_covers_the_modules_texture_piezo_runtimes_import():
 
 
 @needs_texture_piezo
-def test_runtime_artifacts_carry_every_discovered_field():
+def test_runtime_artifacts_carry_the_family_and_the_bundle_path():
     from core.texture_piezo.models.model_discovery import ModelArtifacts
 
     artifacts = ModelArtifacts(
-        model_type="ann", version="v3", checkpoint="best", checkpoint_path=Path("a.pt"),
-        scaler_path=Path("s.pkl"), raw_norm_stats_path=None, feature_names_path=Path("f.json"))
+        model_type="ann", version="v3", checkpoint="best", checkpoint_path=Path("a.pt"), model_version="v1",
+        class_names=("a", "b"), bundle_id="20260101T000000Z-00000000", checkpoint_tag="best", label="ann v3 / best")
     converted = adapter.runtime_artifacts(artifacts)
-    assert (converted.model_type, converted.version, converted.checkpoint) == ("ann", "v3", "best")
-    assert (converted.checkpoint_path, converted.scaler_path, converted.feature_names_path) == (
-        Path("a.pt"), Path("s.pkl"), Path("f.json"))
-    assert converted.raw_norm_stats_path is None
+    assert (converted.model_type, converted.checkpoint_path) == ("ann", Path("a.pt"))
 
 
 @needs_texture_piezo
-def test_runtime_artifacts_pass_the_checkout_training_config_in_extra():
-    from core.texture_piezo.models.model_discovery import ModelArtifacts
+def test_a_state_dict_file_is_reported_as_not_a_bundle(tmp_path):
+    import torch
 
-    artifacts = ModelArtifacts(model_type="quad", version="v4", checkpoint="default", checkpoint_path=Path("q.pt"),
-        scaler_path=None, raw_norm_stats_path=None, feature_names_path=None)
-    converted = adapter.runtime_artifacts(artifacts)
-    expected = adapter.TEXTURE_PIEZO_ROOT / "configs" / "config.yaml"
-    assert Path(converted.extra[adapter.TRAIN_CONFIG_EXTRA_KEY]) == expected
+    path = tmp_path / "ann_v3.bundle.pt"
+    torch.save({"net.0.weight": torch.zeros(2, 2)}, path)
+    with pytest.raises(adapter.NotABundleError, match="not a model bundle"):
+        adapter.read_model_header(path)
+
+
+@needs_texture_piezo
+def test_the_real_texture_piezo_offers_a_catalog_of_plain_family_entries():
+    catalog = adapter.model_catalog()
+    assert catalog
+    keys = [entry.key for entry in catalog]
+    assert len(set(keys)) == len(keys)
+    assert all(entry.display_name and entry.versions for entry in catalog)
+
+
+def test_a_texture_piezo_without_model_catalog_is_refused_with_a_clear_message(monkeypatch):
+    outdated_runtime = types.SimpleNamespace()
+    monkeypatch.setattr(adapter, "runtime_api", lambda root=TEXTURE_PIEZO_ROOT: outdated_runtime)
+    with pytest.raises(adapter.TexturePiezoUnavailableError, match="too old: missing model_catalog; update texture_piezo"):
+        adapter.model_catalog()

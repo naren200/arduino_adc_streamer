@@ -1,4 +1,4 @@
-"""Headless end-to-end replay of a real capture through the TouchID path for every real-checkpoint model family.
+"""Headless end-to-end replay of a real capture through the TouchID path for every real-checkpoint model family (pinned ann/quad/penta, newest loadable chunk).
 
 The capture goes through the same steps as ``InferencePanel``'s replay (snapshot loader ->
 TouchIdStreamProcessor on the loaded model's EngineConfig and required channels -> LiveWindow
@@ -30,9 +30,8 @@ from core.texture_piezo.application.live_model import engine_config_for_model, r
 from core.texture_piezo.application.stream_processor import TouchIdStreamProcessor
 from core.texture_piezo.gating.quality_gate import fit_idle_baseline
 from core.texture_piezo.models import model_discovery
-from core.texture_piezo.models.architectures import ARCH_REGISTRY
 from core.texture_piezo.models.classifier import TextureClassifier
-from core.texture_piezo.models.model_discovery import DEFAULT_CLASS_NAMES, ModelArtifacts
+from core.texture_piezo.models.model_discovery import ModelArtifacts
 from inference import texture_piezo_adapter as adapter
 from inference._paths import TEXTURE_PIEZO_ROOT
 
@@ -44,13 +43,15 @@ RECORDED_PREDICTIONS = 5
 PROBABILITY_TOLERANCE = 1e-9
 RESULTS_ENV_VAR = "C1_E2E_RESULTS"
 
-REAL_CHECKPOINTS = {
+PINNED_CHECKPOINTS = {
     "ann-v3b": ("ann", "v3b", "best"),
     "ann-v5": ("ann", "v5", "partial_finetune"),
     "quad-v4": ("quad", "v4", "default"),
     "penta-v1": ("penta", "v1", "default"),
-    "chunk-n28-rc": ("chunk", "v3", "scales20_25_ff111259-n28-eng2e6382d3_rc"),
 }
+NEWEST_LOADABLE_CHUNK_LABEL = "chunk-newest"
+CHUNK_FAMILY = "chunk"
+REPLAY_LABELS = [*PINNED_CHECKPOINTS, NEWEST_LOADABLE_CHUNK_LABEL]
 
 pytestmark = pytest.mark.skipif(
     not (CAPTURE_DIR / f"{CAPTURE_STEM}.csv").is_file(), reason="texture_piezo raw capture not available",
@@ -78,11 +79,25 @@ def idle_baseline(snapshot):
     return fit_idle_baseline(np.concatenate(chunks), columns, float(snapshot.sample_rate_hz), k=InferenceConfig().idle_gate_k)
 
 
-def real_artifacts(model_type, version, checkpoint) -> ModelArtifacts:
+def pinned_artifacts(model_type, version, checkpoint) -> ModelArtifacts:
+    """A missing expected checkpoint fails (never skips): a skip would silently drop live-path coverage."""
     artifacts = model_discovery.artifacts_for(model_type, version, checkpoint)
     if artifacts is None or not artifacts.checkpoint_path.is_file():
-        pytest.skip(f"{model_type} {version} {checkpoint} checkpoint not on this machine")
+        pytest.fail(f"expected {model_type} {version}/{checkpoint} checkpoint is missing from the models folder")
     return artifacts
+
+
+def newest_loadable_artifacts(model_type) -> ModelArtifacts:
+    loadable = model_discovery.loadable(model_type)
+    if not loadable:
+        pytest.fail(f"no loadable {model_type} model found in the models folder")
+    return max(loadable, key=lambda found: found.artifacts.bundle_id).artifacts
+
+
+def artifacts_for_label(label) -> ModelArtifacts:
+    if label == NEWEST_LOADABLE_CHUNK_LABEL:
+        return newest_loadable_artifacts(CHUNK_FAMILY)
+    return pinned_artifacts(*PINNED_CHECKPOINTS[label])
 
 
 def replay_windows(snapshot, idle_baseline, runtime):
@@ -139,7 +154,7 @@ def assert_live_equals_offline(ready, channels, trimmed_ts):
 
 
 def check_family(label, snapshot, idle_baseline, artifacts, class_names):
-    runtime = ARCH_REGISTRY[artifacts.model_type].load(artifacts, class_names)
+    runtime = adapter.load_runtime(artifacts.model_type, adapter.runtime_artifacts(artifacts), class_names)
     processor, ready = replay_windows(snapshot, idle_baseline, runtime)
     assert ready, "the replay produced no windows"
     channels, trimmed_ts = offline_reference(snapshot, processor)
@@ -163,18 +178,19 @@ def check_family(label, snapshot, idle_baseline, artifacts, class_names):
         Path(dump_path).write_text(json.dumps(_RECORDED, indent=1), encoding="utf-8")
 
 
-@pytest.mark.parametrize("label", list(REAL_CHECKPOINTS))
+@pytest.mark.parametrize("label", REPLAY_LABELS)
 def test_real_checkpoint_replay(label, snapshot, idle_baseline):
-    check_family(label, snapshot, idle_baseline, real_artifacts(*REAL_CHECKPOINTS[label]), DEFAULT_CLASS_NAMES)
+    artifacts = artifacts_for_label(label)
+    check_family(label, snapshot, idle_baseline, artifacts, artifacts.class_names)
 
 
 def test_texture_classifier_wraps_the_registry_runtime_for_a_real_checkpoint(snapshot, idle_baseline):
-    artifacts = real_artifacts(*REAL_CHECKPOINTS["penta-v1"])
+    artifacts = pinned_artifacts(*PINNED_CHECKPOINTS["penta-v1"])
     config = InferenceConfig(model_type="penta")
     model_discovery.refresh()
     set_model_version(config, artifacts.version, artifacts.checkpoint)
     classifier = TextureClassifier(config)
     _processor, ready = replay_windows(snapshot, idle_baseline, classifier)
     probabilities = classifier.predict_proba(ready[len(ready) // 2].window)
-    assert list(probabilities) == list(DEFAULT_CLASS_NAMES)
+    assert list(probabilities) == list(classifier.class_names) == list(artifacts.class_names)
     assert classifier.engine_config is None and not classifier.expected_ingest_blip_filter

@@ -105,7 +105,7 @@ class TouchIdModelBindingTests(unittest.TestCase):
 
     def test_a_model_whose_engine_config_cannot_be_rebuilt_is_refused_at_load(self):
         harness = self.make_harness(None)
-        broken = SimpleNamespace(engine_config={"schema_version": -1}, required_channels=DEFAULT_CHANNELS)
+        broken = SimpleNamespace(engine_config={"unknown_key": 1}, required_channels=DEFAULT_CHANNELS)
         with patch("gui.inference_panel.TextureClassifier", return_value=broken):
             harness._touchid_reload_model()
         self.assertIsNone(harness.touchid_classifier)

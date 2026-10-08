@@ -194,7 +194,7 @@ def test_a_force_runtime_whose_config_computes_no_force_is_refused():
 
 def test_a_config_this_engine_cannot_rebuild_is_refused():
     with pytest.raises(EngineConfigMismatchError, match="cannot be rebuilt"):
-        engine_config_for_model(FakeRuntime({"schema_version": -1}, DEFAULT_CHANNELS))
+        engine_config_for_model(FakeRuntime({"unknown_key": 1}, DEFAULT_CHANNELS))
 
 
 def test_required_channels_default_to_the_non_force_engine_channels():
