@@ -1,0 +1,246 @@
+{
+  "captures": 25,
+  "outcomes": {
+    "WARN": 8,
+    "PASS": 17
+  },
+  "measured_frames": 40999,
+  "received_frames_including_warmup": 58049,
+  "measured_samples": 1405300,
+  "errors": {
+    "invalid_frames": 0,
+    "discarded_bytes": 0,
+    "transfer_errors": 0,
+    "data_errors": 0,
+    "usb_write_errors": 0
+  },
+  "lost_sent_frames": 0,
+  "noise_counts_max": 0.5029973450366667,
+  "run_summaries": [
+    {
+      "session": "smoke",
+      "test": "array1__mux__blocking__spi16000000__repeat1__settle5__vmidoff",
+      "result": "WARN",
+      "minimum_channel_mean_volts": 1.5926246276824663,
+      "maximum_channel_mean_volts": 1.6524169921874998,
+      "measured_frames": 3958,
+      "usb_discard_percent": 19.00656814449918
+    },
+    {
+      "session": "smoke",
+      "test": "array1__mux__dma__spi16000000__repeat1__settle5__vmidoff",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.596960407940746,
+      "maximum_channel_mean_volts": 1.6531926884198234,
+      "measured_frames": 3253,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "smoke",
+      "test": "array1__mux__lpspi__spi16000000__repeat1__settle5__vmidoff",
+      "result": "WARN",
+      "minimum_channel_mean_volts": 1.591992522913849,
+      "maximum_channel_mean_volts": 1.6524166567736578,
+      "measured_frames": 4804,
+      "usb_discard_percent": 7.394084732214228
+    },
+    {
+      "session": "smoke",
+      "test": "array2__mux__blocking__spi16000000__repeat1__settle5__vmidoff",
+      "result": "WARN",
+      "minimum_channel_mean_volts": 1.52980010974631,
+      "maximum_channel_mean_volts": 1.6234129315365677,
+      "measured_frames": 5218,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "smoke",
+      "test": "array2__mux__dma__spi16000000__repeat1__settle5__vmidoff",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.571011239024554,
+      "maximum_channel_mean_volts": 1.64194583605518,
+      "measured_frames": 3253,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "smoke",
+      "test": "array2__mux__lpspi__spi16000000__repeat1__settle5__vmidoff",
+      "result": "WARN",
+      "minimum_channel_mean_volts": 1.5259249981574308,
+      "maximum_channel_mean_volts": 1.6209962457620892,
+      "measured_frames": 5300,
+      "usb_discard_percent": 0.8257858284496538
+    },
+    {
+      "session": "smoke",
+      "test": "arrayboth__mux__blocking__spi16000000__repeat1__settle5__vmidoff",
+      "result": "WARN",
+      "minimum_channel_mean_volts": 1.5286213075209512,
+      "maximum_channel_mean_volts": 1.6477561149535531,
+      "measured_frames": 2476,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "smoke",
+      "test": "arrayboth__mux__dma__spi16000000__repeat1__settle5__vmidoff",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.570145587848439,
+      "maximum_channel_mean_volts": 1.6516200297063581,
+      "measured_frames": 1574,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "smoke",
+      "test": "arrayboth__mux__lpspi__spi16000000__repeat1__settle5__vmidoff",
+      "result": "WARN",
+      "minimum_channel_mean_volts": 1.5244383805575352,
+      "maximum_channel_mean_volts": 1.6475830078125,
+      "measured_frames": 2543,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "settling",
+      "test": "arrayboth__mux__lpspi__spi16000000__repeat1__settle5__vmidoff",
+      "result": "WARN",
+      "minimum_channel_mean_volts": 1.5244256220069972,
+      "maximum_channel_mean_volts": 1.6475830078125,
+      "measured_frames": 2545,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "settling",
+      "test": "arrayboth__mux__lpspi__spi16000000__repeat1__settle5__vmidon",
+      "result": "WARN",
+      "minimum_channel_mean_volts": 1.5613763446173998,
+      "maximum_channel_mean_volts": 1.6242187499999998,
+      "measured_frames": 1324,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "settling",
+      "test": "arrayboth__mux__lpspi__spi16000000__repeat3__settle5__vmidoff",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.5734619140625,
+      "maximum_channel_mean_volts": 1.6524169921874998,
+      "measured_frames": 1411,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "settling",
+      "test": "arrayboth__mux__lpspi__spi16000000__repeat3__settle5__vmidon",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.583934685202205,
+      "maximum_channel_mean_volts": 1.6459690946691172,
+      "measured_frames": 935,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "settling",
+      "test": "arrayboth__mux__lpspi__spi16000000__repeat1__settle50__vmidoff",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.6217219305475912,
+      "maximum_channel_mean_volts": 1.6524169921874998,
+      "measured_frames": 545,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "settling",
+      "test": "arrayboth__mux__lpspi__spi16000000__repeat1__settle50__vmidon",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.6193794825819672,
+      "maximum_channel_mean_volts": 1.6508056640625,
+      "measured_frames": 305,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "settling",
+      "test": "arrayboth__mux__lpspi__spi16000000__repeat3__settle50__vmidoff",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.6247177419354835,
+      "maximum_channel_mean_volts": 1.6532226562499999,
+      "measured_frames": 465,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "settling",
+      "test": "arrayboth__mux__lpspi__spi16000000__repeat3__settle50__vmidon",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.622607421875,
+      "maximum_channel_mean_volts": 1.651611328125,
+      "measured_frames": 278,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "scan_orders",
+      "test": "arrayboth__channel__blocking__spi8000000__repeat3__settle50__vmidon",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.6218017578125,
+      "maximum_channel_mean_volts": 1.6508056640625,
+      "measured_frames": 80,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "scan_orders",
+      "test": "arrayboth__channel__dma__spi8000000__repeat3__settle50__vmidon",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.6242187499999998,
+      "maximum_channel_mean_volts": 1.6508056640625,
+      "measured_frames": 70,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "scan_orders",
+      "test": "arrayboth__channel__lpspi__spi8000000__repeat3__settle50__vmidon",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.6218017578125,
+      "maximum_channel_mean_volts": 1.6508056640625,
+      "measured_frames": 80,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "scan_orders",
+      "test": "arrayboth__interleaved__blocking__spi8000000__repeat3__settle50__vmidon",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.6218017578125,
+      "maximum_channel_mean_volts": 1.6508056640625,
+      "measured_frames": 79,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "scan_orders",
+      "test": "arrayboth__interleaved__dma__spi8000000__repeat3__settle50__vmidon",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.6242187499999998,
+      "maximum_channel_mean_volts": 1.6508056640625,
+      "measured_frames": 70,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "scan_orders",
+      "test": "arrayboth__interleaved__lpspi__spi8000000__repeat3__settle50__vmidon",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.6218017578125,
+      "maximum_channel_mean_volts": 1.6508056640625,
+      "measured_frames": 80,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "long_settling",
+      "test": "arrayboth__mux__lpspi__spi16000000__repeat1__settle100__vmidoff",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.6363037109374998,
+      "maximum_channel_mean_volts": 1.6516390141752568,
+      "measured_frames": 291,
+      "usb_discard_percent": 0.0
+    },
+    {
+      "session": "long_settling",
+      "test": "arrayboth__mux__lpspi__spi16000000__repeat1__settle500__vmidoff",
+      "result": "PASS",
+      "minimum_channel_mean_volts": 1.6499740108366936,
+      "maximum_channel_mean_volts": 1.6508316532258063,
+      "measured_frames": 62,
+      "usb_discard_percent": 0.0
+    }
+  ]
+}

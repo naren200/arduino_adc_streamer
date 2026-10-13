@@ -2,6 +2,9 @@
 
 #include "ApiProtocol.h"
 
+// Provided by this project's audited, build-local Teensy USB core repair.
+extern "C" int usb_serial_try_write_frame(const void *buffer, uint32_t size);
+
 void UsbSerialController::begin(uint32_t baud) {
   Serial.begin(baud);
   input_.reserve(api_protocol::kMaxCommandLength);
@@ -40,10 +43,23 @@ void UsbSerialController::writeAck(bool success, const String &arguments) {
   Serial.flush();
 }
 
-void UsbSerialController::writeBinaryBlock(const uint8_t *data, uint32_t length) {
-  Serial.write(data, length);
+bool UsbSerialController::writeBinaryBlock(const uint8_t *data, uint32_t length) {
+  if (Serial.write(data, length) != length) {
+    ++write_errors_;
+    return false;
+  }
   // Do not flush binary traffic. Teensy USB queues these bytes, allowing the
   // next acquisition to begin while the USB peripheral drains its buffer.
+  return true;
+}
+
+UsbSerialController::FrameWrite UsbSerialController::tryWriteBinaryBlock(
+    const uint8_t *data, uint32_t length) {
+  const int written = usb_serial_try_write_frame(data, length);
+  if (written == static_cast<int>(length)) return FrameWrite::Sent;
+  if (written == 0) return FrameWrite::Discarded;
+  ++write_errors_;
+  return FrameWrite::Error;
 }
 
 void UsbSerialController::beginBinaryBlock(uint16_t sample_count) {

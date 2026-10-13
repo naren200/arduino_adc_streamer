@@ -18,13 +18,17 @@ from typing import Any, Optional, Sequence
 
 if __package__:
     from .benchmark_common import BinaryFrameParser, uint32_delta
+    from .firmware_profile import save_profile
 else:
     from benchmark_common import BinaryFrameParser, uint32_delta
+    from firmware_profile import save_profile
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_MANIFEST = HERE / "testboard_adc124_routes.json"
 REFERENCE_VOLTS = 3.3
 COUNTERS = ("transfer_errors", "data_errors")
+LIVE_COUNTERS = ("sampling_sweeps", "usb_frames_sent", "usb_frames_discarded",
+                 "sampling_period_max_us", "sampling_period_over_1ms", "usb_write_errors")
 
 
 class BenchmarkError(RuntimeError):
@@ -151,7 +155,7 @@ def parse_status(lines: Sequence[str]) -> dict[str, str]:
 def validate_status(status, config: BenchmarkConfig, routes: Sequence[Route]):
     active = selected_routes(routes, config.array)
     expected = {
-        "board": "TestBoard_ADC124", "protocol_version": "1", "mode": "PZT",
+        "board": "TestBoard_ADC124", "mode": "PZT",
         "array": config.array, "scanorder": config.scanorder,
         "spiengine": config.spiengine, "spi_clock_hz": str(config.spi_clock_hz),
         "channelrepeat": str(config.channelrepeat), "mux_settle_us": str(config.mux_settle_us),
@@ -164,11 +168,23 @@ def validate_status(status, config: BenchmarkConfig, routes: Sequence[Route]):
     }
     mismatches = [f"{key}: expected {value!r}, got {status.get(key)!r}"
                   for key, value in expected.items() if status.get(key) != value]
-    for key in (*COUNTERS, "sweep_count"):
+    version = status.get("protocol_version")
+    if version not in ("1", "2"):
+        mismatches.append(f"unsupported protocol_version: {version!r}")
+    if version == "2":
+        if status.get("usb_stream_policy") != "discard_if_busy":
+            mismatches.append("expected usb_stream_policy=discard_if_busy")
+        if status.get("running") != "false":
+            mismatches.append("expected stopped firmware status")
+    for key in (*COUNTERS, "sweep_count", *(LIVE_COUNTERS if version == "2" else ())):
         if not status.get(key, "").isascii() or not status.get(key, "").isdecimal():
             mismatches.append(f"missing/invalid counter {key}")
     if mismatches:
         raise BenchmarkError("Status mismatch: " + "; ".join(mismatches))
+
+
+def error_counter_keys(status):
+    return (*COUNTERS, "usb_write_errors") if status.get("protocol_version") == "2" else COUNTERS
 
 
 class SerialProtocol:
@@ -221,8 +237,13 @@ class SerialProtocol:
         self.drain()
 
 
-def configure(protocol: SerialProtocol, config: BenchmarkConfig, routes):
+def configure(protocol: SerialProtocol, config: BenchmarkConfig, routes, profile="off"):
     protocol.command("stop")
+    initial = parse_status(protocol.command("status"))
+    if initial.get("profile_available") == "true":
+        protocol.command(f"profile {profile}")
+    elif profile == "on":
+        raise BenchmarkError("Profiling requires the teensy41_profile firmware build")
     for command in ("mode PZT", f"array {config.array}",
                     "adcchannels " + ",".join(map(str, routes)),
                     f"scanorder {config.scanorder}", "ref 3.3",
@@ -232,9 +253,29 @@ def configure(protocol: SerialProtocol, config: BenchmarkConfig, routes):
         protocol.command(command)
     status = parse_status(protocol.command("status"))
     validate_status(status, config, routes)
-    if any(int(status[k]) for k in COUNTERS):
+    if any(int(status[k]) for k in error_counter_keys(status)):
         raise BenchmarkError("Firmware has existing error counters; reset the Teensy")
     return status
+
+
+def stream_accounting(before, after, received_frames):
+    """Separate intentional complete-sweep USB omissions from lost sent data."""
+    sampling = uint32_delta(int(after["sweep_count"]), int(before["sweep_count"]))
+    sent, discarded = sampling, 0
+    failures = []
+    if after.get("protocol_version") == "2":
+        sent, discarded = int(after["usb_frames_sent"]), int(after["usb_frames_discarded"])
+        if sampling != int(after["sampling_sweeps"]) or sampling != sent + discarded:
+            failures.append("inconsistent sampling/sent/discarded sweep counts")
+    if received_frames != sent:
+        failures.append("received/firmware transmitted sweep count mismatch")
+    result = {"firmware_sweeps": sampling, "sampling_sweeps": sampling,
+              "usb_frames_sent": sent, "usb_frames_discarded": discarded,
+              "usb_discard_percent": 100 * discarded / sampling if sampling else 0,
+              "usb_stream_policy": after.get("usb_stream_policy", "blocking"),
+              "sampling_period_max_us": after.get("sampling_period_max_us", ""),
+              "sampling_period_over_1ms": after.get("sampling_period_over_1ms", "")}
+    return result, failures
 
 
 @dataclass
@@ -272,6 +313,8 @@ RESULT_FIELDS = ("test_id", "repetition", "result", "reason", "array", "scanorde
                  "min_sweep_period_us", "max_sweep_period_us", "invalid_frames", "discarded_bytes",
                  "resync_events", "trailing_bytes", "timed_out", "transfer_errors", "data_errors",
                  "firmware_sweeps", "received_frames")
+RESULT_FIELDS += ("sampling_sweeps", "usb_frames_sent", "usb_frames_discarded", "usb_discard_percent",
+                  "usb_stream_policy", "sampling_period_max_us", "sampling_period_over_1ms", "usb_write_errors")
 
 
 def write_csv(path, fields, rows):
@@ -289,7 +332,7 @@ def write_json(path, data):
 
 def capture(protocol, config, routes, args, directory):
     """Stream one continuous warm-up + measured run to per-run artifacts."""
-    before = configure(protocol, config, routes)
+    before = configure(protocol, config, routes, args.profile)
     order = payload_order(selected_routes(routes, config.array), config.scanorder)
     parser = BinaryFrameParser(expected_sample_count=len(order), max_sample_count=50)
     stats = {r: OnlineStats() for r in order}
@@ -304,6 +347,8 @@ def capture(protocol, config, routes, args, directory):
     deadline = minimum_end + args.grace_ms / 1000
     last_data = now
     timed_out = True
+    pause_done = False
+    pause_at = now + args.reader_pause_at_ms / 1000
     directory.mkdir()
     raw_file = None
     try:
@@ -316,6 +361,10 @@ def capture(protocol, config, routes, args, directory):
             protocol.serial.write(f"run {total_ms}*".encode("ascii"))
             protocol.serial.flush()
             while time.monotonic() < deadline:
+                if args.reader_pause_ms and not pause_done and time.monotonic() >= pause_at:
+                    protocol.log_line(f"READER PAUSE {args.reader_pause_ms} ms")
+                    time.sleep(args.reader_pause_ms / 1000)
+                    pause_done = True
                 data = protocol.serial.read(min(protocol.serial.in_waiting, 65536) or 1)
                 now = time.monotonic()
                 if not data:
@@ -366,17 +415,24 @@ def capture(protocol, config, routes, args, directory):
         protocol.stop_and_drain()
     trailing = parser.finish()
     after = parse_status(protocol.command("status"))
+    write_json(directory / "status.json", {"before": before, "after": after})
     validate_status(after, config, routes)
-    errors = {k: uint32_delta(int(after[k]), int(before[k])) for k in COUNTERS}
-    firmware_sweeps = uint32_delta(int(after["sweep_count"]), int(before["sweep_count"]))
-    failures = []
+    keys = error_counter_keys(after)
+    errors = {k: uint32_delta(int(after[k]), int(before[k])) for k in keys}
+    accounting, failures = stream_accounting(before, after, received_frames)
     warnings = []
+    if accounting["usb_frames_discarded"]:
+        warnings.append("complete sweeps intentionally discarded while USB busy")
+    try:
+        save_profile(directory / "firmware_profile.jsonl", after, received_frames=received_frames,
+                     requested=args.profile, test_id=config.test_id)
+    except ValueError as error:
+        failures.append(str(error))
     if timed_out: failures.append("capture did not become idle before deadline")
     if parser.invalid_frames or parser.discarded_bytes or trailing:
         failures.append("malformed or incomplete binary stream")
     if out_of_range: failures.append("ADC code exceeds 4095")
     if any(errors.values()): failures.append("new firmware errors")
-    if received_frames != firmware_sweeps: failures.append("received/firmware sweep count mismatch")
     if measured_frames < 2: failures.append("fewer than two measured frames")
     span = uint32_delta(measured_end, measured_first) if measured_end is not None else 0
     if span < args.window_ms * 1000 * 0.8:
@@ -408,8 +464,7 @@ def capture(protocol, config, routes, args, directory):
         "max_sweep_period_us": periods.maximum if periods.count else "",
         "invalid_frames": parser.invalid_frames, "discarded_bytes": parser.discarded_bytes,
         "resync_events": parser.resync_events, "trailing_bytes": trailing, "timed_out": timed_out,
-        **errors, "firmware_sweeps": firmware_sweeps, "received_frames": received_frames}
-    write_json(directory / "status.json", {"before": before, "after": after})
+        **errors, **accounting, "received_frames": received_frames}
     return result, channel_rows
 
 
@@ -464,9 +519,9 @@ def write_workbook(output, results, channels, comparison_rows):
         for index, line in enumerate((
                 "TestBoard_ADC124: 3.3 V fixed reference, 1.65 V Vmid, codes 0..4095.",
                 "Voltage = code * 3.3 / 4096; numbered sensor channels 1..5 have no assumed spatial orientation.",
-                "Rate uses device sweep-start timestamps; the ADCs transfer sequentially on one SPI bus.",
+                "Rate uses received device sweep-start timestamps; discarded sweeps reduce delivered rate. The ADCs share one SPI bus.",
                 "Engine comparisons match all settings and repetition to a passing/warning blocking run.",
-                "WARN is an analog offset/noise/clipping or engine mean-shift advisory, not proof of channel identity.",
+                "WARN reports analog advisories or intentionally discarded USB sweeps; channel identity requires hardware stimulation.",
                 "Missing comparisons mean no matching successful blocking baseline was captured.",
                 "Requested SCLK is not a measurement; verify actual SCLK and analog settling on hardware.")):
             notes.write(index, 0, line)
@@ -500,6 +555,11 @@ def parse_args(argv: Optional[Sequence[str]] = None):
     parser.add_argument("--output", type=Path)
     parser.add_argument("--no-raw", action="store_true")
     parser.add_argument("--no-excel", action="store_true")
+    parser.add_argument("--profile", choices=("off", "on"), default="off",
+                        help="Optional firmware phase profiling; on requires diagnostic build")
+    parser.add_argument("--reader-pause-ms", type=int, default=0,
+                        help="Deliberately pause USB reading once to validate stall handling (0..1000 ms)")
+    parser.add_argument("--reader-pause-at-ms", type=int, default=1000)
     args = parser.parse_args(argv)
     for values, minimum, maximum, label in (
             (args.spi_clock_hz, 8000000, 16000000, "SPI clock"),
@@ -521,6 +581,10 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         args.vmid = ["off"]
         args.repetitions = 1
         args.window_ms = min(args.window_ms, 1000)
+    if (not 0 <= args.reader_pause_ms <= 1000 or args.reader_pause_at_ms < 0
+            or (args.reader_pause_ms and args.reader_pause_at_ms + args.reader_pause_ms
+                >= args.warm_up_ms + args.window_ms)):
+        parser.error("Reader pause must be 0..1000 ms and finish before the timed run ends")
     return args
 
 
