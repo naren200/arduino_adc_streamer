@@ -18,6 +18,69 @@ and MUX1–MUX4 connect to ADC IN1–IN4 in order on each array. Firmware emits
 raw 12-bit codes; voltage conversion is `code * 3.3 / 4096`. The ADC uses VA
 as its reference; `ref` cannot change the electrical input span.
 
+## Changes carried over from TestBoard_7953
+
+The USB and acquisition improvements from ADS7953 commits `92be24d` and
+`d48b4fe` are adapted for this board:
+
+- The build applies the audited USB transmit/flush race repair to a **build-local
+  copy** of the pinned Teensy core. The installed framework is unchanged. An
+  unexpected core hash fails the build until reviewed. Build through PlatformIO;
+  an Arduino IDE build without the middleware does not include this repair.
+- Completed sweeps use an atomic nonblocking USB enqueue. When the complete
+  frame cannot fit immediately, it is discarded and sampling continues with
+  current data. No acquisition backlog is stored. USB/Windows may still deliver
+  previously accepted bytes late. Unexpected write errors stop the run.
+- Address groups, pipeline commands, discarded repeats, payload destinations,
+  and array parking transitions are prepared once per run. LPSPI retains one
+  shared-bus transaction per sweep, with separate CS frames for each conversion.
+  CS GPIO registers are cached; receive readiness **and fresh transfer completion**
+  are required before CS release. Session setup uses a known 16-bit command
+  instead of asynchronous TCR readback. SPI state is restored before USB enqueue
+  and on failure. The 100 ns CS setup/high allowances are retained.
+- Engine-specific conversion loops avoid per-word mode dispatch. LPSPI waits
+  use the cycle counter with a 1 ms bound and foreground servicing every 10 us
+  during extended waits; interrupts remain enabled. DMA retains EventResponder
+  servicing. GPIO MUX switching and its settling delay still run for each group.
+
+These changes do not import ADS7953 Auto-1 masks, its two-frame response delay,
+20–30 MHz clock range, dual-bus overlap, or its ADC/channel wiring. ADC124 still
+uses one shared bus, one-frame input selection, the original triple routes,
+opposite MUX EN polarity, and fixed 3.3 V reference.
+
+The binary frame is unchanged. Status now reports `protocol_version=2` and
+`usb_stream_policy=discard_if_busy`. `sampling_sweeps`, `usb_frames_sent`,
+`usb_frames_discarded`, `sampling_period_max_us`, and `sampling_period_over_1ms`
+reset on each accepted run. `sweep_count` remains the lifetime completed-sweep
+counter (including discarded sweeps). `usb_write_errors` is cumulative. On a
+successful run, sampling equals sent plus discarded; only sent frames should
+equal received frames. Use the updated runner to account for this policy.
+
+## Optional phase profiling
+
+The normal `teensy41` environment compiles out profiling probes and storage.
+Build and upload the diagnostic environment explicitly:
+
+```powershell
+pio run -d Arduino_Sketches/TestBoard_ADC124 -e teensy41_profile
+pio run -d Arduino_Sketches/TestBoard_ADC124 -e teensy41_profile -t upload
+```
+
+It starts with profiling off. While stopped, `profile on*` / `profile off*`
+toggle profiling; each run resets statistics. A profile command arriving during
+capture stops the stream at a frame boundary and is rejected without changing
+the setting. Summaries appear only in stopped `status*` replies. The runner's
+`--profile on` saves phase cycles, bounded histograms, capacity observations,
+and longest-period snapshots in each run's `firmware_profile.jsonl`. Default
+`--profile off` normalizes diagnostic builds and remains compatible with the
+original protocol-1 firmware.
+
+`prepare` includes MUX address/parking work, and `transfer` includes the ADC
+batch plus optional Vmid sampling. `validate` measures response checks nested
+inside transfer; phases are not all disjoint. Statistics cover warm-up and
+measurement, include interrupt time, and add instrumentation overhead. Profile
+observations are diagnostic; compare throughput using production builds.
+
 ## Connections
 
 One physical bus uses Teensyduino **SPI**, not SPI1: MOSI 11, MISO 12, SCK 13.
@@ -85,6 +148,7 @@ an active stream at a complete frame boundary before its text response.
 | `ref 3.3*` | Confirm fixed reference; all other values rejected |
 | `run*`, `run 1..3600000*` | Continuous or timed run in milliseconds |
 | `stop*` | Stop and park both quads at Vmid |
+| `profile on|off*` | Stopped diagnostic firmware only; production firmware rejects it |
 
 Routing rejects duplicates, unpopulated inputs, input 7, and input 6 on
 MUX1–MUX3. Invalid route lists leave the old list intact. The default list
@@ -117,8 +181,9 @@ AA 55 | count:u16 | samples:u16[count] | avg_dt_us:u16 | start_us:u32 | end_us:u
 All fields are little-endian. `status` reports exact `payload_routes` in
 wire order. Start/end cover acquisition and GPIO settling/parking; USB write
 time is excluded. Average is acquisition duration divided by route count,
-truncated to integer microseconds and saturated at 65535. Sweep-start intervals
-also reflect USB backpressure. Timestamps and cumulative counters wrap at 32
+rounded to the nearest integer microsecond and saturated at 65535. Received
+sweep-start intervals include gaps for intentionally discarded frames, while
+the sampling-period counters cover every completed sweep. Timestamps and cumulative counters wrap at 32
 bits. The runner accounts for this wrap.
 
 Transfer timeouts/start failures stop acquisition, increment `transfer_errors`,
@@ -126,6 +191,12 @@ and require a Teensy reset before another run. Invalid nonzero upper response
 bits increment `data_errors` and stop the run. No partial sweep is transmitted.
 
 ## Benchmarks and validation
+
+The [2026-10-13 COM4 readiness check](../../docs/testing/benchmarks/testboard-adc124/TESTBOARD_ADC124_COM4_QUICK_RESULTS_2026-10-13.md)
+completed 25 short captures with no malformed/missing transmitted frames or
+firmware errors. With disconnected sensor strips and 500 us settling, all 50
+channel means were 1.6500–1.6508 V. The report records shorter-delay offsets
+and accounted USB discards; sensor response and longer validation remain.
 
 Use [`benchmarks/README.md`](benchmarks/README.md) for dry-run, smoke, full
 matrix, outputs and interpretation. This project has a standalone runner.
@@ -135,12 +206,16 @@ configuration support; its ADS7953 profile must not be used for this board.
 Host checks from the repository root:
 
 ```powershell
-uv run --with ziglang pytest tests/test_testboard_adc124_benchmark.py tests/test_testboard_adc124_firmware.py
+uv run --with ziglang --with unicorn --with pyelftools pytest tests/test_testboard_adc124_benchmark.py tests/test_testboard_adc124_firmware.py tests/test_testboard_adc124_usb_patch.py
 ```
 
-The optional Zig compiler executes the production ADC driver against fake GPIO
-and ADC responses. It is a test dependency only. Regular pytest skips the
-native test if no compiler is installed. This simulation and the Teensy build
+The optional Zig compiler executes the production driver, SPI controller, USB
+wrapper and application against simulated GPIO/ADC/registers. Both environments
+cover 486 digital acquisition combinations, sparse routes, stalls, timeout and
+error cleanup. Unicorn verifies the compiled ARM USB writer against busy-ring,
+disconnect, ring-wrap and autoflush-interruption scenarios. These tools are test
+dependencies only; regular pytest skips checks with unavailable dependencies.
+Build both environments first to run ARM verification. This simulation and the Teensy build
 do not validate the physical board. Before accepting hardware results:
 
 1. Verify 3.3 V VA, actual ADC VD / MISO logic level compatible with Teensy,
@@ -159,7 +234,16 @@ do not validate the physical board. Before accepting hardware results:
    a delay after levels and noise stabilize. Repeat with isolated presses to
    examine analog carryover and crosstalk; the matrix alone is a quiet test.
 7. Run a long session. Require zero firmware errors, no malformed frames,
-   and matching firmware/received sweep counts.
+   and matching sent/received frame counts. Sampling must equal sent plus
+   discarded. Use the runner's 500 ms reader-pause check to verify sampling
+   continues through USB stalls: discarded sweeps should increase without
+   malformed frames, USB write errors or a pause-sized sampling-period spike.
+8. Compare the original ADC124 production firmware with this production build
+   using identical board conditions, sparse/full routes, engines, clocks,
+   settling delays, repeats and Vmid settings. Confirm electrical CS timing,
+   channel identity, offsets/noise and crosstalk separately from software speed.
+   No ADC124 on-board speedup or analog acceptance is established by these
+   offline checks.
 
 Datasheet references: [ADC124S101](https://www.ti.com/lit/ds/symlink/adc124s101.pdf),
 [TMUX1108](https://www.ti.com/lit/ds/symlink/tmux1108.pdf),

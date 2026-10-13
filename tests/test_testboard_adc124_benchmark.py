@@ -2,7 +2,6 @@ import csv
 import io
 import json
 import struct
-from types import SimpleNamespace
 
 import pytest
 
@@ -120,15 +119,20 @@ class FakeClock:
     def monotonic_ns(self):
         return int(self.value * 1e9)
 
+    def sleep(self, seconds):
+        self.value += seconds
+
 
 class FakeSerial:
     """A fragmented mixed text/binary USB stream with one-frame captures."""
-    def __init__(self, clock, config, routes, *, corrupt=False, drop=False):
+    def __init__(self, clock, config, routes, *, corrupt=False, drop=False, live=False, discard=False):
         self.clock, self.config, self.routes = clock, config, routes
         self.pending = bytearray()
         self.writes = []
         self.sweeps = 0
         self.corrupt, self.drop = corrupt, drop
+        self.live, self.discard = live, discard
+        self.run_sweeps = 0
 
     @property
     def in_waiting(self):
@@ -149,12 +153,19 @@ class FakeSerial:
                 samples = (2000 + index, 2100 + index)
                 if self.corrupt and index == 2:
                     samples = (65535, 2048)
-                if not (self.drop and index == 2):
+                if not ((self.drop or self.discard) and index == 2):
                     self.pending.extend(make_frame(samples, 0xfffffff0 + index * 1000))
             self.sweeps += 5
+            self.run_sweeps = 5
             return len(data)
         if command == "status":
             status = status_for(self.config, self.routes, self.sweeps)
+            if self.live:
+                status.update(protocol_version="2", running="false", profile_available="false", profile_enabled="false",
+                    usb_stream_policy="discard_if_busy", sampling_sweeps=str(self.run_sweeps),
+                    usb_frames_sent=str(self.run_sweeps - int(self.discard and bool(self.run_sweeps))),
+                    usb_frames_discarded=str(int(self.discard and bool(self.run_sweeps))),
+                    sampling_period_max_us="1000", sampling_period_over_1ms="0", usb_write_errors="0")
             self.pending.extend("".join(f"# {k}={v}\n" for k, v in status.items()).encode())
         elif command == "mcu":
             self.pending.extend(b"# TestBoard_ADC124\n")
@@ -252,3 +263,79 @@ def test_main_fake_session_writes_reviewable_csv_json_workbook(tmp_path, monkeyp
     assert rows[0]["result"] == "PASS"
     assert len(list(csv.DictReader((output / "channel_stats.csv").open()))) == 2
     assert device.writes[-1] == b"stop*"
+
+
+@pytest.mark.parametrize("discard,drop,expected", [(True, False, "WARN"), (False, True, "FAIL"), (False, False, "PASS")])
+def test_live_capture_accepts_accounted_discards_but_fails_missing_sent_frames(tmp_path, monkeypatch, discard, drop, expected):
+    clock = FakeClock()
+    monkeypatch.setattr(bench, "time", clock)
+    routes = (bench.Route(1, 1, 0), bench.Route(1, 4, 6))
+    config = bench.BenchmarkConfig("1", "mux", "blocking", 16000000, 1, 5, False)
+    device = FakeSerial(clock, config, routes, live=True, discard=discard, drop=drop)
+    protocol = bench.SerialProtocol(device, io.StringIO())
+    args = bench.parse_args(["--warm-up-ms", "1", "--window-ms", "3", "--idle-ms", "1", "--grace-ms", "100"])
+    result, _ = bench.capture(protocol, config, routes, args, tmp_path / "run")
+    assert result["result"] == expected
+    assert result["sampling_sweeps"] == 5
+    assert result["usb_frames_sent"] == (4 if discard else 5)
+    assert result["usb_frames_discarded"] == int(discard)
+    assert result["usb_discard_percent"] == (20 if discard else 0)
+    assert result["usb_write_errors"] == 0
+    assert (tmp_path / "run" / "firmware_profile.jsonl").exists()
+
+
+def test_accounting_uses_run_counters_and_wrap_safe_cumulative_sweeps():
+    before = {"sweep_count": str(0xfffffffc)}
+    after = {"protocol_version": "2", "sweep_count": "3", "sampling_sweeps": "7",
+             "usb_frames_sent": "5", "usb_frames_discarded": "2"}
+    result, failures = bench.stream_accounting(before, after, 5)
+    assert not failures and result["sampling_sweeps"] == 7
+    after["sampling_sweeps"] = "8"
+    assert bench.stream_accounting(before, after, 5)[1]
+
+
+@pytest.mark.parametrize("field,value", [("usb_frames_sent", "bad"), ("usb_frames_discarded", "-1"),
+    ("sampling_sweeps", ""), ("sampling_period_max_us", "missing"), ("usb_stream_policy", "blocking"), ("running", "true")])
+def test_live_status_requires_complete_consistent_transport_fields(field, value):
+    config = bench.BenchmarkConfig("1", "mux", "blocking", 16000000, 1, 5, False)
+    routes = (bench.Route(1, 1, 0),)
+    status = status_for(config, routes)
+    status.update(protocol_version="2", running="false", usb_stream_policy="discard_if_busy",
+                  **{key: "0" for key in bench.LIVE_COUNTERS})
+    status[field] = value
+    with pytest.raises(bench.BenchmarkError, match="Status mismatch"):
+        bench.validate_status(status, config, routes)
+
+
+def test_profile_on_requires_diagnostic_firmware_before_acquisition():
+    clock = FakeClock()
+    routes = (bench.Route(1, 1, 0),)
+    config = bench.BenchmarkConfig("1", "mux", "blocking", 16000000, 1, 5, False)
+    device = FakeSerial(clock, config, routes, live=True)
+    protocol = bench.SerialProtocol(device, io.StringIO())
+    with pytest.raises(bench.BenchmarkError, match="teensy41_profile"):
+        bench.configure(protocol, config, routes, profile="on")
+    assert not any(wire.startswith(b"run") for wire in device.writes)
+
+
+@pytest.mark.parametrize("args", [["--reader-pause-ms", "-1"], ["--reader-pause-ms", "1001"],
+    ["--window-ms", "100", "--warm-up-ms", "0", "--reader-pause-ms", "50"],
+    ["--reader-pause-at-ms", "-1"]])
+def test_invalid_reader_pause_rejected(args):
+    with pytest.raises(SystemExit):
+        bench.parse_args(args)
+
+
+def test_deliberate_reader_pause_occurs_once_without_changing_device_timestamps(tmp_path, monkeypatch):
+    clock = FakeClock()
+    monkeypatch.setattr(bench, "time", clock)
+    routes = (bench.Route(1, 1, 0), bench.Route(1, 4, 6))
+    config = bench.BenchmarkConfig("1", "mux", "blocking", 16000000, 1, 5, False)
+    device = FakeSerial(clock, config, routes, live=True)
+    log = io.StringIO()
+    args = bench.parse_args(["--warm-up-ms", "1", "--window-ms", "3", "--idle-ms", "1", "--grace-ms", "100",
+                             "--reader-pause-ms", "1", "--reader-pause-at-ms", "0"])
+    result, _ = bench.capture(bench.SerialProtocol(device, log), config, routes, args, tmp_path / "run")
+    assert result["result"] == "PASS"
+    assert result["sweeps_per_second"] == 1000
+    assert log.getvalue().count("READER PAUSE 1 ms") == 1

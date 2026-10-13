@@ -3,6 +3,7 @@
 #include "Adc124s101.h"
 #include "ApiProtocol.h"
 #include "UsbSerialController.h"
+#include "AcquisitionProfiler.h"
 
 using namespace testboard_config;
 
@@ -20,6 +21,29 @@ SpiEngine engine = SpiEngine::BLOCKING;
 uint32_t settle_us = kDefaultMuxSettleUs;
 bool vmid = false, running = false;
 uint32_t run_started_ms = 0, duration_ms = 0, sweep_count = 0;
+struct PreparedGroup {
+  uint8_t array, input, destination, park_before;
+  Adc124s101::PreparedBatch batch;
+};
+PreparedGroup groups[kMaxRoutes];
+uint8_t group_count = 0, final_park_array = 0;
+uint16_t samples[kMaxRoutes];
+uint8_t wire_block[4 + kMaxRoutes * 2 + api_protocol::kTrailerBytes];
+uint32_t sampling_sweeps = 0, usb_frames_sent = 0, usb_frames_discarded = 0;
+uint32_t sampling_previous_start = 0, sampling_period_max_us = 0, sampling_period_over_1ms = 0;
+uint32_t session_start_errors = 0;
+#if TESTBOARD_PROFILE
+AcquisitionProfiler profile_;
+#endif
+
+class LpspiSession {
+ public:
+  bool begin() { active_ = spi.beginLpspiSession(); return active_; }
+  void close() { if (active_) { spi.endLpspiSession(); active_ = false; } }
+  ~LpspiSession() { close(); }
+ private:
+  bool active_ = false;
+};
 
 bool parseUint(const String &text, uint32_t minimum, uint32_t maximum,
                uint32_t &value) {
@@ -39,7 +63,7 @@ bool parseUint(const String &text, uint32_t minimum, uint32_t maximum,
 }
 
 void parkAll() { for (auto adc : adcs) adc->park(settle_us); }
-void stop() { running = false; parkAll(); }
+void stop() { running = false; spi.endLpspiSession(); parkAll(); }
 bool selected(uint8_t array) { return array_mask & (1 << (array - 1)); }
 
 uint16_t orderKey(const SensorRoute &r) {
@@ -62,6 +86,27 @@ void buildPlan() {
     }
     plan[j] = r;
   }
+}
+
+bool prepareAcquisition() {
+  for (auto adc : adcs) adc->refreshTiming();
+  group_count = 0;
+  uint8_t previous_array = 0;
+  bool both_active = false;
+  for (uint8_t i = 0; i < plan_count;) {
+    const SensorRoute &r = plan[i];
+    uint8_t end = i + 1;
+    while (end < plan_count && plan[end].array == r.array && plan[end].input == r.input) ++end;
+    PreparedGroup &group = groups[group_count++];
+    group.array = r.array; group.input = r.input; group.destination = i;
+    group.park_before = previous_array && previous_array != r.array ? previous_array : 0;
+    both_active |= group.park_before != 0;
+    if (!adcs[r.array - 1]->prepareBatch(plan + i, end - i, channel_repeat, group.batch)) return false;
+    previous_array = r.array;
+    i = end;
+  }
+  final_park_array = both_active ? previous_array : 0;
+  return group_count != 0;
 }
 
 bool setRoutes(const String &args) {
@@ -112,7 +157,8 @@ void printRoute(const SensorRoute &r) {
 }
 void status() {
   Serial.println("# board=TestBoard_ADC124");
-  Serial.println("# protocol_version=1");
+  Serial.println("# protocol_version=2");
+  Serial.print("# running="); Serial.println(running ? "true" : "false");
   Serial.println("# mode=PZT");
   Serial.print("# array="); Serial.println(array_mask == 3 ? "both" : array_mask == 1 ? "1" : "2");
   Serial.print("# scanorder="); Serial.println(orderName());
@@ -141,8 +187,21 @@ void status() {
   Serial.println();
   Serial.print("# route_count="); Serial.println(plan_count);
   Serial.print("# sweep_count="); Serial.println(sweep_count);
-  Serial.print("# transfer_errors="); Serial.println(adc1.transferErrors() + adc2.transferErrors());
+  Serial.print("# transfer_errors="); Serial.println(adc1.transferErrors() + adc2.transferErrors() + session_start_errors);
   Serial.print("# data_errors="); Serial.println(adc1.dataErrors() + adc2.dataErrors());
+  Serial.print("# usb_write_errors="); Serial.println(usb.writeErrors());
+  Serial.println("# usb_stream_policy=discard_if_busy");
+  Serial.print("# sampling_sweeps="); Serial.println(sampling_sweeps);
+  Serial.print("# usb_frames_sent="); Serial.println(usb_frames_sent);
+  Serial.print("# usb_frames_discarded="); Serial.println(usb_frames_discarded);
+  Serial.print("# sampling_period_max_us="); Serial.println(sampling_period_max_us);
+  Serial.print("# sampling_period_over_1ms="); Serial.println(sampling_period_over_1ms);
+#if TESTBOARD_PROFILE
+  profile_.printStatus(running);
+#else
+  Serial.println("# profile_available=false");
+  Serial.println("# profile_enabled=false");
+#endif
 }
 
 bool command(const String &name, const String &args) {
@@ -155,9 +214,17 @@ bool command(const String &name, const String &args) {
     Serial.println("# spiengine blocking|dma|lpspi; spiclock 8000000..16000000; channelrepeat 1..3");
     Serial.println("# muxsettle 0..1000 (us); vmid true|false|7; ref 3.3 (fixed); mode PZT");
     Serial.println("# run [1..3600000 ms]; stop; status; mcu; help; commands end with '*'");
+    Serial.println("# profile on|off (diagnostic build, stopped only); USB policy: discard_if_busy");
     return !args.length();
   }
   if (name == "mode") return args == "PZT" || args == "pzt";
+  if (name == "profile") {
+#if TESTBOARD_PROFILE
+    return !running && profile_.setEnabled(args);
+#else
+    return false;
+#endif
+  }
   if (name == "ref") return args == "3.3";
   if (name == "adcchannels") return setRoutes(args);
   if (name == "array") {
@@ -197,11 +264,21 @@ bool command(const String &name, const String &args) {
     return true;
   }
   if (name == "run") {
-    if (!plan_count || adc1.transferErrors() || adc2.transferErrors()) return false;
+    if (!plan_count || adc1.transferErrors() || adc2.transferErrors() || session_start_errors || usb.writeErrors()) return false;
     value = 0;
     if (args.length() && !parseUint(args, 1, 3600000, value)) return false;
+#if TESTBOARD_PROFILE
+    profile_.reset();
+    const uint32_t preparation_started = profile_.stamp();
+#endif
+    if (!prepareAcquisition()) return false;
     parkAll();
     for (uint8_t i = 0; i < 2; ++i) if (!selected(i + 1)) adcs[i]->disable();
+    sampling_sweeps = usb_frames_sent = usb_frames_discarded = 0;
+    sampling_period_max_us = sampling_period_over_1ms = 0;
+#if TESTBOARD_PROFILE
+    profile_.runPrepared(preparation_started);
+#endif
     duration_ms = value; run_started_ms = millis(); running = true;
     return true;
   }
@@ -209,36 +286,82 @@ bool command(const String &name, const String &args) {
 }
 
 bool capture() {
-  uint16_t samples[kMaxRoutes];
+#if TESTBOARD_PROFILE
+  AcquisitionProfiler::Sweep profile_sweep(profile_);
+#endif
   const uint32_t started = micros();
-  uint8_t previous_array = 0;
-  for (uint8_t i = 0; i < plan_count;) {
-    const SensorRoute &r = plan[i];
+#if TESTBOARD_PROFILE
+  profile_.acquisitionBegin(started);
+#endif
+  LpspiSession session;
+  {
+    TB_PROFILE_SCOPE(session_profile, Session);
+    if (engine == SpiEngine::LPSPI && !session.begin()) { ++session_start_errors; return false; }
+  }
+  for (uint8_t i = 0; i < group_count; ++i) {
+    const PreparedGroup &group = groups[i];
     // One shared SPI bus: every engine transfers sequentially. Park the
     // outgoing external MUX group before switching ADC ownership.
-    if (previous_array && previous_array != r.array)
-      adcs[previous_array - 1]->park(settle_us);
-    Adc124s101 &adc = *adcs[r.array - 1];
-    adc.selectAddress(r.input, settle_us);
-    uint8_t end = i + 1;
-    while (end < plan_count && plan[end].array == r.array && plan[end].input == r.input) ++end;
-    if (!adc.readBatch(plan + i, end - i, channel_repeat, engine, samples + i)) return false;
-    if (vmid && !adc.sampleVmid(settle_us, engine)) return false;
-    previous_array = r.array;
-    i = end;
+    Adc124s101 &adc = *adcs[group.array - 1];
+    {
+      TB_PROFILE_SCOPE(mux_profile, Prepare);
+      if (group.park_before) adcs[group.park_before - 1]->park(settle_us);
+      adc.selectAddress(group.input, settle_us);
+    }
+    {
+      TB_PROFILE_SCOPE(transfer_profile, Transfer);
+      if (!adc.readPrepared(group.batch, engine, samples + group.destination)) return false;
+      if (vmid && !adc.sampleVmid(settle_us, engine)) return false;
+    }
   }
   // Park the final ADC before the next two-array sweep resumes the first.
-  bool both_active = false;
-  for (uint8_t i = 0; i < plan_count; ++i)
-    if (plan[i].array != previous_array) both_active = true;
-  if (both_active) adcs[previous_array - 1]->park(settle_us);
-  const uint32_t ended = micros(), average = (ended - started) / plan_count;
-  uint8_t frame[4 + kMaxRoutes * 2 + api_protocol::kTrailerBytes];
-  uint32_t size = api_protocol::encodeBinaryBlock(frame, sizeof(frame), samples,
-      plan_count, average > 65535 ? 65535 : average, started, ended);
-  usb.writeBinaryBlock(frame, size);
+  {
+    TB_PROFILE_SCOPE(parking_profile, Prepare);
+    if (final_park_array) adcs[final_park_array - 1]->park(settle_us);
+  }
+  {
+    TB_PROFILE_SCOPE(session_profile, Session);
+    session.close();  // Restore ordinary SPI state before any USB work.
+  }
+  const uint32_t ended = micros();
+  if (sampling_sweeps) {
+    const uint32_t period = started - sampling_previous_start;
+    if (period > sampling_period_max_us) sampling_period_max_us = period;
+    if (period > 1000) ++sampling_period_over_1ms;
+  }
+  sampling_previous_start = started;
+  ++sampling_sweeps;
   ++sweep_count;
-  return true;
+#if TESTBOARD_PROFILE
+  profile_.acquisitionEnd(ended);
+#endif
+  uint32_t size;
+  {
+    TB_PROFILE_SCOPE(encode_profile, Encode);
+    const uint32_t average = (ended - started + plan_count / 2) / plan_count;
+    size = api_protocol::encodeBinaryBlock(wire_block, sizeof(wire_block), samples,
+        plan_count, average > 65535 ? 65535 : average, started, ended);
+    if (!size) return false;
+  }
+#if TESTBOARD_PROFILE
+  if (profile_.enabled()) {
+    TB_PROFILE_SCOPE(capacity_profile, Capacity);
+    profile_.noteCapacity(Serial.availableForWrite(), size);
+  }
+#endif
+  UsbSerialController::FrameWrite result;
+  {
+    TB_PROFILE_SCOPE(write_profile, UsbWrite);
+    result = usb.tryWriteBinaryBlock(wire_block, size);
+  }
+  const bool written = result == UsbSerialController::FrameWrite::Sent;
+  const bool discarded = result == UsbSerialController::FrameWrite::Discarded;
+  if (written) ++usb_frames_sent;
+  if (discarded) ++usb_frames_discarded;
+#if TESTBOARD_PROFILE
+  profile_sweep.written(written, discarded);
+#endif
+  return written || discarded;
 }
 }  // namespace
 
@@ -246,7 +369,12 @@ void setup() {
   usb.begin(kUsbSerialBaud);
   for (uint8_t cs : kCsPins) spi.registerChipSelect(cs);
   spi.begin();
-  for (auto adc : adcs) adc->begin();
+  for (auto adc : adcs) {
+    adc->begin();
+#if TESTBOARD_PROFILE
+    adc->setProfiler(profile_);
+#endif
+  }
   for (uint8_t array = 1; array <= 2; ++array)
     for (uint8_t mux = 1; mux <= 4; ++mux)
       for (uint8_t input = 0; input <= (mux == 4 ? 6 : 5); ++input)
@@ -260,10 +388,12 @@ void loop() {
   while (usb.readCommand(line)) {
     line.trim();
     if (!line.length()) continue;
-    // Commands stop the stream at a complete-frame boundary before text.
-    if (running) stop();
     String name, args;
     api_protocol::splitCommand(line, name, args);
+    const bool was_running = running;
+    // Commands stop the stream at a complete-frame boundary before text.
+    if (running) stop();
+    if (name == "profile" && was_running) { usb.writeAck(false); continue; }
     bool success = command(name, args);
     if (!(name == "run" && success)) usb.writeAck(success);
   }

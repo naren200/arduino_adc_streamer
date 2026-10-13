@@ -7,6 +7,13 @@ runs. Close the GUI and serial monitors first. Flash the ADC124 firmware,
 keep sensors untouched for quiet benchmarks, and review the wiring and supply
 validation in [`../README.md`](../README.md).
 
+This runner supports original protocol-1 and current protocol-2 firmware.
+Protocol 2 continues sampling during USB stalls and intentionally discards
+complete sweeps when USB is busy. `sampling_sweeps = usb_frames_sent +
+usb_frames_discarded`; received frames must match **sent** frames. Accounted
+discards are WARN, and missing transmitted frames remain FAIL. The old runner's
+lifetime-sweeps/received comparison is unsuitable for protocol-2 captures.
+
 From the repository root:
 
 ```powershell
@@ -24,6 +31,30 @@ requested 16 MHz SPI. Allow about 11 minutes plus command/capture overhead.
 Smoke mode tests nine combinations (three array selections x three engines)
 with MUX order, repeat 1, Vmid off, 5 us settling, one repetition and at most
 1 second measurement. Other requested array/engine/clock filters remain active.
+
+To diagnose phase costs, upload `teensy41_profile` and add `--profile on`.
+Production firmware rejects this option. `--profile off` is the default and
+also turns off profiling on diagnostic firmware. Each run saves validated
+stopped profiling status and its decoded summary to `firmware_profile.jsonl`.
+Profiles cover the whole run including warm-up; nested transfer/validation
+scopes overlap. Do production speed comparisons with profiling compiled out.
+
+Run a reduced transport-stall check, including one deliberate 500 ms reader
+pause after the first second:
+
+```powershell
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/testboard_adc124_benchmark.py `
+  --port COM7 --arrays both --scan-order mux --spi-engine lpspi `
+  --mux-settle-us 5 --window-ms 2000 --repetitions 1 `
+  --reader-pause-ms 500 --reader-pause-at-ms 1000
+```
+
+Sampling must continue, discard counters should account for omitted frames,
+and write/error/parser counters must stay zero. Inspect sampling-period maxima;
+a gap close to the reader pause is a sampling failure indicator. Windows may
+buffer some data before USB fills, so a pause is not guaranteed to force
+discard on every host. Pauses are limited to 0–1000 ms and must finish before
+the timed run ends. This optional check opens the serial port only when run.
 
 Expand the analog/settling matrix explicitly:
 
@@ -73,6 +104,8 @@ is retained. Choose shorter windows/filters for initial checks.
 - `commands.log`: timestamped commands and replies.
 - `results.csv`: per-run PASS/WARN/FAIL, measured device rate, acquisition
   timing, parser diagnostics and firmware/received sweep counters.
+  It also records sent/discarded counts, discard percentage, USB policy, and
+  sampling-period diagnostics for protocol 2.
 - `channel_stats.csv`: per-route mean, sample standard deviation, extrema,
   Vmid offset, clipping and bias-resistor metadata, excluding warm-up.
 - `comparisons.csv`: engine mean shifts, noise and throughput ratios against
@@ -80,6 +113,8 @@ is retained. Choose shorter windows/filters for initial checks.
 - `benchmark_report.xlsx`: Results, Channels, Engine comparisons and Notes.
 - Each `TEST_ID__repN/` contains `capture.bin`, `samples.csv` (including
   warm-up and measurement phases), and before/after `status.json`.
+  `firmware_profile.jsonl` preserves profiling evidence, including decoding
+  or written/received reconciliation errors.
 
 `--no-raw` omits raw binary bytes; `--no-excel` omits the workbook. CSVs are
 saved after every completed run. Ctrl+C requests stop, retains existing results
@@ -89,7 +124,7 @@ No resume/overwrite mode is implemented; use a new directory.
 **FAIL** means incorrect status/identity, new or existing firmware errors,
 malformed frames, impossible ADC codes, insufficient measured duration,
 failure to become idle, or a mismatch between transmitted/received sweep
-counts. The runner stops at the first failure and preserves its artifacts.
+counts (sent versus received for protocol 2). The runner stops at the first failure and preserves its artifacts.
 Reset the Teensy after a transfer fault before retrying.
 
 **WARN** flags quiet mean offset over 100 counts from nominal Vmid code 2048,
@@ -100,9 +135,18 @@ Comparisons are separate from the stream-validation result and are absent
 when no matching successful blocking baseline exists. Analog drift between
 runs can also produce engine mean shifts; repeat under stable conditions.
 
+Accounted USB discards also produce WARN, with their percentage reported. All
+sampling and transport counters include warm-up. Severe stalls can still fail
+the minimum delivered measurement-duration check. Warm-up is excluded relative
+to the first received device timestamp; a delayed first frame can conservatively
+exclude additional data. Compare analog results only when delivered coverage
+is adequate and use the same reader settings for engine comparisons.
+
 Rates use differences between **device sweep-start timestamps**, not the
-host CSV-writing clock. USB backpressure and host logging can still affect
-achieved rate. Samples share a sweep timing interval; exported start/end
+host CSV-writing clock. For protocol 2 this is delivered-frame rate; intentional
+discards lower it without necessarily slowing ADC sampling. Sampling-period
+status measures the acquisition loop, and host logging can affect discard rate.
+Samples share a sweep timing interval; exported start/end
 timestamps are not individual ADC conversion times. ADC124S101 has no channel
 identity tag, so a PASS cannot prove PCB channel wiring or detect every form
 of corruption. Verify known-voltage routing and actual SCLK on hardware.
