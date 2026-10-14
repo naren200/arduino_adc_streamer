@@ -164,6 +164,11 @@ bool SpiController::beginLpspiSession() {
 #if defined(__IMXRT1062__)
   if (transaction_active_ || lpspi_ == nullptr) return false;
   if (lpspi_session_active_) return true;
+  const uint32_t parameters = lpspi_->PARAM;
+  const uint8_t tx_log = parameters & 0xFF, rx_log = (parameters >> 8) & 0xFF;
+  if (tx_log > 4 || rx_log > 4) return false;
+  lpspi_tx_depth_ = uint8_t(1u << tx_log);
+  lpspi_rx_depth_ = uint8_t(1u << rx_log);
   const SPISettings settings(
       clock_hz_,
       testboard_config::kSpiBitOrder,
@@ -181,6 +186,53 @@ bool SpiController::beginLpspiSession() {
   lpspi_session_active_ = true;
   return true;
 #else
+  return false;
+#endif
+}
+
+bool SpiController::transferLpspiBurst(const ChipSelect &cs, const uint16_t *tx,
+    uint16_t *rx, uint8_t words, uint32_t timeout_ticks, uint32_t service_ticks) {
+#if defined(__IMXRT1062__)
+  if (!words || words > 13 || !tx || !rx || !cs.clear || !cs.set || transaction_active_)
+    return false;
+  const bool own_session = !lpspi_session_active_;
+  if (own_session && !beginLpspiSession()) return false;
+  lpspi_single_word_ = own_session;
+  active_cs_set_ = cs.set; active_cs_mask_ = cs.mask;
+  transaction_active_ = lpspi_active_ = burst_active_ = true;
+  // A preceding batch must have been fully drained; never consume stale RX.
+  if (!(lpspi_->RSR & LPSPI_RSR_RXEMPTY)) { cancelLpspi16(); return false; }
+  lpspi_->SR = 0x3F00;
+  *cs.clear = cs.mask;
+  delayNanoseconds(testboard_config::kCsSetupTimeNs);
+  uint8_t submitted = 0, received = 0;
+  const uint32_t started = ARM_DWT_CYCCNT;
+  uint32_t last_service = started;
+  for (;;) {
+    // Bound all outstanding responses, including the word in the shifter.
+    // TXCOUNT also includes commands queued by TCR, so check actual space.
+    while (submitted < words && submitted - received < lpspi_rx_depth_ &&
+           (lpspi_->FSR & 0x1F) < lpspi_tx_depth_) {
+      if (submitted + 1 == words) lpspi_->SR = LPSPI_SR_TCF;
+      lpspi_->TDR = tx[submitted++];
+    }
+    while (received < submitted && !(lpspi_->RSR & LPSPI_RSR_RXEMPTY))
+      rx[received++] = static_cast<uint16_t>(lpspi_->RDR);
+    const uint32_t status = lpspi_->SR;
+    if (status & (LPSPI_SR_TEF | LPSPI_SR_REF)) { cancelLpspi16(); return false; }
+    // RX readiness alone can precede the final clock edge. Require all words,
+    // empty TX, hardware completion and idle before releasing the GPIO CS.
+    if (received == words && (status & LPSPI_SR_TCF) && !(status & LPSPI_SR_MBF) &&
+        !(lpspi_->FSR & 0x1F)) break;
+    const uint32_t now = ARM_DWT_CYCCNT;
+    if (uint32_t(now - started) >= timeout_ticks) { cancelLpspi16(); return false; }
+    if (uint32_t(now - last_service) >= service_ticks) { yield(); last_service = now; }
+  }
+  lpspi_active_ = false;
+  endLpspiBurst();
+  return true;
+#else
+  (void)cs; (void)tx; (void)rx; (void)words; (void)timeout_ticks; (void)service_ticks;
   return false;
 #endif
 }

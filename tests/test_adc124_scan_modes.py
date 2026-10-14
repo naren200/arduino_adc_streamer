@@ -55,3 +55,17 @@ def test_old_mode_names_are_rejected_by_cli():
     for name in ("channel", "interleaved", "array"):
         with pytest.raises(SystemExit):
             b.parse_args(["--dry-run", "--scan-order", name])
+
+
+@pytest.mark.parametrize("mode,vmid,guard", [("adc", False, 5.6), ("adc", True, 11.2),
+                                           ("mux", False, 2.8), ("mux", True, 5.6)])
+def test_coordinated_guard_estimates_preserve_bank_changes_and_analog_waits(mode, vmid, guard):
+    routes = b.load_manifest(b.DEFAULT_MANIFEST)["both_full"]
+    old = operation_counts(routes, mode, vmid=vmid)
+    new = operation_counts(routes, mode, vmid=vmid, coordinated=True)
+    for key in ("bank_switches", "settling_waits", "spi_words", "cs_frames", "enable_writes"):
+        assert new[key] == old[key]
+    assert new["mux_switch_guard_us"] == pytest.approx(guard)
+    assert new["grouped_address_register_writes"] < old["changed_address_bit_writes"]
+    if not vmid:
+        assert new["grouped_address_register_writes"] == (21 if mode == "mux" else 22)

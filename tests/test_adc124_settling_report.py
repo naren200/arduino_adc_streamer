@@ -37,6 +37,19 @@ def test_isolated_channel_events_are_not_clipped(analysis):
     assert mask[(t>=5)&(t<5.2)].all()
     assert np.ptp(x[mask,0])==20
 
+
+def test_insufficient_common_quiet_coverage_remains_explicit(analysis):
+    t=np.arange(1,3,.002)
+    x=np.full((len(t),8),2048.)
+    bin_index=np.floor((t-1)/.05+1e-8).astype(int)
+    x[bin_index%2==1,0:2]+=20*(np.arange((bin_index%2==1).sum())%2)[:,None]
+    groups=[[0,1],[2,3],[4,5],[6,7]]
+    with pytest.raises(ValueError,match='Less than 1 second'):
+        analysis.quiet_mask(t,x,groups,start=1,end=3)
+    mask,_,_,_,keep,above=analysis.quiet_mask(t,x,groups,start=1,end=3,require_coverage=False)
+    assert above.any() and keep.sum()*.05<1 and not mask.any()
+    assert np.ptp(x[:,0])==20  # diagnostic return does not clip or rewrite samples
+
 def test_wire_reader_handles_wrap_and_rejects_bad_frame(analysis,tmp_path):
     from capture_adc124_settling import FRAME,decode
     data=np.zeros(2,dtype=FRAME)

@@ -31,14 +31,14 @@ def csv_write(path, rows):
         writer = csv.DictWriter(file, fieldnames=fields); writer.writeheader(); writer.writerows(rows)
 
 
-def process(source, run, session, output):
+def process(source, run, session, output, allow_insufficient_quiet=False):
     folder = source / run["name"]
     if hashlib.sha256((folder / "capture.bin").read_bytes()).hexdigest() != run["sha256"]:
         raise ValueError("Raw hash mismatch")
     frames = decode(folder / "capture.bin")
     saved = json.loads((folder / "status.json").read_text()); status = saved["after"]
     config = bench.BenchmarkConfig(run["array"], run["scanorder"], run["spiengine"], run["spi_clock_hz"],
-                                   run["channelrepeat"], run["mux_settle_us"], run["vmid"], run["spi_frame"])
+                                   run["channelrepeat"], run["mux_settle_us"], run["vmid"], run["spi_frame"],run.get('vmid_settle_us'))
     bench.validate_status(status, config, bench.load_manifest(bench.DEFAULT_MANIFEST)["both_full"])
     count, failures = bench.stream_accounting(saved["before"], status, len(frames))
     if failures or any(int(status[k]) for k in bench.error_counter_keys(status)): raise ValueError(str(failures or "Firmware errors"))
@@ -55,6 +55,9 @@ def process(source, run, session, output):
         mode=run["scanorder"], engine=run["spiengine"], vmid=run["vmid"], settle_us=run["mux_settle_us"],
         spi_frame=run["spi_frame"], protocol_version=3, firmware_revision=status["firmware_revision"],
         scan_semantics=status["scan_semantics"], requested_spi_clock_hz=run["spi_clock_hz"],
+        vmid_settle_us=config.vmid_settle_us,
+        vmid_settle_effective_us=int(status.get('vmid_settle_us',config.mux_settle_us)),
+        vmid_settle_mode=status.get('vmid_settle_mode','follow_sensor'),
         frames=len(frames), measured_frames=int(measured.sum()), mean_period_us=mean_period,
         delivered_sweeps_s=1e6 / mean_period, useful_values_s=50e6 / mean_period,
         mean_acquisition_us=float(acquisition[measured].mean()), mean_gap_us=float(gaps.mean()),
@@ -67,9 +70,11 @@ def process(source, run, session, output):
     # A stable complete-frame rate is a measurement. Inferring sampled rate
     # from sent+discarded counters and delivered endpoints is explicitly estimated.
     c = operation_counts(bench.load_manifest(bench.DEFAULT_MANIFEST)["both_full"], config.scanorder,
-                         config.channelrepeat, config.vmid, config.spi_frame)
+                         config.channelrepeat, config.vmid, config.spi_frame,
+                         coordinated=status.get('mux_switch_guards') == 'coordinated')
     rows.update({"estimated_" + k:v for k,v in c.items() if k != "basis"})
-    rows["estimated_settle_budget_us"] = c["settling_waits"] * config.mux_settle_us
+    rows["estimated_settle_budget_us"] = (c['sensor_settling_windows'] * config.mux_settle_us +
+        c['vmid_settling_windows'] * rows['vmid_settle_effective_us'])
     profile = json.loads((folder / "firmware_profile.jsonl").read_text().splitlines()[-1])["summary"]
     if profile["enabled"]:
         for phase, metric in profile["phases"].items(): rows["profile_" + phase + "_us"] = metric["mean_us"]
@@ -80,7 +85,7 @@ def process(source, run, session, output):
         x = canonical_samples(frames, status)
         groups = [[i for i,r in enumerate(canonical) if (r.array,r.mux) == (a,m)] for a in (1,2) for m in (1,2,3,4)]
         mask, edges, envelope, thresholds, keep, above = quiet_mask(starts / 1e6, x, groups,
-            start=warmup, end=warmup + session["measurement_s"])
+            start=warmup, end=warmup + session["measurement_s"], require_coverage=not allow_insufficient_quiet)
         z = x[mask]
         rows.update(quiet_seconds=float(keep.sum() * .05), quiet_frames=int(mask.sum()),
                     rejected_time_percent=float(100 * (1 - keep.mean())), above_threshold_bins=int(above.sum()))
@@ -89,11 +94,17 @@ def process(source, run, session, output):
                 for a,b,k,ab,env in zip(edges[:-1],edges[1:],keep,above,envelope)]
         csv_write(output / (session["stage"] + "__" + run["name"] + "__quiet_bins.csv"), bins)
         (output / (session["stage"] + "__" + run["name"] + "__quiet_thresholds.json")).write_text(json.dumps(thresholds.tolist()))
+        rows['quiet_qualified'] = bool(keep.sum() * .05 >= 1 and mask.sum() >= 100)
+        if not rows['quiet_qualified']:
+            rows['quiet_failure'] = 'Less than 1 second / 100 frames of common quiet data'
+            return rows, channels
         for i, route in enumerate(canonical):
             sd = float(z[:,i].std(ddof=1)); pp = float(np.ptp(z[:,i])); baseline = float(np.median(z[:,i]))
             channels.append(dict(stage=session["stage"], name=run["name"], repetition=run["repetition"],
                 mode=config.scanorder, engine=config.spiengine, settle_us=config.mux_settle_us, vmid=config.vmid,
                 spi_frame=config.spi_frame, route=str(route), array=route.array, mux=route.mux,
+                vmid_settle_us=config.vmid_settle_us,
+                vmid_settle_effective_us=rows['vmid_settle_effective_us'],
                 sensor=f"PZT{route.sensor}", sensor_channel=route.sensor_channel, bias_ohms=route.bias_ohms,
                 quiet_frames=len(z), sd_counts=sd, sd_volts=sd*LSB, ptp_counts=pp, ptp_volts=pp*LSB,
                 baseline_counts=baseline, baseline_volts=baseline*LSB))
@@ -109,14 +120,14 @@ def process(source, run, session, output):
 def summarize(rows):
     groups = {}
     for row in rows:
-        key=(row["stage"],row["mode"],row["engine"],row["vmid"],row["settle_us"],row["spi_frame"])
+        key=(row["stage"],row["mode"],row["engine"],row["vmid"],row["settle_us"],row["spi_frame"],row.get('vmid_settle_us'))
         groups.setdefault(key,[]).append(row)
     output=[]
     for key, group in groups.items():
-        result=dict(zip(("stage","mode","engine","vmid","settle_us","spi_frame"),key));result["repetitions"]=len(group)
+        result=dict(zip(("stage","mode","engine","vmid","settle_us","spi_frame","vmid_settle_us"),key));result["repetitions"]=len(group)
         for field,value in group[0].items():
             if isinstance(value,(int,float)) and not isinstance(value,bool) and field not in ("repetition","settle_us","protocol_version"):
-                numbers=[r[field] for r in group]
+                numbers=[r[field] for r in group if field in r]
                 result[field]=float(np.median(numbers));result[field+"_min"]=float(min(numbers));result[field+"_max"]=float(max(numbers))
         output.append(result)
     return output

@@ -23,11 +23,30 @@ includes production/diagnostic timings, burst controls and common-window noise
 analysis. Its raw-only recorder, `scripts/benchmark_adc124_scan_modes.py`,
 avoids per-sample CSV work during capture and restores production firmware.
 
+The [FIFO/GPIO comparison](../../../docs/testing/results/testboard-adc124/fifo_gpio_2026-10-14/README.md)
+uses `scripts/benchmark_adc124_fifo_gpio.py before|after RAW_ROOT` to retain
+frozen images/source hashes, matched production/diagnostic matrices and stopped
+production restoration. Build both environments and load the corresponding
+production image first. The paired analyzer records failed quiet coverage
+explicitly; supplementary long captures use the same all-channel time mask.
+
 Protocols 2/3 continue sampling during USB stalls and intentionally discard
 complete sweeps when USB is busy. `sampling_sweeps = usb_frames_sent +
 usb_frames_discarded`; received frames must match **sent** frames. Accounted
 discards are WARN, and missing transmitted frames remain FAIL. The old runner's
 lifetime-sweeps/received comparison is unsuitable for protocol-2/3 captures.
+
+Firmware with `vmid_settle_us`/`vmid_settle_mode` status adds independent VMID
+settling. Use `--mux-settle-us 5 --vmid on --vmid-settle-us default 5 0 1`
+to compare inheritance and explicit waits while retaining switching guards.
+The default follows sensor settling dynamically and clears any stale override
+on supported firmware. Explicit overrides require this capability. Each value
+has distinct test IDs and comparison keys; sessions/results record requested
+and effective delay/mode. Restore helpers preserve explicit zero as well.
+
+The [VMID-settling report](../../../docs/testing/results/testboard-adc124/vmid_settle_2026-10-14/README.md)
+and `scripts/benchmark_adc124_vmid_settle.py` cover fresh previous-firmware,
+default/explicit-5 parity and 0/1 us measurements across both modes/all engines.
 
 From the repository root:
 

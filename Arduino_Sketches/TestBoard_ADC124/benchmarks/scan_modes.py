@@ -17,7 +17,7 @@ def acquisition_phases(routes, mode):
     return phases
 
 
-def operation_counts(routes, mode, repeat=1, vmid=False, spi_frame="burst"):
+def operation_counts(routes, mode, repeat=1, vmid=False, spi_frame="burst", coordinated=False):
     phases = acquisition_phases(routes, mode)
     batches = sum(len(p) for p in phases)
     words = len(routes) * repeat + batches + (5 * batches if vmid else 0)
@@ -25,22 +25,36 @@ def operation_counts(routes, mode, repeat=1, vmid=False, spi_frame="burst"):
     addresses = {r.array: 7 for r in routes}
     # Replay once to establish end-of-sweep state, then count steady-state work.
     for _ in range(2):
-        switches = waits = address_writes = 0
+        switches = waits = address_writes = grouped_writes = sensor_windows = vmid_windows = 0
         for phase in phases:
             for target in ([phase[0][0].input, 7] if vmid else [phase[0][0].input]):
                 changed = False
+                register_masks = {}
                 for group in phase:
                     array = group[0].array
                     old = addresses[array]
                     if old != target:
                         switches += 1
                         address_writes += (old ^ target).bit_count()
+                        # Teensy 4.1 address-pin port mapping, independently
+                        # verified against core_pins.h. Group SET/CLEAR apart.
+                        ports = (6, 9, 9) if array == 1 else (9, 8, 8)
+                        for bit, port in enumerate(ports):
+                            if (old ^ target) & (1 << bit):
+                                key = (port, bool(target & (1 << bit)))
+                                if coordinated: register_masks[key] = True
+                                else: grouped_writes += 1
                         addresses[array] = target
                         changed = True
                 waits += changed
+                if target == 7: vmid_windows += changed
+                else: sensor_windows += changed
+                if coordinated: grouped_writes += len(register_masks)
     return dict(sensor_batches=batches, phases=len(phases), spi_words=words, cs_frames=cs_frames,
                 bank_switches=switches, settling_waits=waits, enable_writes=2 * switches,
+                sensor_settling_windows=sensor_windows, vmid_settling_windows=vmid_windows,
                 changed_address_bit_writes=address_writes, cs_allowance_us=.2 * cs_frames,
-                mux_switch_guard_us=.4 * switches,
+                grouped_address_register_writes=grouped_writes,
+                mux_switch_guard_us=.4 * (waits if coordinated else switches),
                 removed_cs_allowance_us=.2 * (words - cs_frames),
                 basis="steady-state firmware operation counts; configured guard and clock arithmetic, not measured edge timings")

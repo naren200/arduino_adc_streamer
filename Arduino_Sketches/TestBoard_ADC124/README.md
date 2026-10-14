@@ -35,14 +35,17 @@ The USB and acquisition improvements from ADS7953 commits `92be24d` and
   and address phases are prepared once per run. LPSPI retains one
   shared-bus transaction per sweep. Continuous-CS bursts use one CS frame per
   prepared ADC/address batch; `spiframe single` retains per-conversion CS frames.
-  CS GPIO registers are cached; receive readiness **and fresh transfer completion**
+  CS GPIO registers are cached; receive readiness **and final transfer completion**
   are required before CS release. Session setup uses a known 16-bit command
   instead of asynchronous TCR readback. SPI state is restored before USB enqueue
   and on failure. The 100 ns CS setup/high allowances are retained.
 - Engine-specific conversion loops avoid per-word mode dispatch. LPSPI waits
   use the cycle counter with a 1 ms bound and foreground servicing every 10 us
   during extended waits; interrupts remain enabled. DMA retains EventResponder
-  servicing. GPIO MUX switching and its settling delay still run for each group.
+  servicing. LPSPI bursts queue commands and drain responses within the actual
+  FIFO capacities, waiting for final completion and idle before CS release.
+  MUX switching uses cached register-write sequences; coordinated phases share
+  switching guard waits and retain the full configured analog settling delay.
 
 These changes do not import ADS7953 Auto-1 masks, its two-frame response delay,
 20–30 MHz clock range, dual-bus overlap, or its ADC/channel wiring. ADC124 still
@@ -64,8 +67,9 @@ address groups of array A, then array B. The wire order is array, external
 address, ADC input/MUX. Each address applies one analog settling wait to that
 bank before its populated ADC inputs are read.
 
-`scanorder mux*` now switches the participating banks to the same address,
-finishes each bank's disable/address/enable guards, then applies **one shared
+`scanorder mux*` now disables the changing participating banks, waits after the
+last disable, updates their address pins, enables them and waits after the last
+enable. Every bank receives its full switching guards, then **one shared
 analog wait**. It reads ADC A's populated inputs then ADC B's on the shared SPI
 bus. The wire order is external address, array, ADC input/MUX. Sparse routes
 and single-array selections include only the banks/ADC inputs needed at each
@@ -88,7 +92,11 @@ parking at startup, run preparation, stop and failure, and optional VMID work.
 It removes the copied ownership/end-of-sweep parking. EN is cached and toggled
 only when an address change needs break-before-make, or explicitly disabling/
 re-enabling an inactive bank. GPIO register masks are cached and unchanged
-address bits are not rewritten. The 200 ns turn-off and turn-on guards remain.
+address bits are not rewritten. Address SET/CLEAR masks are grouped by GPIO
+port, including signals from different banks on GPIO9. Write sequences are
+precomputed for every address history; sparse banks need not start at the same
+address. The 200 ns turn-off and turn-on guards remain and overlap in shared
+phases. The cache uses 48,096 bytes on ARM to avoid mask assembly during scans.
 
 With VMID on, each phase switches its participating banks to address 7 before
 one corresponding wait, then takes a discarded five-word VMID batch per ADC
@@ -102,8 +110,11 @@ with CS held low. Each sensor/VMID burst stays at one fixed external address.
 The first response is discarded to prime the next-conversion selector; only
 the last requested repeat is stored for each route. Blocking keeps one SPI
 transaction/CS frame per batch; DMA launches one 2N-byte transfer from persistent
-aligned buffers; LPSPI retains its sweep session and CS across all batch words,
-requiring fresh transfer completion on each word and before final CS release.
+aligned buffers; LPSPI retains its sweep session and CS across all batch words.
+It queues prepared words within TX/RX FIFO capacity, drains ordered responses,
+checks error/timeout conditions and requires all responses, empty TX, transfer
+completion and idle before final CS release. Individual-word reference frames
+still require fresh completion for each word.
 CS setup and high allowances are paid once per burst; timeout/error paths
 release CS, restore SPI state and park safely. Interrupts remain enabled.
 
@@ -114,6 +125,35 @@ CS-allowance savings are `(64-14)*0.2 = 10.0 us` off and
 ADC mode uses 14/28 settling waits; shared MUX uses 7/14. Actual GPIO change
 counts depend on routes, current cached state and VMID; analog delays are not
 shortened to compensate for CPU overhead.
+
+Current revision `adc124-vmid-settle-v1` retains the FIFO/GPIO optimization
+from `adc124-fifo-grouped-gpio-v2`; protocol remains 3.
+For full arrays, coordinated MUX guard allowance is 2.8 us off / 5.6 us on,
+versus 5.6 / 11.2 us with separate bank switching. These are configured
+allowance estimates, not measured GPIO propagation or total speed gains.
+
+## Independent VMID settling
+
+`muxsettle N*` sets sensor settling. `vmidsettle default*` (the boot default)
+follows that value dynamically. `vmidsettle N*` sets a fixed VMID override in
+0..1000 us; later sensor-delay changes do not replace it. Set `default` again
+to resume following. Status reports effective `vmid_settle_us` and
+`vmid_settle_mode=follow_sensor|explicit`.
+
+The VMID delay applies to optional VMID conversions and configured VMID
+parking at run preparation/stop/failure. Zero omits the extra analog wait;
+the off/on guards, priming conversion and four discarded ADC input responses
+still run. MUX mode shares the VMID wait after both banks complete switching.
+Sensor settling and payload width stay unchanged. Startup uses inherited 5 us.
+
+```text
+muxsettle 5*
+vmidsettle 0*        # sensor 5 us, VMID 0 us (guards remain)
+vmid true*
+vmidsettle 1*        # sensor 5 us, VMID 1 us
+vmidsettle 5*        # explicitly match 5 us
+vmidsettle default*  # follow future muxsettle changes
+```
 
 ## Optional phase profiling
 
@@ -202,7 +242,8 @@ an active stream at a complete frame boundary before its text response.
 | `spiengine blocking|dma|lpspi*` | SPIClass, asynchronous byte DMA, or direct 16-bit LPSPI transfer |
 | `spiclock 8000000..16000000*` | Requested Hz |
 | `channelrepeat 1..3*` | Consecutive conversions per sensor; transmit only the final value |
-| `muxsettle 0..1000*` | Extra analog settling delay in microseconds after address changes |
+| `muxsettle 0..1000*` | Sensor analog settling; also VMID while following the default |
+| `vmidsettle default*` or `vmidsettle 0..1000*` | Follow sensor settling (default) or override VMID analog wait; zero retains guards |
 | `vmid true|false*` | Optional discarded Vmid conversions between address groups |
 | `vmid 7*`, `ground ...*` | Numeric enable form / legacy alias |
 | `ref 3.3*` | Confirm fixed reference; all other values rejected |
@@ -252,6 +293,18 @@ bits increment `data_errors` and stop the run. No partial sweep is transmitted.
 
 ## Benchmarks and validation
 
+The [2026-10-14 VMID-settling comparison](../../docs/testing/results/testboard-adc124/vmid_settle_2026-10-14/README.md)
+tests inherited/explicit 5 us, 0 us and 1 us with sensor settling fixed at 5 us,
+both modes and all engines, against a fresh FIFO/GPIO firmware baseline.
+Both builds and 100 focused tests passed. Noise and timing are reported
+separately; discarded VMID values themselves are not exported.
+
+The [2026-10-14 FIFO/GPIO comparison](../../docs/testing/results/testboard-adc124/fifo_gpio_2026-10-14/README.md)
+compares fresh before/after production and diagnostic matrices, including
+common-window noise and longer captures where short quiet coverage failed.
+Both builds and 80 focused tests passed. Faster read scheduling changes analog
+history; the report retains noise increases and baseline shifts alongside rates.
+
 The [2026-10-13 scan-mode benchmark](../../docs/testing/results/testboard-adc124/scan_modes_2026-10-13/README.md)
 records 252 captures across both modes, all three engines, VMID off/on and
 1/2/5/10/50 us settling. Both firmware builds and 106 focused tests passed.
@@ -280,7 +333,8 @@ uv run --with ziglang --with unicorn --with pyelftools pytest tests/test_testboa
 
 The optional Zig compiler executes the production driver, SPI controller, USB
 wrapper and application against simulated GPIO/ADC/registers. Both environments
-cover 708 digital acquisition combinations, sparse routes, shared waits,
+cover 708 base acquisition combinations, 216 independent VMID settling cases,
+90 sparse VMID cases, equal-delay parity, shared waits,
 redundant-switch avoidance, switching guards, CS bursts, stalls, timeout and
 error cleanup. Unicorn verifies the compiled ARM USB writer against busy-ring,
 disconnect, ring-wrap and autoflush-interruption scenarios. These tools are test

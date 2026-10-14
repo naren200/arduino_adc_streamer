@@ -75,6 +75,8 @@ def status_for(config, routes, sweeps=0):
         "array": config.array, "scanorder": config.scanorder, "spiengine": config.spiengine,
         "spi_clock_hz": str(config.spi_clock_hz), "channelrepeat": str(config.channelrepeat),
         "mux_settle_us": str(config.mux_settle_us), "vmid_between_groups": str(config.vmid).lower(),
+        'vmid_settle_us':str(config.mux_settle_us if config.vmid_settle_us is None else config.vmid_settle_us),
+        'vmid_settle_mode':'follow_sensor' if config.vmid_settle_us is None else 'explicit',
         "vmid_address": "7", "vmid_parking": "mandatory", "vref": "3.3", "vmid_volts": "1.65",
         "active_spi_buses": "1", "mux_enable_active_high": "true,false",
         "adcchannels": ",".join(map(str, routes)),

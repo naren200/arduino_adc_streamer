@@ -118,17 +118,24 @@ class BenchmarkConfig:
     mux_settle_us: int
     vmid: bool
     spi_frame: str = "burst"
+    vmid_settle_us: Optional[int] = None  # None follows sensor settling dynamically.
 
     @property
     def test_id(self):
-        return (f"array{self.array}__{self.scanorder}__{self.spiengine}__"
+        base = (f"array{self.array}__{self.scanorder}__{self.spiengine}__"
                 f"spi{self.spi_clock_hz}__repeat{self.channelrepeat}__"
                 f"settle{self.mux_settle_us}__vmid{'on' if self.vmid else 'off'}__{self.spi_frame}")
+        return base if self.vmid_settle_us is None else base + f"__vmidsettle{self.vmid_settle_us}"
 
     @property
     def comparison_key(self):
         return (self.array, self.scanorder, self.spi_clock_hz,
-                self.channelrepeat, self.mux_settle_us, self.vmid, self.spi_frame)
+                self.channelrepeat, self.mux_settle_us, self.vmid, self.spi_frame, self.vmid_settle_us)
+
+
+def vmid_settle_from_status(status):
+    """Preserve explicit overrides when restoring; historical firmware follows sensor delay."""
+    return int(status['vmid_settle_us']) if status.get('vmid_settle_mode') == 'explicit' else None
 
 
 def selected_routes(routes: Sequence[Route], array: str) -> tuple[Route, ...]:
@@ -139,12 +146,12 @@ def build_matrix(args, routes: Sequence[Route]) -> list[BenchmarkConfig]:
     available = sorted({str(r.array) for r in routes})
     arrays = args.arrays or (available + ["both"] if len(available) == 2 else available)
     result = []
-    for array, order, clock, settle, repeat, vmid, engine, frame in itertools.product(
+    for array, order, clock, settle, repeat, vmid, engine, frame, vmid_settle in itertools.product(
             arrays, args.scan_order, args.spi_clock_hz, args.mux_settle_us,
-            args.channel_repeat, args.vmid, args.spi_engine, args.spi_frame):
+            args.channel_repeat, args.vmid, args.spi_engine, args.spi_frame, args.vmid_settle_us):
         if not selected_routes(routes, array):
             raise ValueError(f"Array {array} has no selected routes")
-        config = BenchmarkConfig(array, order, engine, clock, repeat, settle, vmid == "on", frame)
+        config = BenchmarkConfig(array, order, engine, clock, repeat, settle, vmid == "on", frame, vmid_settle)
         if config not in result:
             result.append(config)
     return result
@@ -194,6 +201,13 @@ def validate_status(status, config: BenchmarkConfig, routes: Sequence[Route]):
         required = {"scan_semantics": "array_sequential_address_grouped" if config.scanorder == "adc" else "shared_address_settle_adc_sequential",
                     "spi_frame": config.spi_frame, "adc_pipeline_frames": "1", "vmid_parking_scope": "start_stop_failure"}
         mismatches.extend(f"{k}: expected {v!r}, got {status.get(k)!r}" for k, v in required.items() if status.get(k) != v)
+    if 'vmid_settle_us' in status or 'vmid_settle_mode' in status:
+        delay = config.mux_settle_us if config.vmid_settle_us is None else config.vmid_settle_us
+        mode = 'follow_sensor' if config.vmid_settle_us is None else 'explicit'
+        for key,value in (('vmid_settle_us',str(delay)),('vmid_settle_mode',mode)):
+            if status.get(key) != value: mismatches.append(f'{key}: expected {value!r}, got {status.get(key)!r}')
+    elif config.vmid_settle_us is not None:
+        mismatches.append('Firmware does not support separate VMID settling')
     for key in (*COUNTERS, "sweep_count", *(LIVE_COUNTERS if version in ("2", "3") else ())):
         if not status.get(key, "").isascii() or not status.get(key, "").isdecimal():
             mismatches.append(f"missing/invalid counter {key}")
@@ -260,6 +274,9 @@ def configure(protocol: SerialProtocol, config: BenchmarkConfig, routes, profile
     initial = parse_status(protocol.command("status"))
     version = initial.get("protocol_version")
     legacy = version in ("1", "2")
+    supports_vmid_settle = 'vmid_settle_us' in initial and 'vmid_settle_mode' in initial
+    if config.vmid_settle_us is not None and not supports_vmid_settle:
+        raise BenchmarkError('Firmware does not support separate VMID settling')
     if legacy and (config.scanorder != "adc" or config.spi_frame != "single"):
         raise BenchmarkError("Legacy firmware requires --scan-order adc --spi-frame single; shared mux requires protocol 3")
     if initial.get("profile_available") == "true":
@@ -275,6 +292,8 @@ def configure(protocol: SerialProtocol, config: BenchmarkConfig, routes, profile
         protocol.command(command)
     if not legacy:
         protocol.command(f"spiframe {config.spi_frame}")
+    if supports_vmid_settle:
+        protocol.command('vmidsettle ' + ('default' if config.vmid_settle_us is None else str(config.vmid_settle_us)))
     status = parse_status(protocol.command("status"))
     validate_status(status, config, routes)
     if any(int(status[k]) for k in error_counter_keys(status)):
@@ -338,7 +357,8 @@ RESULT_FIELDS = ("test_id", "repetition", "result", "reason", "array", "scanorde
                  "resync_events", "trailing_bytes", "timed_out", "transfer_errors", "data_errors",
                  "firmware_sweeps", "received_frames")
 RESULT_FIELDS += ("sampling_sweeps", "usb_frames_sent", "usb_frames_discarded", "usb_discard_percent",
-                  "usb_stream_policy", "sampling_period_max_us", "sampling_period_over_1ms", "usb_write_errors", "spi_frame", "protocol_version", "scan_semantics")
+                  "usb_stream_policy", "sampling_period_max_us", "sampling_period_over_1ms", "usb_write_errors", "spi_frame", "protocol_version", "scan_semantics",
+                  "vmid_settle_us", "vmid_settle_effective_us", "vmid_settle_mode")
 
 
 def write_csv(path, fields, rows):
@@ -489,7 +509,9 @@ def capture(protocol, config, routes, args, directory):
         "invalid_frames": parser.invalid_frames, "discarded_bytes": parser.discarded_bytes,
         "resync_events": parser.resync_events, "trailing_bytes": trailing, "timed_out": timed_out,
         **errors, **accounting, "received_frames": received_frames, "protocol_version": after["protocol_version"],
-        "scan_semantics": after.get("scan_semantics", "legacy_array_sequential_address_grouped")}
+        "scan_semantics": after.get("scan_semantics", "legacy_array_sequential_address_grouped"),
+        "vmid_settle_effective_us": after.get('vmid_settle_us',str(config.mux_settle_us)),
+        "vmid_settle_mode": after.get('vmid_settle_mode','follow_sensor')}
     return result, channel_rows
 
 
@@ -552,6 +574,13 @@ def write_workbook(output, results, channels, comparison_rows):
             notes.write(index, 0, line)
 
 
+def parse_vmid_settle(text):
+    if text == 'default': return None
+    if not text.isascii() or not text.isdecimal() or not 0 <= int(text) <= 1000:
+        raise argparse.ArgumentTypeError('VMID settling must be default or an integer in 0..1000 us')
+    return int(text)
+
+
 def parse_args(argv: Optional[Sequence[str]] = None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port")
@@ -570,6 +599,8 @@ def parse_args(argv: Optional[Sequence[str]] = None):
     parser.add_argument("--spi-clock-hz", nargs="+", type=int, default=[16000000])
     parser.add_argument("--channel-repeat", nargs="+", type=int, default=[1])
     parser.add_argument("--mux-settle-us", nargs="+", type=int, default=[2, 5])
+    parser.add_argument('--vmid-settle-us', nargs='+', type=parse_vmid_settle, default=[None],
+                        help='VMID delay in us; default follows --mux-settle-us; 0 retains switching guards')
     parser.add_argument("--vmid", nargs="+", choices=("off", "on"), default=["off"])
     parser.add_argument("--warm-up-ms", type=int, default=1000)
     parser.add_argument("--window-ms", type=int, default=5000)

@@ -27,6 +27,7 @@ class Adc124s101 {
   void disable();
   void selectAddress(uint8_t address, uint32_t settle_us);
   bool switchAddress(uint8_t address);
+  static bool switchTogether(Adc124s101 *first, Adc124s101 *second, uint8_t address);
   void park(uint32_t settle_us);
   bool transfer(uint8_t adc_input, SpiEngine engine, uint16_t &sample);
   bool prepareBatch(const SensorRoute *routes, uint8_t count, uint8_t repeat,
@@ -62,6 +63,15 @@ class Adc124s101 {
     void write(bool high) const;
   };
   Gpio enable_gpio_, address_gpio_[3];
+#if defined(__IMXRT1062__)
+  struct RegisterWrite { decltype(portSetRegister(0)) reg = nullptr; uint32_t mask = 0; };
+  struct AddressWrites { RegisterWrite writes[6]; uint8_t count = 0; };
+  struct AddressChange { uint32_t clear[6] = {}, set[6] = {}; AddressWrites sequence; };
+  AddressChange address_changes_[9][8];  // row 8 means unknown startup address
+  static AddressWrites pair_changes_[9][9][8];
+  static Adc124s101 *cached_banks_[2];
+  void cacheAddressChanges();
+#endif
   SpiController &spi_;
   uint8_t index_;
   SpiController::ChipSelect chip_select_;

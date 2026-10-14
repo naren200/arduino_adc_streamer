@@ -128,7 +128,8 @@ def main():
         old = lifecycle["before_status"]
         mode = "adc" if old.get("protocol_version") in ("1","2") else old["scanorder"]
         restore = bench.BenchmarkConfig(old["array"], mode, old["spiengine"], int(old["spi_clock_hz"]),
-            int(old["channelrepeat"]), int(old["mux_settle_us"]), old["vmid_between_groups"] == "true", old.get("spi_frame","burst"))
+            int(old["channelrepeat"]), int(old["mux_settle_us"]), old["vmid_between_groups"] == "true", old.get("spi_frame","burst"),
+            bench.vmid_settle_from_status(old))
         routes = tuple(bench.Route.parse(r) for r in old["adcchannels"].split(","))
         with (root / "firmware_commands.log").open("a") as log, serial.Serial("COM4", 460800, timeout=.02, write_timeout=3) as port:
             protocol = bench.SerialProtocol(port, log); protocol.stop_and_drain()

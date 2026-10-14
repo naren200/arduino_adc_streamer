@@ -92,30 +92,56 @@ inline std::vector<GpioEvent> gpio_events;
 inline std::vector<DelayEvent> delay_events;
 inline uint64_t guard_ns = 0;
 inline uint64_t fake_ns() { return uint64_t(fake_us) * 1000 + guard_ns; }
+void verify_spi_cs_release(uint8_t pin);
 inline void gpio_write(uint8_t pin, int value) {
+  if (value == HIGH && (pin == 9 || pin == 24)) verify_spi_cs_release(pin);
   pin_values[pin] = value;
   gpio_events.push_back({pin, value, fake_ns(), pin_values[0], pin_values[32]});
 }
 inline unsigned fake_micros_reads = 0, fake_yield_calls = 0;
 // Model atomic GPIO set/clear writes immediately, just like the Teensy ports.
+inline uint8_t fake_port(uint8_t pin) {
+  if (pin == 0 || pin == 1 || pin == 24) return 0; // GPIO6
+  if (pin == 30 || pin == 31) return 2; // GPIO8
+  if (pin == 2 || pin == 3 || pin == 29) return 3; // GPIO9
+  return 1; // GPIO7 (CS9, EN32)
+}
+inline uint32_t digitalPinToBitMask(uint8_t pin) {
+  switch (pin) {
+    case 0: return 1u << 3; case 1: return 1u << 2;
+    case 2: return 1u << 4; case 3: return 1u << 5;
+    case 9: return 1u << 11; case 24: return 1u << 12;
+    case 29: return 1u << 31; case 30: return 1u << 23;
+    case 31: return 1u << 22; case 32: return 1u << 12;
+    default: assert(false); return 0;
+  }
+}
+struct PortEvent { uint8_t port; int value; uint32_t mask; uint64_t ns; };
+inline std::vector<PortEvent> port_events;
 struct FakeGpioRegister {
-  uint8_t pin;
+  uint8_t port;
   int value;
-  void operator=(uint32_t mask) { if (mask) gpio_write(pin, value); }
+  void operator=(uint32_t mask) {
+    if (!mask) return;
+    port_events.push_back({port, value, mask, fake_ns()});
+    for (uint8_t pin : {0, 1, 2, 3, 9, 24, 29, 30, 31, 32})
+      if (fake_port(pin) == port && (digitalPinToBitMask(pin) & mask)) gpio_write(pin, value);
+  }
 };
-inline FakeGpioRegister fake_gpio_set[64], fake_gpio_clear[64];
+inline FakeGpioRegister fake_gpio_set[4], fake_gpio_clear[4];
 inline unsigned fake_gpio_lookups = 0;
 inline FakeGpioRegister *portSetRegister(uint8_t pin) {
   ++fake_gpio_lookups;
-  fake_gpio_set[pin].pin = pin; fake_gpio_set[pin].value = HIGH;
-  return &fake_gpio_set[pin];
+  const uint8_t port = fake_port(pin);
+  fake_gpio_set[port].port = port; fake_gpio_set[port].value = HIGH;
+  return &fake_gpio_set[port];
 }
 inline FakeGpioRegister *portClearRegister(uint8_t pin) {
   ++fake_gpio_lookups;
-  fake_gpio_clear[pin].pin = pin; fake_gpio_clear[pin].value = LOW;
-  return &fake_gpio_clear[pin];
+  const uint8_t port = fake_port(pin);
+  fake_gpio_clear[port].port = port; fake_gpio_clear[port].value = LOW;
+  return &fake_gpio_clear[port];
 }
-inline uint32_t digitalPinToBitMask(uint8_t) { return 1u; }
 inline uint32_t micros() { ++fake_micros_reads; return ++fake_us; }
 inline uint32_t millis() { return fake_us / 1000; }
 inline void yield() { ++fake_yield_calls; ++fake_us; }

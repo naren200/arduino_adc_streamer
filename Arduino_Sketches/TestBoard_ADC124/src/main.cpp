@@ -20,6 +20,8 @@ ScanOrder scan_order = ScanOrder::ADC;
 bool burst_frames = true;
 SpiEngine engine = SpiEngine::BLOCKING;
 uint32_t settle_us = kDefaultMuxSettleUs;
+uint32_t vmid_settle_us = kDefaultMuxSettleUs;
+bool vmid_settle_follows_sensor = true;
 bool vmid = false, running = false;
 uint32_t run_started_ms = 0, duration_ms = 0, sweep_count = 0;
 struct PreparedGroup {
@@ -66,7 +68,7 @@ bool parseUint(const String &text, uint32_t minimum, uint32_t maximum,
   return true;
 }
 
-void parkAll() { for (auto adc : adcs) adc->park(settle_us); }
+void parkAll() { for (auto adc : adcs) adc->park(vmid_settle_us); }
 void stop() { running = false; spi.endLpspiSession(); parkAll(); }
 bool selected(uint8_t array) { return array_mask & (1 << (array - 1)); }
 
@@ -156,7 +158,10 @@ void printRoute(const SensorRoute &r) {
 void status() {
   Serial.println("# board=TestBoard_ADC124");
   Serial.println("# protocol_version=3");
-  Serial.println("# firmware_revision=adc124-shared-mux-burst-v1");
+  Serial.println("# firmware_revision=adc124-vmid-settle-v1");
+  Serial.println("# lpspi_burst_policy=fifo_bounded");
+  Serial.println("# mux_gpio_policy=grouped_ports");
+  Serial.println("# mux_switch_guards=coordinated");
   Serial.print("# running="); Serial.println(running ? "true" : "false");
   Serial.println("# mode=PZT");
   Serial.print("# array="); Serial.println(array_mask == 3 ? "both" : array_mask == 1 ? "1" : "2");
@@ -167,6 +172,8 @@ void status() {
   Serial.print("# spi_clock_hz="); Serial.println(spi.clockHz());
   Serial.print("# channelrepeat="); Serial.println(channel_repeat);
   Serial.print("# mux_settle_us="); Serial.println(settle_us);
+  Serial.print("# vmid_settle_us="); Serial.println(vmid_settle_us);
+  Serial.print("# vmid_settle_mode="); Serial.println(vmid_settle_follows_sensor ? "follow_sensor" : "explicit");
   Serial.print("# vmid_between_groups="); Serial.println(vmid ? "true" : "false");
   Serial.println("# vmid_address=7");
   Serial.println("# vmid_parking=mandatory");
@@ -217,6 +224,7 @@ bool command(const String &name, const String &args) {
     Serial.println("# spiframe burst|single; adc=finish array A then B; mux=switch both then shared wait");
     Serial.println("# spiengine blocking|dma|lpspi; spiclock 8000000..16000000; channelrepeat 1..3");
     Serial.println("# muxsettle 0..1000 (us); vmid true|false|7; ref 3.3 (fixed); mode PZT");
+    Serial.println("# vmidsettle default|0..1000 (us); default follows muxsettle; zero retains switching guards");
     Serial.println("# run [1..3600000 ms]; stop; status; mcu; help; commands end with '*'");
     Serial.println("# profile on|off (diagnostic build, stopped only); USB policy: discard_if_busy");
     return !args.length();
@@ -264,7 +272,16 @@ bool command(const String &name, const String &args) {
   }
   if (name == "muxsettle") {
     if (!parseUint(args, 0, kMaxMuxSettleUs, value)) return false;
-    settle_us = value; return true;
+    settle_us = value;
+    if (vmid_settle_follows_sensor) vmid_settle_us = value;
+    return true;
+  }
+  if (name == "vmidsettle") {
+    if (args == "default") {
+      vmid_settle_follows_sensor = true; vmid_settle_us = settle_us; return true;
+    }
+    if (!parseUint(args, 0, kMaxMuxSettleUs, value)) return false;
+    vmid_settle_follows_sensor = false; vmid_settle_us = value; return true;
   }
   if (name == "vmid" || name == "ground") {
     if (args == "true" || args == "7") vmid = true;
@@ -313,9 +330,10 @@ bool capture() {
     // analog bank: changing ADC ownership does not require external parking.
     {
       TB_PROFILE_SCOPE(mux_profile, Prepare);
-      bool changed = false;
-      for (uint8_t i = phase.first; i < phase.first + phase.count; ++i)
-        changed |= adcs[groups[i].array - 1]->switchAddress(phase.input);
+      const bool changed = phase.count == 1
+          ? adcs[groups[phase.first].array - 1]->switchAddress(phase.input)
+          : Adc124s101::switchTogether(adcs[groups[phase.first].array - 1],
+              adcs[groups[phase.first + 1].array - 1], phase.input);
       // Starts AFTER all active banks' turn-on allowances, once per phase.
       if (changed && settle_us) delayMicroseconds(settle_us);
     }
@@ -329,10 +347,11 @@ bool capture() {
     if (vmid) {
       {
         TB_PROFILE_SCOPE(vmid_switch_profile, Prepare);
-        bool changed = false;
-        for (uint8_t i = phase.first; i < phase.first + phase.count; ++i)
-          changed |= adcs[groups[i].array - 1]->switchAddress(kVmidAddress);
-        if (changed && settle_us) delayMicroseconds(settle_us);
+        const bool changed = phase.count == 1
+            ? adcs[groups[phase.first].array - 1]->switchAddress(kVmidAddress)
+            : Adc124s101::switchTogether(adcs[groups[phase.first].array - 1],
+                adcs[groups[phase.first + 1].array - 1], kVmidAddress);
+        if (changed && vmid_settle_us) delayMicroseconds(vmid_settle_us);
       }
       {
         TB_PROFILE_SCOPE(vmid_transfer_profile, Transfer);
