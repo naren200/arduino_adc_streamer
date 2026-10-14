@@ -18,8 +18,9 @@ class Adc124s101 {
  public:
   struct PreparedBatch {
     uint16_t commands[13] = {};
-    uint8_t destinations[13] = {};  // 0xFF discards a selector prime.
+    uint8_t destinations[13] = {};  // 0xFF discards repeats/VMID conversions.
     uint8_t count = 0;
+    uint8_t first_input = 0;
   };
   Adc124s101(SpiController &spi, uint8_t array_index);
   void begin();
@@ -32,13 +33,15 @@ class Adc124s101 {
   bool transfer(uint8_t adc_input, SpiEngine engine, uint16_t &sample);
   bool prepareBatch(const SensorRoute *routes, uint8_t count, uint8_t repeat,
                     PreparedBatch &batch) const;
+  static bool prepareVmid(uint8_t next_input, PreparedBatch &batch);
+  bool selectInput(uint8_t input, SpiEngine engine);
   bool readPrepared(const PreparedBatch &batch, SpiEngine engine, uint16_t *samples, bool burst = false);
   bool readVmid(SpiEngine engine, bool burst);
 #if TESTBOARD_PROFILE
   void setProfiler(AcquisitionProfiler &profile) { profile_ = &profile; }
 #endif
-  // All routes in a batch must have this ADC and the same MUX address. Prime
-  // the one-frame channel selector once, then pipeline the four ADC inputs.
+  // All routes in a batch must have this ADC and the same MUX address.
+  // The final command selects the first input of the following batch.
   bool readBatch(const SensorRoute *routes, uint8_t count, uint8_t repeat,
                  SpiEngine engine, uint16_t *samples);
   bool sampleVmid(uint32_t settle_us, SpiEngine engine);
@@ -76,6 +79,7 @@ class Adc124s101 {
   uint8_t index_;
   SpiController::ChipSelect chip_select_;
   uint8_t address_ = 0xFF;
+  uint8_t selected_input_ = 0xFF;  // Unknown until a completed SPI command.
   bool enabled_ = false;
   // DMA abort cannot reset SPIClass's private DMA state. Latch the fault and
   // require a reset instead of reusing buffers that may still be DMA-owned.

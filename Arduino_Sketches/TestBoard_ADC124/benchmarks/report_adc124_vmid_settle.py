@@ -7,7 +7,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from report_adc124_fifo_gpio import table,number
 
-ROOT=Path(__file__).resolve().parents[1]
+ROOT=Path(__file__).resolve().parents[3]
 COLORS={'blocking':'#0072B2','dma':'#009E73','lpspi':'#D55E00'}
 
 
@@ -97,7 +97,7 @@ def report(folder):
         'Reducing the VMID dwell changes analog history. Functional streaming/parity checks do not qualify analog accuracy with attached sensors. Review channel_comparisons.csv for individual routes, baseline shifts, repeated noise changes and qualification coverage; sustained or isolated variation is retained by this method.',
         '## Identity and final state',
         f'Raw root: `{d["raw_root"]}`. Frozen before/after sources, both HEX files, source/image hashes, run/status/profile logs and raw bytes are retained. Final lifecycle: `{life["state"]}`; production revision `{life["final_production_status"]["firmware_revision"]}`, acquisition stopped, VMID setting inherited. Original both-array ADC/blocking/16 MHz/repeat 1/sensor 5 us/VMID-off configuration was restored.',
-        'No commit or push was performed. Previous reports and raw captures remain intact. Reproduce with scripts/benchmark_adc124_vmid_settle.py, scripts/analyze_adc124_vmid_settle.py and scripts/report_adc124_vmid_settle.py. CSVs/analysis.json contain all measured settings, counters, profile phases, estimated budgets and channel metrics.']
+        'No commit or push was performed. Previous reports and raw captures remain intact. Reproduce with Arduino_Sketches/TestBoard_ADC124/benchmarks/benchmark_adc124_vmid_settle.py, Arduino_Sketches/TestBoard_ADC124/benchmarks/analyze_adc124_vmid_settle.py and Arduino_Sketches/TestBoard_ADC124/benchmarks/report_adc124_vmid_settle.py. CSVs/analysis.json contain all measured settings, counters, profile phases, estimated budgets and channel metrics.']
     (folder/'README.md').write_text('\n\n'.join(sections)+'\n',encoding='utf-8')
     print('Rendered report and three plots',flush=True)
 

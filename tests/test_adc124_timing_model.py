@@ -5,7 +5,6 @@ import pytest
 @pytest.fixture
 def model(monkeypatch):
     root=Path(__file__).resolve().parents[1]
-    monkeypatch.syspath_prepend(str(root/'scripts'))
     monkeypatch.syspath_prepend(str(root/'Arduino_Sketches/TestBoard_ADC124/benchmarks'))
     return importlib.import_module('adc124_timing_model')
 

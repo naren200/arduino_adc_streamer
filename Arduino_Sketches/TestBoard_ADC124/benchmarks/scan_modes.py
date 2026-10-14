@@ -17,10 +17,12 @@ def acquisition_phases(routes, mode):
     return phases
 
 
-def operation_counts(routes, mode, repeat=1, vmid=False, spi_frame="burst", coordinated=False):
+def operation_counts(routes, mode, repeat=1, vmid=False, spi_frame="burst", coordinated=False, lookahead=False):
     phases = acquisition_phases(routes, mode)
     batches = sum(len(p) for p in phases)
-    words = len(routes) * repeat + batches + (5 * batches if vmid else 0)
+    # Historical captures use one prime per batch. Lookahead primes only
+    # during run preparation, outside the steady-state sweep budget.
+    words = len(routes) * repeat + (0 if lookahead else batches) + ((4 if lookahead else 5) * batches if vmid else 0)
     cs_frames = batches * (2 if vmid else 1) if spi_frame == "burst" else words
     addresses = {r.array: 7 for r in routes}
     # Replay once to establish end-of-sweep state, then count steady-state work.

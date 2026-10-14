@@ -3,6 +3,25 @@ from Arduino_Sketches.TestBoard_ADC124.benchmarks import testboard_adc124_benchm
 from Arduino_Sketches.TestBoard_ADC124.benchmarks.scan_modes import operation_counts, acquisition_phases
 
 
+@pytest.mark.parametrize("mode", ["adc", "mux"])
+@pytest.mark.parametrize("vmid,words", [(False, 50), (True, 106)])
+@pytest.mark.parametrize("repeat", [1, 3])
+def test_lookahead_removes_only_batch_primes(mode, vmid, words, repeat):
+    routes = b.load_manifest(b.DEFAULT_MANIFEST)["both_full"]
+    old = operation_counts(routes, mode, repeat=repeat, vmid=vmid, coordinated=True)
+    new = operation_counts(routes, mode, repeat=repeat, vmid=vmid, coordinated=True, lookahead=True)
+    assert new["spi_words"] == words + 50 * (repeat - 1)
+    assert old["spi_words"] - new["spi_words"] == 14 * (2 if vmid else 1)
+    for key in ("bank_switches", "settling_waits", "cs_frames", "enable_writes"):
+        assert new[key] == old[key]
+
+
+def test_lookahead_single_channel_is_one_conversion():
+    routes = (b.Route(1, 4, 6),)
+    assert operation_counts(routes, "mux", lookahead=True)["spi_words"] == 1
+    assert operation_counts(routes, "mux", vmid=True, lookahead=True)["spi_words"] == 5
+
+
 @pytest.mark.parametrize("mode,vmid,waits", [("adc", False, 14), ("adc", True, 28), ("mux", False, 7), ("mux", True, 14)])
 def test_full_operation_counts_and_estimated_cs_savings(mode, vmid, waits):
     routes = b.load_manifest(b.DEFAULT_MANIFEST)["both_full"]

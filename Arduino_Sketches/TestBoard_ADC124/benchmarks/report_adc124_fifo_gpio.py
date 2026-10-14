@@ -7,7 +7,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 COLORS = {'blocking':'#0072B2','dma':'#009E73','lpspi':'#D55E00'}
 SETTLES = (1,2,5,10,50)
 
@@ -162,7 +162,7 @@ def report(folder):
         '## Identity, final state and remaining work',
         f'Raw root: `{data["raw_root"]}`. Frozen before/after production and diagnostic HEX files, source/image hashes, Git base identity, run/status logs and raw bytes are retained there. Production was restored with acquisition stopped; final status is in `after_lifecycle.json`. The earlier scan report is [here](../scan_modes_2026-10-13/README.md).',
         'Remaining checks: verify final SCLK/CS/EN edges with a logic analyzer, stimulate known sensor inputs, and compare analog settling with sensors attached. FIFO polling can be tuned further only with measured benefit; cached transition tables could trade some memory back for arithmetic if needed. Encoding/enqueue is unchanged and the counters account for sparse USB pressure.',
-        'Reproduction: build and load the corresponding production revision, then run `scripts/benchmark_adc124_fifo_gpio.py before|after RAW_ROOT`, `scripts/analyze_adc124_fifo_gpio.py RAW_ROOT RESULT_ROOT`, and `scripts/report_adc124_fifo_gpio.py RESULT_ROOT`. Run the benchmark with `--extended-quiet` after each completed main matrix for the matched 15 s quiet captures. Raw folders must be new; captures are not overwritten. Supplementary long records retain their duration in channel comparisons. `capture_metrics.csv`, `summary.csv`, `comparisons.csv`, `channel_noise_baselines.csv`, `channel_comparisons.csv`, quiet-bin CSVs and thresholds contain detailed evidence.']
+        'Reproduction: build and load the corresponding production revision, then run `Arduino_Sketches/TestBoard_ADC124/benchmarks/benchmark_adc124_fifo_gpio.py before|after RAW_ROOT`, `Arduino_Sketches/TestBoard_ADC124/benchmarks/analyze_adc124_fifo_gpio.py RAW_ROOT RESULT_ROOT`, and `Arduino_Sketches/TestBoard_ADC124/benchmarks/report_adc124_fifo_gpio.py RESULT_ROOT`. Run the benchmark with `--extended-quiet` after each completed main matrix for the matched 15 s quiet captures. Raw folders must be new; captures are not overwritten. Supplementary long records retain their duration in channel comparisons. `capture_metrics.csv`, `summary.csv`, `comparisons.csv`, `channel_noise_baselines.csv`, `channel_comparisons.csv`, quiet-bin CSVs and thresholds contain detailed evidence.']
     (folder/'README.md').write_text('\n\n'.join(texts)+'\n',encoding='utf-8')
     print('Rendered report and four plots',flush=True)
 

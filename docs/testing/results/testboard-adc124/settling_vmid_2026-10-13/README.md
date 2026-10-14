@@ -41,8 +41,8 @@ Artifacts:
 Reproduce from the repository root (use a new capture directory):
 
 ```powershell
-.venv/Scripts/python.exe scripts/capture_adc124_settling.py <new-capture-directory>
-.venv/Scripts/python.exe scripts/report_adc124_settling.py <capture-directory> <analysis-directory> --pdf <report.pdf>
+.venv/Scripts/python.exe Arduino_Sketches/TestBoard_ADC124/benchmarks/capture_adc124_settling.py <new-capture-directory>
+.venv/Scripts/python.exe Arduino_Sketches/TestBoard_ADC124/benchmarks/report_adc124_settling.py <capture-directory> <analysis-directory> --pdf <report.pdf>
 .venv/Scripts/python.exe -m pytest tests/test_adc124_settling_report.py tests/test_testboard_adc124_benchmark.py -q
 ```
 

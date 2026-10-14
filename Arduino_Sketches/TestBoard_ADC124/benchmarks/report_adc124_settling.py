@@ -331,7 +331,7 @@ def build_report(result,plots,output,pdf):
     over=sum(int(r['sampling_period_over_1ms']) for r in runs)
     p(f'Firmware sampling intervals above 1 ms: {over:,}. Long sweep periods are expected at high settling delay; this counter alone is not an error indication. Maximum sampling periods and individual repetition metrics are retained in capture_metrics.csv.')
     p('No firmware-source, wire-format or hardware changes were made. The board was left stopped and its original full-array, MUX-order, blocking, 16 MHz, repeat-1, 5 us, VMID-off configuration restored. These captures do not establish ghosting, crosstalk under stimulation, channel identity by known-voltage stimulation, or a minimum adequate settling time for attached sensors.')
-    p('Evidence: session.json and commands.log; 30 raw captures with status snapshots and hashes; 30 quiet-bin CSVs; capture_metrics.csv; 1,500 per-channel repetition rows; 500 channel summaries; 100 array/MUX group summaries. Reproduce with scripts/capture_adc124_settling.py and scripts/report_adc124_settling.py.',True)
+    p('Evidence: session.json and commands.log; 30 raw captures with status snapshots and hashes; 30 quiet-bin CSVs; capture_metrics.csv; 1,500 per-channel repetition rows; 500 channel summaries; 100 array/MUX group summaries. Reproduce with Arduino_Sketches/TestBoard_ADC124/benchmarks/capture_adc124_settling.py and Arduino_Sketches/TestBoard_ADC124/benchmarks/report_adc124_settling.py.',True)
     pdf.parent.mkdir(parents=True,exist_ok=True)
     def footer(canvas,doc):
         canvas.saveState();canvas.setFont('Helvetica',7);canvas.setFillColor(colors.HexColor('#607c90'))
