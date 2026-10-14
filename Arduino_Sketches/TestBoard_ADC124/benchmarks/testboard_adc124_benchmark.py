@@ -93,12 +93,18 @@ def load_manifest(path: Path) -> dict[str, tuple[Route, ...]]:
     return result
 
 
-def payload_order(routes: Sequence[Route], scanorder: str) -> tuple[Route, ...]:
-    keys = {
-        "mux": lambda r: (r.array, r.input, r.mux),
-        "channel": lambda r: (r.array, r.mux, r.input),
-        "interleaved": lambda r: (r.input, r.mux, r.array),
-    }
+def payload_order(routes: Sequence[Route], scanorder: str, protocol_version: int = 3) -> tuple[Route, ...]:
+    if protocol_version < 3:
+        keys = {"mux": lambda r: (r.array, r.input, r.mux),
+                "channel": lambda r: (r.array, r.mux, r.input),
+                "adc": lambda r: (r.array, r.mux, r.input),
+                "array": lambda r: (r.array, r.mux, r.input),
+                "interleaved": lambda r: (r.input, r.mux, r.array)}
+    else:
+        keys = {"adc": lambda r: (r.array, r.input, r.mux),
+                "mux": lambda r: (r.input, r.array, r.mux)}
+    if scanorder not in keys:
+        raise ValueError(f"Unsupported scan order {scanorder!r} for protocol {protocol_version}")
     return tuple(sorted(routes, key=keys[scanorder]))
 
 
@@ -111,17 +117,18 @@ class BenchmarkConfig:
     channelrepeat: int
     mux_settle_us: int
     vmid: bool
+    spi_frame: str = "burst"
 
     @property
     def test_id(self):
         return (f"array{self.array}__{self.scanorder}__{self.spiengine}__"
                 f"spi{self.spi_clock_hz}__repeat{self.channelrepeat}__"
-                f"settle{self.mux_settle_us}__vmid{'on' if self.vmid else 'off'}")
+                f"settle{self.mux_settle_us}__vmid{'on' if self.vmid else 'off'}__{self.spi_frame}")
 
     @property
     def comparison_key(self):
         return (self.array, self.scanorder, self.spi_clock_hz,
-                self.channelrepeat, self.mux_settle_us, self.vmid)
+                self.channelrepeat, self.mux_settle_us, self.vmid, self.spi_frame)
 
 
 def selected_routes(routes: Sequence[Route], array: str) -> tuple[Route, ...]:
@@ -132,12 +139,12 @@ def build_matrix(args, routes: Sequence[Route]) -> list[BenchmarkConfig]:
     available = sorted({str(r.array) for r in routes})
     arrays = args.arrays or (available + ["both"] if len(available) == 2 else available)
     result = []
-    for array, order, clock, settle, repeat, vmid, engine in itertools.product(
+    for array, order, clock, settle, repeat, vmid, engine, frame in itertools.product(
             arrays, args.scan_order, args.spi_clock_hz, args.mux_settle_us,
-            args.channel_repeat, args.vmid, args.spi_engine):
+            args.channel_repeat, args.vmid, args.spi_engine, args.spi_frame):
         if not selected_routes(routes, array):
             raise ValueError(f"Array {array} has no selected routes")
-        config = BenchmarkConfig(array, order, engine, clock, repeat, settle, vmid == "on")
+        config = BenchmarkConfig(array, order, engine, clock, repeat, settle, vmid == "on", frame)
         if config not in result:
             result.append(config)
     return result
@@ -154,29 +161,40 @@ def parse_status(lines: Sequence[str]) -> dict[str, str]:
 
 def validate_status(status, config: BenchmarkConfig, routes: Sequence[Route]):
     active = selected_routes(routes, config.array)
+    version = status.get("protocol_version")
+    if version not in ("1", "2", "3"):
+        raise BenchmarkError(f"Unsupported protocol_version: {version!r}")
+    scan_name = config.scanorder
+    if version in ("1", "2"):
+        if scan_name != "adc" or config.spi_frame != "single":
+            raise BenchmarkError("Legacy firmware requires --scan-order adc --spi-frame single; shared mux requires protocol 3")
+        scan_name = "mux"  # Old name for array-sequential address-grouped scan.
     expected = {
         "board": "TestBoard_ADC124", "mode": "PZT",
-        "array": config.array, "scanorder": config.scanorder,
+        "array": config.array, "scanorder": scan_name,
         "spiengine": config.spiengine, "spi_clock_hz": str(config.spi_clock_hz),
         "channelrepeat": str(config.channelrepeat), "mux_settle_us": str(config.mux_settle_us),
         "vmid_between_groups": str(config.vmid).lower(), "vmid_address": "7",
         "vmid_parking": "mandatory", "vref": "3.3", "vmid_volts": "1.65",
         "active_spi_buses": "1", "mux_enable_active_high": "true,false",
         "adcchannels": ",".join(map(str, routes)),
-        "payload_routes": ",".join(map(str, payload_order(active, config.scanorder))),
+        "payload_routes": ",".join(map(str, payload_order(active, scan_name, int(version or 0)))),
         "route_count": str(len(active)),
     }
     mismatches = [f"{key}: expected {value!r}, got {status.get(key)!r}"
                   for key, value in expected.items() if status.get(key) != value]
-    version = status.get("protocol_version")
-    if version not in ("1", "2"):
+    if version not in ("1", "2", "3"):
         mismatches.append(f"unsupported protocol_version: {version!r}")
-    if version == "2":
+    if version in ("2", "3"):
         if status.get("usb_stream_policy") != "discard_if_busy":
             mismatches.append("expected usb_stream_policy=discard_if_busy")
         if status.get("running") != "false":
             mismatches.append("expected stopped firmware status")
-    for key in (*COUNTERS, "sweep_count", *(LIVE_COUNTERS if version == "2" else ())):
+    if version == "3":
+        required = {"scan_semantics": "array_sequential_address_grouped" if config.scanorder == "adc" else "shared_address_settle_adc_sequential",
+                    "spi_frame": config.spi_frame, "adc_pipeline_frames": "1", "vmid_parking_scope": "start_stop_failure"}
+        mismatches.extend(f"{k}: expected {v!r}, got {status.get(k)!r}" for k, v in required.items() if status.get(k) != v)
+    for key in (*COUNTERS, "sweep_count", *(LIVE_COUNTERS if version in ("2", "3") else ())):
         if not status.get(key, "").isascii() or not status.get(key, "").isdecimal():
             mismatches.append(f"missing/invalid counter {key}")
     if mismatches:
@@ -184,7 +202,7 @@ def validate_status(status, config: BenchmarkConfig, routes: Sequence[Route]):
 
 
 def error_counter_keys(status):
-    return (*COUNTERS, "usb_write_errors") if status.get("protocol_version") == "2" else COUNTERS
+    return (*COUNTERS, "usb_write_errors") if status.get("protocol_version") in ("2", "3") else COUNTERS
 
 
 class SerialProtocol:
@@ -240,17 +258,23 @@ class SerialProtocol:
 def configure(protocol: SerialProtocol, config: BenchmarkConfig, routes, profile="off"):
     protocol.command("stop")
     initial = parse_status(protocol.command("status"))
+    version = initial.get("protocol_version")
+    legacy = version in ("1", "2")
+    if legacy and (config.scanorder != "adc" or config.spi_frame != "single"):
+        raise BenchmarkError("Legacy firmware requires --scan-order adc --spi-frame single; shared mux requires protocol 3")
     if initial.get("profile_available") == "true":
         protocol.command(f"profile {profile}")
     elif profile == "on":
         raise BenchmarkError("Profiling requires the teensy41_profile firmware build")
     for command in ("mode PZT", f"array {config.array}",
                     "adcchannels " + ",".join(map(str, routes)),
-                    f"scanorder {config.scanorder}", "ref 3.3",
+                    f"scanorder {'mux' if legacy else config.scanorder}", "ref 3.3",
                     f"spiengine {config.spiengine}", f"spiclock {config.spi_clock_hz}",
                     f"channelrepeat {config.channelrepeat}", f"muxsettle {config.mux_settle_us}",
                     "vmid " + str(config.vmid).lower()):
         protocol.command(command)
+    if not legacy:
+        protocol.command(f"spiframe {config.spi_frame}")
     status = parse_status(protocol.command("status"))
     validate_status(status, config, routes)
     if any(int(status[k]) for k in error_counter_keys(status)):
@@ -263,7 +287,7 @@ def stream_accounting(before, after, received_frames):
     sampling = uint32_delta(int(after["sweep_count"]), int(before["sweep_count"]))
     sent, discarded = sampling, 0
     failures = []
-    if after.get("protocol_version") == "2":
+    if after.get("protocol_version") in ("2", "3"):
         sent, discarded = int(after["usb_frames_sent"]), int(after["usb_frames_discarded"])
         if sampling != int(after["sampling_sweeps"]) or sampling != sent + discarded:
             failures.append("inconsistent sampling/sent/discarded sweep counts")
@@ -314,7 +338,7 @@ RESULT_FIELDS = ("test_id", "repetition", "result", "reason", "array", "scanorde
                  "resync_events", "trailing_bytes", "timed_out", "transfer_errors", "data_errors",
                  "firmware_sweeps", "received_frames")
 RESULT_FIELDS += ("sampling_sweeps", "usb_frames_sent", "usb_frames_discarded", "usb_discard_percent",
-                  "usb_stream_policy", "sampling_period_max_us", "sampling_period_over_1ms", "usb_write_errors")
+                  "usb_stream_policy", "sampling_period_max_us", "sampling_period_over_1ms", "usb_write_errors", "spi_frame", "protocol_version", "scan_semantics")
 
 
 def write_csv(path, fields, rows):
@@ -464,7 +488,8 @@ def capture(protocol, config, routes, args, directory):
         "max_sweep_period_us": periods.maximum if periods.count else "",
         "invalid_frames": parser.invalid_frames, "discarded_bytes": parser.discarded_bytes,
         "resync_events": parser.resync_events, "trailing_bytes": trailing, "timed_out": timed_out,
-        **errors, **accounting, "received_frames": received_frames}
+        **errors, **accounting, "received_frames": received_frames, "protocol_version": after["protocol_version"],
+        "scan_semantics": after.get("scan_semantics", "legacy_array_sequential_address_grouped")}
     return result, channel_rows
 
 
@@ -538,7 +563,9 @@ def parse_args(argv: Optional[Sequence[str]] = None):
     parser.add_argument("--sensors", nargs="+", type=int, choices=(1, 3, 5, 6, 7))
     parser.add_argument("--routes", help="Explicit comma-separated array:mux:input sensor routes")
     parser.add_argument("--arrays", nargs="+", choices=("1", "2", "both"))
-    parser.add_argument("--scan-order", nargs="+", choices=("mux", "channel", "interleaved"), default=["mux", "channel"])
+    parser.add_argument("--scan-order", nargs="+", choices=("adc", "mux"), default=["adc", "mux"],
+                        help="adc: array-sequential grouped addresses; mux: shared bank switch/wait then ADC A/B")
+    parser.add_argument("--spi-frame", nargs="+", choices=("burst", "single"), default=["burst"])
     parser.add_argument("--spi-engine", nargs="+", choices=("blocking", "dma", "lpspi"), default=["blocking", "dma", "lpspi"])
     parser.add_argument("--spi-clock-hz", nargs="+", type=int, default=[16000000])
     parser.add_argument("--channel-repeat", nargs="+", type=int, default=[1])
@@ -575,7 +602,7 @@ def parse_args(argv: Optional[Sequence[str]] = None):
            (args.vmid_warn_counts, args.noise_warn_counts, args.shift_warn_counts)):
         parser.error("Warning thresholds must be finite and nonnegative")
     if args.smoke_only:
-        args.scan_order = ["mux"]
+        args.scan_order = ["adc"]
         args.mux_settle_us = [5]
         args.channel_repeat = [1]
         args.vmid = ["off"]

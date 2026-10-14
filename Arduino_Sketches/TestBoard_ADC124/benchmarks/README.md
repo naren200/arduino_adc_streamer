@@ -7,12 +7,27 @@ runs. Close the GUI and serial monitors first. Flash the ADC124 firmware,
 keep sensors untouched for quiet benchmarks, and review the wiring and supply
 validation in [`../README.md`](../README.md).
 
-This runner supports original protocol-1 and current protocol-2 firmware.
-Protocol 2 continues sampling during USB stalls and intentionally discards
+Current protocol 3 exposes **ADC** (array-sequential address groups) and **MUX**
+(both banks switch before one shared wait; ADC A then B) modes. The original
+`mux` name meant ADC mode. Protocol-1/2 captures retain that old interpretation
+when decoded using their saved version and `payload_routes`. Legacy firmware
+requires explicit `--scan-order adc --spi-frame single`; the runner maps this
+to its former `scanorder mux`. The new MUX mode requires protocol 3.
+
+`--spi-frame burst` is the default; `--spi-frame single` keeps per-conversion
+CS as a comparison control. Both modes preserve one discarded pipeline prime
+per ADC/address batch. Include both values to compare matched frame settings.
+
+The completed [scan-mode hardware report](../../../docs/testing/results/testboard-adc124/scan_modes_2026-10-13/README.md)
+includes production/diagnostic timings, burst controls and common-window noise
+analysis. Its raw-only recorder, `scripts/benchmark_adc124_scan_modes.py`,
+avoids per-sample CSV work during capture and restores production firmware.
+
+Protocols 2/3 continue sampling during USB stalls and intentionally discard
 complete sweeps when USB is busy. `sampling_sweeps = usb_frames_sent +
 usb_frames_discarded`; received frames must match **sent** frames. Accounted
 discards are WARN, and missing transmitted frames remain FAIL. The old runner's
-lifetime-sweeps/received comparison is unsuitable for protocol-2 captures.
+lifetime-sweeps/received comparison is unsuitable for protocol-2/3 captures.
 
 From the repository root:
 
@@ -25,11 +40,11 @@ uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/testboard_adc124_benc
 
 Replace COM7 with the board's port. Dry-run opens no port and creates no output.
 Default: 36 configurations x 3 repetitions, each with 1 second warm-up and
-5 seconds measurement. It compares arrays 1/2/both, `mux`/`channel` scan order,
+5 seconds measurement. It compares arrays 1/2/both, `adc`/`mux` scan order,
 blocking/DMA/LPSPI engines, and 2/5 us settling, with repeat 1, Vmid off and
 requested 16 MHz SPI. Allow about 11 minutes plus command/capture overhead.
 Smoke mode tests nine combinations (three array selections x three engines)
-with MUX order, repeat 1, Vmid off, 5 us settling, one repetition and at most
+with ADC order, burst frames, repeat 1, Vmid off, 5 us settling, one repetition and at most
 1 second measurement. Other requested array/engine/clock filters remain active.
 
 To diagnose phase costs, upload `teensy41_profile` and add `--profile on`.
@@ -60,12 +75,12 @@ Expand the analog/settling matrix explicitly:
 
 ```powershell
 uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/testboard_adc124_benchmark.py `
-  --port COM7 --arrays both --scan-order mux channel interleaved `
+  --port COM7 --arrays both --scan-order adc mux `
   --spi-clock-hz 8000000 12000000 16000000 --channel-repeat 1 2 3 `
   --mux-settle-us 0 2 5 10 --vmid off on --window-ms 2000 --repetitions 1
 ```
 
-This example has 648 configurations; inspect its `--dry-run` first. The
+This example has 432 configurations; inspect its `--dry-run` first. The
 settle value 0 retains the fixed switching allowances, but adds no analog
 settling delay. SCLK requests are constrained to the ADC's 8–16 MHz AC range.
 
@@ -105,7 +120,7 @@ is retained. Choose shorter windows/filters for initial checks.
 - `results.csv`: per-run PASS/WARN/FAIL, measured device rate, acquisition
   timing, parser diagnostics and firmware/received sweep counters.
   It also records sent/discarded counts, discard percentage, USB policy, and
-  sampling-period diagnostics for protocol 2.
+  sampling-period diagnostics for protocols 2/3, plus scan semantics and frame mode.
 - `channel_stats.csv`: per-route mean, sample standard deviation, extrema,
   Vmid offset, clipping and bias-resistor metadata, excluding warm-up.
 - `comparisons.csv`: engine mean shifts, noise and throughput ratios against
@@ -124,7 +139,7 @@ No resume/overwrite mode is implemented; use a new directory.
 **FAIL** means incorrect status/identity, new or existing firmware errors,
 malformed frames, impossible ADC codes, insufficient measured duration,
 failure to become idle, or a mismatch between transmitted/received sweep
-counts (sent versus received for protocol 2). The runner stops at the first failure and preserves its artifacts.
+counts (sent versus received for protocols 2/3). The runner stops at the first failure and preserves its artifacts.
 Reset the Teensy after a transfer fault before retrying.
 
 **WARN** flags quiet mean offset over 100 counts from nominal Vmid code 2048,
@@ -143,7 +158,7 @@ exclude additional data. Compare analog results only when delivered coverage
 is adequate and use the same reader settings for engine comparisons.
 
 Rates use differences between **device sweep-start timestamps**, not the
-host CSV-writing clock. For protocol 2 this is delivered-frame rate; intentional
+host CSV-writing clock. For protocols 2/3 this is delivered-frame rate; intentional
 discards lower it without necessarily slowing ADC sampling. Sampling-period
 status measures the acquisition loop, and host logging can affect discard rate.
 Samples share a sweep timing interval; exported start/end

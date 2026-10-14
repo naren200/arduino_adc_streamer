@@ -339,8 +339,10 @@ Its [firmware protocol](TestBoard_ADC124/README.md) retains the common binary
 envelope but uses external MUX address sequencing rather than ADS7953 modes.
 ADC124 now also carries the audited Teensy USB repair, atomic complete-frame
 discard policy, cached run plans, sweep-level LPSPI sessions and optional phase
-profiling. Protocol-2 status separates sampled, sent and discarded sweeps; its
-updated runner retains compatibility with original protocol-1 firmware.
+profiling. Protocol-3 adds array-sequential ADC scans, shared-settling MUX scans
+and continuous-CS batches across all three engines. Status separates sampled,
+sent and discarded sweeps. Historical protocol-1/2 `mux` semantics are now
+called `adc`; the runner preserves legacy decoding using the saved version.
 
 Each PlatformIO test-board project can keep its board-specific runners in a
 local `benchmarks/` directory. The TestBoard 7953 runner owns the serial port,

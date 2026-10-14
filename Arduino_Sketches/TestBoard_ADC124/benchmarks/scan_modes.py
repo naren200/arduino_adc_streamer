@@ -1,0 +1,46 @@
+"""Protocol-3 acquisition phases and clock/allowance estimates, not measurements."""
+from .testboard_adc124_benchmark import payload_order
+
+
+def acquisition_phases(routes, mode):
+    groups = []
+    for route in payload_order(routes, mode):
+        if not groups or (groups[-1][0].array, groups[-1][0].input) != (route.array, route.input):
+            groups.append([])
+        groups[-1].append(route)
+    phases = []
+    for group in groups:
+        if mode == "mux" and phases and phases[-1][0][0].input == group[0].input:
+            phases[-1].append(group)
+        else:
+            phases.append([group])
+    return phases
+
+
+def operation_counts(routes, mode, repeat=1, vmid=False, spi_frame="burst"):
+    phases = acquisition_phases(routes, mode)
+    batches = sum(len(p) for p in phases)
+    words = len(routes) * repeat + batches + (5 * batches if vmid else 0)
+    cs_frames = batches * (2 if vmid else 1) if spi_frame == "burst" else words
+    addresses = {r.array: 7 for r in routes}
+    # Replay once to establish end-of-sweep state, then count steady-state work.
+    for _ in range(2):
+        switches = waits = address_writes = 0
+        for phase in phases:
+            for target in ([phase[0][0].input, 7] if vmid else [phase[0][0].input]):
+                changed = False
+                for group in phase:
+                    array = group[0].array
+                    old = addresses[array]
+                    if old != target:
+                        switches += 1
+                        address_writes += (old ^ target).bit_count()
+                        addresses[array] = target
+                        changed = True
+                waits += changed
+    return dict(sensor_batches=batches, phases=len(phases), spi_words=words, cs_frames=cs_frames,
+                bank_switches=switches, settling_waits=waits, enable_writes=2 * switches,
+                changed_address_bit_writes=address_writes, cs_allowance_us=.2 * cs_frames,
+                mux_switch_guard_us=.4 * switches,
+                removed_cs_allowance_us=.2 * (words - cs_frames),
+                basis="steady-state firmware operation counts; configured guard and clock arithmetic, not measured edge timings")

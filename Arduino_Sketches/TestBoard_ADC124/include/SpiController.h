@@ -23,6 +23,9 @@ class SpiController {
   bool setClockHz(uint32_t clock_hz);
   uint32_t clockHz() const;
   uint16_t transfer16(uint8_t cs_pin, uint16_t tx_word);
+  bool transferBurst(uint8_t cs_pin, const uint16_t *tx, uint16_t *rx, uint8_t words);
+  bool startDmaBurst(uint8_t cs_pin, const uint16_t *tx, uint8_t words);
+  bool finishDmaBurst(uint16_t *rx, uint8_t words);
 
   bool startDma16(uint8_t cs_pin, uint16_t tx_word);
   bool dmaComplete();
@@ -32,6 +35,29 @@ class SpiController {
   bool beginLpspiSession();
   void endLpspiSession();
   bool startLpspi16(uint8_t cs_pin, uint16_t tx_word);
+  bool startLpspiBurst(const ChipSelect &cs, uint16_t word) {
+    if (!startLpspi16(cs, word)) return false;
+    burst_active_ = true;
+    return true;
+  }
+  bool continueLpspiBurst(uint16_t word) {
+#if defined(__IMXRT1062__)
+    if (!burst_active_ || lpspi_active_) return false;
+    lpspi_->SR = LPSPI_SR_TCF;
+    lpspi_->TDR = word;
+    lpspi_active_ = true;
+    return true;
+#else
+    (void)word; return false;
+#endif
+  }
+  void endLpspiBurst() {
+    if (!burst_active_) return;
+    burst_active_ = false;
+    releaseChipSelect();
+    transaction_active_ = false;
+    if (lpspi_single_word_) endLpspiSession();
+  }
   // ADCs resolve GPIO registers at begin(), not for each sampled word.
   bool startLpspi16(const ChipSelect &cs, uint16_t tx_word) {
 #if defined(__IMXRT1062__)
@@ -68,6 +94,7 @@ class SpiController {
     if (!lpspiComplete()) return false;
     rx_word = static_cast<uint16_t>(lpspi_->RDR);
     lpspi_active_ = false;
+    if (burst_active_) return true;
     releaseChipSelect();
     transaction_active_ = false;
     if (lpspi_single_word_) endLpspiSession();
@@ -100,6 +127,8 @@ class SpiController {
   bool lpspi_active_ = false;
   bool lpspi_session_active_ = false;
   bool lpspi_single_word_ = false;
+  bool burst_active_ = false;
+  uint8_t dma_words_ = 0;
   uint32_t saved_tcr_ = 0;
   EventResponder dma_event_;
   uint8_t *dma_tx_ = nullptr;

@@ -15,18 +15,22 @@ Adc124s101 *adcs[] = {&adc1, &adc2};
 SensorRoute routes[kMaxRoutes], plan[kMaxRoutes];
 uint8_t route_count = 0, plan_count = 0;
 uint8_t array_mask = 3, channel_repeat = 1;
-enum class ScanOrder { MUX, CHANNEL, INTERLEAVED };
-ScanOrder scan_order = ScanOrder::MUX;
+enum class ScanOrder { ADC, MUX };
+ScanOrder scan_order = ScanOrder::ADC;
+bool burst_frames = true;
 SpiEngine engine = SpiEngine::BLOCKING;
 uint32_t settle_us = kDefaultMuxSettleUs;
 bool vmid = false, running = false;
 uint32_t run_started_ms = 0, duration_ms = 0, sweep_count = 0;
 struct PreparedGroup {
-  uint8_t array, input, destination, park_before;
+  uint8_t array, input, destination;
   Adc124s101::PreparedBatch batch;
 };
 PreparedGroup groups[kMaxRoutes];
-uint8_t group_count = 0, final_park_array = 0;
+uint8_t group_count = 0;
+struct PreparedPhase { uint8_t first, count, input; };
+PreparedPhase phases[kMaxRoutes];
+uint8_t phase_count = 0;
 uint16_t samples[kMaxRoutes];
 uint8_t wire_block[4 + kMaxRoutes * 2 + api_protocol::kTrailerBytes];
 uint32_t sampling_sweeps = 0, usb_frames_sent = 0, usb_frames_discarded = 0;
@@ -67,10 +71,8 @@ void stop() { running = false; spi.endLpspiSession(); parkAll(); }
 bool selected(uint8_t array) { return array_mask & (1 << (array - 1)); }
 
 uint16_t orderKey(const SensorRoute &r) {
-  if (scan_order == ScanOrder::CHANNEL)
-    return r.array * 32 + (r.mux - 1) * 8 + r.input;
-  if (scan_order == ScanOrder::INTERLEAVED)
-    return r.input * 8 + (r.mux - 1) * 2 + r.array - 1;
+  if (scan_order == ScanOrder::MUX)
+    return r.input * 8 + (r.array - 1) * 4 + r.mux - 1;
   return r.array * 32 + r.input * 4 + r.mux - 1;
 }
 
@@ -91,21 +93,19 @@ void buildPlan() {
 bool prepareAcquisition() {
   for (auto adc : adcs) adc->refreshTiming();
   group_count = 0;
-  uint8_t previous_array = 0;
-  bool both_active = false;
+  phase_count = 0;
   for (uint8_t i = 0; i < plan_count;) {
     const SensorRoute &r = plan[i];
     uint8_t end = i + 1;
     while (end < plan_count && plan[end].array == r.array && plan[end].input == r.input) ++end;
     PreparedGroup &group = groups[group_count++];
     group.array = r.array; group.input = r.input; group.destination = i;
-    group.park_before = previous_array && previous_array != r.array ? previous_array : 0;
-    both_active |= group.park_before != 0;
     if (!adcs[r.array - 1]->prepareBatch(plan + i, end - i, channel_repeat, group.batch)) return false;
-    previous_array = r.array;
+    if (scan_order == ScanOrder::MUX && phase_count && phases[phase_count - 1].input == r.input)
+      ++phases[phase_count - 1].count;
+    else phases[phase_count++] = {uint8_t(group_count - 1), 1, r.input};
     i = end;
   }
-  final_park_array = both_active ? previous_array : 0;
   return group_count != 0;
 }
 
@@ -142,9 +142,7 @@ bool setRoutes(const String &args) {
 }
 
 const char *orderName() {
-  if (scan_order == ScanOrder::CHANNEL) return "channel";
-  if (scan_order == ScanOrder::INTERLEAVED) return "interleaved";
-  return "mux";
+  return scan_order == ScanOrder::ADC ? "adc" : "mux";
 }
 const char *engineName() {
   if (engine == SpiEngine::DMA) return "dma";
@@ -157,11 +155,14 @@ void printRoute(const SensorRoute &r) {
 }
 void status() {
   Serial.println("# board=TestBoard_ADC124");
-  Serial.println("# protocol_version=2");
+  Serial.println("# protocol_version=3");
+  Serial.println("# firmware_revision=adc124-shared-mux-burst-v1");
   Serial.print("# running="); Serial.println(running ? "true" : "false");
   Serial.println("# mode=PZT");
   Serial.print("# array="); Serial.println(array_mask == 3 ? "both" : array_mask == 1 ? "1" : "2");
   Serial.print("# scanorder="); Serial.println(orderName());
+  Serial.print("# scan_semantics="); Serial.println(scan_order == ScanOrder::ADC ? "array_sequential_address_grouped" : "shared_address_settle_adc_sequential");
+  Serial.print("# spi_frame="); Serial.println(burst_frames ? "burst" : "single");
   Serial.print("# spiengine="); Serial.println(engineName());
   Serial.print("# spi_clock_hz="); Serial.println(spi.clockHz());
   Serial.print("# channelrepeat="); Serial.println(channel_repeat);
@@ -169,6 +170,8 @@ void status() {
   Serial.print("# vmid_between_groups="); Serial.println(vmid ? "true" : "false");
   Serial.println("# vmid_address=7");
   Serial.println("# vmid_parking=mandatory");
+  Serial.println("# vmid_parking_scope=start_stop_failure");
+  Serial.println("# adc_pipeline_frames=1");
   Serial.println("# vref=3.3");
   Serial.println("# vmid_volts=1.65");
   Serial.println("# active_spi_buses=1");
@@ -210,7 +213,8 @@ bool command(const String &name, const String &args) {
   if (name == "mcu") { Serial.println("# TestBoard_ADC124"); return !args.length(); }
   if (name == "status") { status(); return !args.length(); }
   if (name == "help") {
-    Serial.println("# array 1|2|both; adcchannels array:mux:input,...; scanorder mux|channel|interleaved");
+    Serial.println("# array 1|2|both; adcchannels array:mux:input,...; scanorder adc|mux (protocol 3 semantics)");
+    Serial.println("# spiframe burst|single; adc=finish array A then B; mux=switch both then shared wait");
     Serial.println("# spiengine blocking|dma|lpspi; spiclock 8000000..16000000; channelrepeat 1..3");
     Serial.println("# muxsettle 0..1000 (us); vmid true|false|7; ref 3.3 (fixed); mode PZT");
     Serial.println("# run [1..3600000 ms]; stop; status; mcu; help; commands end with '*'");
@@ -235,11 +239,16 @@ bool command(const String &name, const String &args) {
     buildPlan(); return true;
   }
   if (name == "scanorder") {
-    if (args == "mux") scan_order = ScanOrder::MUX;
-    else if (args == "channel" || args == "array" || args == "adc") scan_order = ScanOrder::CHANNEL;
-    else if (args == "interleaved") scan_order = ScanOrder::INTERLEAVED;
+    if (args == "adc") scan_order = ScanOrder::ADC;
+    else if (args == "mux") scan_order = ScanOrder::MUX;
     else return false;
     buildPlan(); return true;
+  }
+  if (name == "spiframe") {
+    if (args == "burst") burst_frames = true;
+    else if (args == "single") burst_frames = false;
+    else return false;
+    return true;
   }
   if (name == "spiengine") {
     if (args == "blocking") engine = SpiEngine::BLOCKING;
@@ -298,26 +307,39 @@ bool capture() {
     TB_PROFILE_SCOPE(session_profile, Session);
     if (engine == SpiEngine::LPSPI && !session.begin()) { ++session_start_errors; return false; }
   }
-  for (uint8_t i = 0; i < group_count; ++i) {
-    const PreparedGroup &group = groups[i];
-    // One shared SPI bus: every engine transfers sequentially. Park the
-    // outgoing external MUX group before switching ADC ownership.
-    Adc124s101 &adc = *adcs[group.array - 1];
+  for (uint8_t p = 0; p < phase_count; ++p) {
+    const PreparedPhase &phase = phases[p];
+    // CS gates DOUT on the shared SPI bus. The unity buffers isolate each
+    // analog bank: changing ADC ownership does not require external parking.
     {
       TB_PROFILE_SCOPE(mux_profile, Prepare);
-      if (group.park_before) adcs[group.park_before - 1]->park(settle_us);
-      adc.selectAddress(group.input, settle_us);
+      bool changed = false;
+      for (uint8_t i = phase.first; i < phase.first + phase.count; ++i)
+        changed |= adcs[groups[i].array - 1]->switchAddress(phase.input);
+      // Starts AFTER all active banks' turn-on allowances, once per phase.
+      if (changed && settle_us) delayMicroseconds(settle_us);
     }
     {
       TB_PROFILE_SCOPE(transfer_profile, Transfer);
-      if (!adc.readPrepared(group.batch, engine, samples + group.destination)) return false;
-      if (vmid && !adc.sampleVmid(settle_us, engine)) return false;
+      for (uint8_t i = phase.first; i < phase.first + phase.count; ++i) {
+        const PreparedGroup &group = groups[i];
+        if (!adcs[group.array - 1]->readPrepared(group.batch, engine, samples + group.destination, burst_frames)) return false;
+      }
     }
-  }
-  // Park the final ADC before the next two-array sweep resumes the first.
-  {
-    TB_PROFILE_SCOPE(parking_profile, Prepare);
-    if (final_park_array) adcs[final_park_array - 1]->park(settle_us);
+    if (vmid) {
+      {
+        TB_PROFILE_SCOPE(vmid_switch_profile, Prepare);
+        bool changed = false;
+        for (uint8_t i = phase.first; i < phase.first + phase.count; ++i)
+          changed |= adcs[groups[i].array - 1]->switchAddress(kVmidAddress);
+        if (changed && settle_us) delayMicroseconds(settle_us);
+      }
+      {
+        TB_PROFILE_SCOPE(vmid_transfer_profile, Transfer);
+        for (uint8_t i = phase.first; i < phase.first + phase.count; ++i)
+          if (!adcs[groups[i].array - 1]->readVmid(engine, burst_frames)) return false;
+      }
+    }
   }
   {
     TB_PROFILE_SCOPE(session_profile, Session);
