@@ -16,6 +16,12 @@ bool bad_bits = false;
 unsigned conversions = 0;
 uint64_t last_enable[2] = {}, last_cs = 0;
 
+void verify_spi_cs_release(uint8_t) {
+  assert(IMXRT_LPSPI4_S.tx.empty());
+  assert(!(IMXRT_LPSPI4_S.SR.value & LPSPI_SR_MBF));
+  assert(!IMXRT_LPSPI4_S.final_clock_pending);
+}
+
 extern "C" int usb_serial_try_write_frame(const void *buffer, uint32_t size) {
   ++Serial.live_write_calls;
   if (!buffer || !size || size > 2048 || Serial.write_limit < size) return -1;
@@ -101,7 +107,11 @@ void verifyCapture(const char *order, bool burst, bool full, unsigned sweep) {
   if (full) {
     unsigned banks = array_mask == 3 ? 2 : 1;
     assert(en_writes == 2 * 7 * banks * (vmid ? 2 : 1));
-    assert(delay_events.size() == (settle_us ? unsigned(phase_count * (vmid ? 2 : 1)) : 0));
+    assert(delay_events.size() == unsigned(phase_count) * ((settle_us ? 1 : 0) + (vmid && vmid_settle_us ? 1 : 0)));
+    if (vmid) for (const auto &e : delay_events) {
+      const bool on_vmid = array_mask == 1 ? e.a == 7 : array_mask == 2 ? e.b == 7 : e.a == 7 && e.b == 7;
+      assert(e.us == (on_vmid ? vmid_settle_us : settle_us));
+    }
   }
   if (full && std::string(order) == "mux" && array_mask == 3) {
     for (const auto &e : delay_events) {
@@ -115,6 +125,14 @@ void verifyCapture(const char *order, bool burst, bool full, unsigned sweep) {
 
 int main() {
   setup(); checkParked();
+  assert(vmid_settle_follows_sensor && vmid_settle_us == settle_us);
+  assert(command("muxsettle", "10") && vmid_settle_us == 10);
+  assert(command("vmidsettle", "0") && !vmid_settle_follows_sensor && vmid_settle_us == 0);
+  assert(command("muxsettle", "5") && vmid_settle_us == 0);
+  for (const char *bad : {"", "-1", "1.5", "1001", "default extra", "automatic"}) {
+    assert(!command("vmidsettle", bad)); assert(vmid_settle_us == 0 && !vmid_settle_follows_sensor);
+  }
+  assert(command("vmidsettle", "default") && vmid_settle_follows_sensor && vmid_settle_us == 5);
   assert(command("spiclock", "8000000") && spi.clockHz() == 8000000);
   assert(!command("spiclock", "20000000")); assert(command("spiclock", "16000000"));
   assert(!command("scanorder", "channel") && !command("scanorder", "interleaved"));
@@ -134,6 +152,95 @@ int main() {
           stop(); checkParked(); ++cases;
         }
   assert(cases == 648 && IMXRT_LPSPI4_S.TCR.unstable_reads == 0);
+  unsigned vmid_cases = 0;
+  for (const char *array : {"1", "2", "both"}) for (const char *order : {"adc", "mux"})
+    for (const char *mode : {"blocking", "dma", "lpspi"}) for (const char *frame : {"single", "burst"})
+      for (const char *repeat : {"1", "3"}) for (const char *delay : {"0", "1", "5"}) {
+        stop(); assert(command("array",array)); assert(command("scanorder",order));
+        assert(command("spiengine",mode)); assert(command("spiframe",frame)); assert(command("channelrepeat",repeat));
+        assert(command("muxsettle","5")); assert(command("vmid","true")); assert(command("vmidsettle",delay));
+        assert(command("run",""));
+        for (unsigned sweep=0;sweep<3;++sweep) verifyCapture(order,burst_frames,true,sweep);
+        stop(); checkParked(); ++vmid_cases;
+      }
+  assert(vmid_cases == 216);
+  // Equal explicit/inherited delays produce the same simulated sweep timing
+  // and GPIO/delay trace, including ADC pipeline samples, across both modes.
+  for (const char *order : {"adc", "mux"}) for (const char *mode : {"blocking", "dma", "lpspi"}) {
+    assert(command("array","both") && command("scanorder",order) && command("spiengine",mode));
+    assert(command("spiframe","burst") && command("channelrepeat","1"));
+    assert(command("vmidsettle","default") && command("run",""));
+    verifyCapture(order,true,true,0);
+    const uint32_t duration = le32(Serial.bytes.size()-4)-le32(Serial.bytes.size()-8);
+    const auto inherited_delays = delay_events; stop();
+    assert(command("vmidsettle","5") && command("run","")); verifyCapture(order,true,true,0);
+    assert(duration == le32(Serial.bytes.size()-4)-le32(Serial.bytes.size()-8));
+    assert(delay_events.size() == inherited_delays.size());
+    for (size_t i=0;i<delay_events.size();++i) {
+      assert(delay_events[i].us == inherited_delays[i].us);
+      assert(delay_events[i].a == inherited_delays[i].a && delay_events[i].b == inherited_delays[i].b);
+    }
+    stop();
+  }
+  assert(command("vmidsettle","default"));
+  std::cout << vmid_cases << " independent VMID settling cases passed\n";
+  // Divergent bank histories must combine only the changed pins, not assume
+  // both banks have the same cached address. All guards are timed per bank.
+  for (uint8_t a = 0; a < 8; ++a) for (uint8_t b = 0; b < 8; ++b)
+    for (uint8_t target = 0; target < 8; ++target) {
+      adc1.selectAddress(a, 0); adc2.selectAddress(b, 0);
+      gpio_events.clear(); port_events.clear(); const uint64_t guard = guard_ns;
+      const bool changed = Adc124s101::switchTogether(&adc1, &adc2, target);
+      assert(changed == (a != target || b != target));
+      assert(address(0) == target && address(1) == target);
+      assert(guard_ns - guard == (changed ? 2 * kMuxDisableTimeNs : 0));
+      unsigned en_a = 0, en_b = 0;
+      for (auto e : gpio_events) { en_a += e.pin == 0; en_b += e.pin == 32; }
+      assert(en_a == (a != target ? 2u : 0u) && en_b == (b != target ? 2u : 0u));
+      verifyGuards();
+    }
+  Adc124s101::switchTogether(&adc1, &adc2, 7); port_events.clear();
+  assert(Adc124s101::switchTogether(&adc1, &adc2, 0));
+  assert(port_events.size() == 7); // four EN writes + three address-port clears
+  adc1.disable(); gpio_events.clear(); port_events.clear(); uint64_t guard = guard_ns;
+  assert(Adc124s101::switchTogether(&adc1, nullptr, 0));
+  assert(port_events.size() == 1 && guard_ns - guard == kMuxDisableTimeNs);
+  assert(!Adc124s101::switchTogether(&adc1, &adc1, 0));
+  assert(!Adc124s101::switchTogether(nullptr, nullptr, 0));
+  assert(!Adc124s101::switchTogether(&adc1, &adc2, 8));
+  stop(); checkParked();
+
+  // Repeat=3 batches have 13 words. Exercise FIFOs smaller than a batch and
+  // asymmetric TX/RX capacities, then inject errors and a wrapped timeout.
+  adc1.selectAddress(5, 0);
+  SensorRoute fifo_routes[] = {{1,1,5},{1,2,5},{1,3,5},{1,4,5}};
+  Adc124s101::PreparedBatch fifo_batch; assert(adc1.prepareBatch(fifo_routes, 4, 3, fifo_batch));
+  for (uint8_t tx_log : {0, 2, 4}) for (uint8_t rx_log : {0, 2, 4}) {
+    IMXRT_LPSPI4_S.PARAM = tx_log | (uint32_t(rx_log) << 8);
+    IMXRT_LPSPI4_S.max_tx = IMXRT_LPSPI4_S.max_rx = 0;
+    uint16_t samples[4]; assert(adc1.readPrepared(fifo_batch, SpiEngine::LPSPI, samples, true));
+    for (int i = 0; i < 4; ++i) assert(samples[i] == 1005 + i * 100);
+    assert(IMXRT_LPSPI4_S.max_tx <= (1u << tx_log) && IMXRT_LPSPI4_S.max_rx <= (1u << rx_log));
+    if (tx_log == 4 && rx_log == 4) assert(IMXRT_LPSPI4_S.max_tx == 13 && IMXRT_LPSPI4_S.max_rx == 13);
+    assert(IMXRT_LPSPI4_S.rx.empty() && SPI.begins == SPI.ends);
+  }
+  IMXRT_LPSPI4_S.PARAM = (4u << 8) | 4u;
+  const auto fifo_cs = spi.registerChipSelect(9); uint16_t fifo_responses[13];
+  for (uint32_t error : {LPSPI_SR_TEF, LPSPI_SR_REF}) {
+    IMXRT_LPSPI4_S.inject_error = error;
+    assert(!spi.transferLpspiBurst(fifo_cs, fifo_batch.commands, fifo_responses, 13, 10000, 1000));
+    assert(pin_values[9] == HIGH && IMXRT_LPSPI4_S.rx.empty() && SPI.begins == SPI.ends);
+  }
+  IMXRT_LPSPI4_S.inject_error = 0; IMXRT_LPSPI4_S.stall = true;
+  fake_cycle_offset = UINT32_MAX - 100; const auto yields = fake_yield_calls;
+  assert(!spi.transferLpspiBurst(fifo_cs, fifo_batch.commands, fifo_responses, 13, 1000, 100));
+  assert(fake_yield_calls > yields && pin_values[9] == HIGH && SPI.begins == SPI.ends);
+  IMXRT_LPSPI4_S.stall = false;
+  assert(spi.beginLpspiSession()); IMXRT_LPSPI4_S.rx.push_back(0xFFFF);
+  assert(!spi.transferLpspiBurst(fifo_cs, fifo_batch.commands, fifo_responses, 13, 1000, 100));
+  spi.endLpspiSession(); assert(IMXRT_LPSPI4_S.rx.empty());
+  assert(!spi.transferLpspiBurst(fifo_cs, fifo_batch.commands, fifo_responses, 0, 1000, 100));
+  stop(); checkParked();
   const char *selections[] = {"2:4:6,1:3:0,2:1:0,1:1:0", "1:1:0,2:4:6", "1:4:6", "2:2:5", "1:1:0,2:1:0"};
   for (const char *selection : selections) for (const char *order : {"adc", "mux"})
     for (const char *mode : {"blocking", "dma", "lpspi"}) for (const char *v : {"false", "true"}) {
@@ -147,6 +254,18 @@ int main() {
     }
   assert(!command("adcchannels", "1:1:6")); assert(!command("adcchannels", "1:4:7"));
   assert(!command("adcchannels", "1:1:0,1:1:0"));
+  unsigned sparse_vmid_cases = 0;
+  for (const char *selection : selections) for (const char *order : {"adc","mux"})
+    for (const char *mode : {"blocking","dma","lpspi"}) for (const char *delay : {"0","1","5"}) {
+      assert(command("adcchannels",selection)); assert(command("array","both"));
+      assert(command("scanorder",order)); assert(command("spiengine",mode)); assert(command("vmid","true"));
+      assert(command("vmidsettle",delay)); assert(command("run",""));
+      verifyCapture(order,true,false,0); verifyCapture(order,true,false,1);
+      assert(delay_events.size() == unsigned(phase_count) * (vmid_settle_us ? 2 : 1));
+      stop(); checkParked(); ++sparse_vmid_cases;
+    }
+  assert(sparse_vmid_cases == 90); assert(command("vmidsettle","default"));
+  std::cout << sparse_vmid_cases << " sparse independent VMID settling cases passed\n";
 #if TESTBOARD_PROFILE
   assert(command("profile", "on"));
 #endif

@@ -70,7 +70,7 @@ def main():
                 old=original['protocol_version'] in ('1','2')
                 config=bench.BenchmarkConfig(original['array'],'adc' if old else original['scanorder'],original['spiengine'],
                     int(original['spi_clock_hz']),int(original['channelrepeat']),int(original['mux_settle_us']),original['vmid_between_groups']=='true',
-                    'single' if old else original.get('spi_frame','burst'))
+                    'single' if old else original.get('spi_frame','burst'),bench.vmid_settle_from_status(original))
                 routes=tuple(bench.Route.parse(r) for r in original['adcchannels'].split(','))
                 final=bench.configure(p,config,routes)
                 if final['profile_available']!='false' or final['running']!='false':raise RuntimeError('Production restoration not verified')

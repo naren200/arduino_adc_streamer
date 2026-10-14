@@ -2,6 +2,21 @@
 
 using namespace testboard_config;
 
+namespace {
+#if defined(__IMXRT1062__)
+struct AddressPort {
+  decltype(portSetRegister(0)) set = nullptr, clear = nullptr;
+};
+AddressPort address_ports[6];
+uint8_t address_port_count = 0;
+#endif
+}
+
+#if defined(__IMXRT1062__)
+Adc124s101::AddressWrites Adc124s101::pair_changes_[9][9][8];
+Adc124s101 *Adc124s101::cached_banks_[2] = {};
+#endif
+
 bool validSensorRoute(const SensorRoute &r) {
   return r.array >= 1 && r.array <= 2 && r.mux >= 1 && r.mux <= 4 &&
          (r.input <= 5 || (r.mux == 4 && r.input == 6));
@@ -28,6 +43,9 @@ void Adc124s101::begin() {
     address_gpio_[bit].resolve(kMuxAddressPins[index_][bit]);
     pinMode(kMuxAddressPins[index_][bit], OUTPUT);
   }
+#if defined(__IMXRT1062__)
+  cacheAddressChanges();
+#endif
   park(kDefaultMuxSettleUs);
 }
 
@@ -65,14 +83,91 @@ void Adc124s101::Gpio::write(bool high) const {
 
 bool Adc124s101::switchAddress(uint8_t address) {
   if (address > 7 || (enabled_ && address_ == address)) return false;
-  disable();  // Required turn-off guard precedes address changes.
+  disable();
+#if defined(__IMXRT1062__)
+  const AddressWrites &sequence = address_changes_[address_ == 0xFF ? 8 : address_][address].sequence;
+  for (uint8_t i = 0; i < sequence.count; ++i)
+    *sequence.writes[i].reg = sequence.writes[i].mask;
+#else
   const uint8_t changed = address_ == 0xFF ? 7 : address_ ^ address;
   for (uint8_t bit = 0; bit < 3; ++bit)
     if (changed & (1 << bit)) address_gpio_[bit].write((address >> bit) & 1);
-  address_ = address;
-  enable(true);
-  // Even settle_us=0 includes a switch turn-on allowance; the configurable
-  // delay is additional analog settling, to be measured on the real board.
+#endif
+  address_ = address; enable(true);
+  delayNanoseconds(kMuxDisableTimeNs);
+  return true;
+}
+
+#if defined(__IMXRT1062__)
+void Adc124s101::cacheAddressChanges() {
+  for (uint8_t bit = 0; bit < 3; ++bit) {
+    const Gpio &gpio = address_gpio_[bit];
+    uint8_t port = 0;
+    while (port < address_port_count && address_ports[port].set != gpio.set) ++port;
+    if (port == address_port_count) {
+      address_ports[port] = {gpio.set, gpio.clear}; ++address_port_count;
+    }
+    for (uint8_t from = 0; from < 9; ++from) for (uint8_t to = 0; to < 8; ++to) {
+      if (from != 8 && !((from ^ to) & (1 << bit))) continue;
+      AddressChange &change = address_changes_[from][to];
+      (to & (1 << bit) ? change.set[port] : change.clear[port]) |= gpio.mask;
+    }
+  }
+  for (uint8_t from = 0; from < 9; ++from) for (uint8_t to = 0; to < 8; ++to) {
+    AddressChange &change = address_changes_[from][to];
+    change.sequence.count = 0;
+    for (uint8_t port = 0; port < address_port_count; ++port) {
+      if (change.clear[port]) change.sequence.writes[change.sequence.count++] = {address_ports[port].clear, change.clear[port]};
+      if (change.set[port]) change.sequence.writes[change.sequence.count++] = {address_ports[port].set, change.set[port]};
+    }
+  }
+  cached_banks_[index_] = this;
+  if (!cached_banks_[0] || !cached_banks_[1]) return;
+  // Precompute all histories: sparse plans may leave the banks at different
+  // addresses. No mask assembly or pin/register lookup remains in a sweep.
+  for (uint8_t a = 0; a < 9; ++a) for (uint8_t b = 0; b < 9; ++b)
+    for (uint8_t to = 0; to < 8; ++to) {
+      AddressWrites &sequence = pair_changes_[a][b][to]; sequence.count = 0;
+      const AddressChange &ca = cached_banks_[0]->address_changes_[a][to];
+      const AddressChange &cb = cached_banks_[1]->address_changes_[b][to];
+      for (uint8_t port = 0; port < address_port_count; ++port) {
+        const uint32_t clear = ca.clear[port] | cb.clear[port], set = ca.set[port] | cb.set[port];
+        if (clear) sequence.writes[sequence.count++] = {address_ports[port].clear, clear};
+        if (set) sequence.writes[sequence.count++] = {address_ports[port].set, set};
+      }
+    }
+}
+#endif
+
+bool Adc124s101::switchTogether(Adc124s101 *first, Adc124s101 *second, uint8_t address) {
+  if (address > 7 || (!first && !second)) return false;
+  if (first == second) second = nullptr;
+  if (!first) return second->switchAddress(address);
+  if (!second) return first->switchAddress(address);
+  const bool change_a = first && (!first->enabled_ || first->address_ != address);
+  const bool change_b = second && (!second->enabled_ || second->address_ != address);
+  if (!change_a && !change_b) return false;
+  const bool off_guard = (change_a && first->enabled_) || (change_b && second->enabled_);
+  if (change_a) first->enable(false);
+  if (change_b) second->enable(false);
+  // The guard starts after the LAST disable, so every changing bank gets it.
+  if (off_guard) delayNanoseconds(kMuxDisableTimeNs);
+#if defined(__IMXRT1062__)
+  const auto *a = first->index_ == 0 ? first : second;
+  const auto *b = first->index_ == 1 ? first : second;
+  const AddressWrites &sequence = pair_changes_[a->address_ == 0xFF ? 8 : a->address_][b->address_ == 0xFF ? 8 : b->address_][address];
+  for (uint8_t i = 0; i < sequence.count; ++i)
+    *sequence.writes[i].reg = sequence.writes[i].mask;
+#else
+  for (auto adc : {change_a ? first : nullptr, change_b ? second : nullptr}) if (adc) {
+    const uint8_t changed = adc->address_ == 0xFF ? 7 : adc->address_ ^ address;
+    for (uint8_t bit = 0; bit < 3; ++bit)
+      if (changed & (1 << bit)) adc->address_gpio_[bit].write((address >> bit) & 1);
+  }
+#endif
+  if (change_a) { first->address_ = address; first->enable(true); }
+  if (change_b) { second->address_ = address; second->enable(true); }
+  // Likewise wait after the last enable. Analog settling remains additional.
   delayNanoseconds(kMuxDisableTimeNs);
   return true;
 }
@@ -251,12 +346,8 @@ bool Adc124s101::executeBurst(const PreparedBatch &batch, SpiEngine engine, uint
               waitComplete(true) && spi_.finishDmaBurst(responses, batch.count);
     if (!success) spi_.cancelDma16();
   } else {
-    success = spi_.startLpspiBurst(chip_select_, batch.commands[0]);
-    for (uint8_t i = 0; success && i < batch.count; ++i) {
-      if (i) success = spi_.continueLpspiBurst(batch.commands[i]);
-      success = success && waitComplete(false) && spi_.finishLpspi16(responses[i]);
-    }
-    if (success) spi_.endLpspiBurst(); else spi_.cancelLpspi16();
+    success = spi_.transferLpspiBurst(chip_select_, batch.commands, responses,
+                                    batch.count, timeout_ticks_, service_ticks_);
   }
   if (!success) { ++transfer_errors_; faulted_ = true; return false; }
 #if TESTBOARD_PROFILE

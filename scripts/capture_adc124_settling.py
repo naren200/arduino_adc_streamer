@@ -50,6 +50,8 @@ def main():
     parser.add_argument('--engines', nargs='+', choices=('blocking','dma','lpspi'), default=['lpspi'])
     parser.add_argument('--orders', nargs='+', choices=('adc','mux'), default=['adc'],
                         help='Protocol 3: adc sequential arrays, mux shared-bank settling')
+    parser.add_argument('--vmid-settle-us',type=bench.parse_vmid_settle,default=None,
+                        help='default follows sensor settling; otherwise 0..1000 us')
     parser.add_argument('--spi-frame', choices=('burst','single'), default='burst')
     parser.add_argument('--settles', nargs='+', type=int, default=[1,2,5,10,50])
     parser.add_argument('--repetitions', type=int, default=3)
@@ -62,7 +64,7 @@ def main():
     output = args.output
     output.mkdir(parents=True, exist_ok=False)
     routes = bench.load_manifest(bench.DEFAULT_MANIFEST)['both_full']
-    configs = [bench.BenchmarkConfig('both',o,e,16000000,1,s,v,args.spi_frame)
+    configs = [bench.BenchmarkConfig('both',o,e,16000000,1,s,v,args.spi_frame,args.vmid_settle_us)
                for s in args.settles for v in (False,True) for o in args.orders for e in args.engines]
     total_ms = args.warmup_ms + args.window_ms
     meta = {'board':'TestBoard_ADC124','created_utc':datetime.now(timezone.utc).isoformat(),
@@ -125,6 +127,7 @@ def main():
                         raise ValueError('Insufficient measured coverage')
                     meta['runs'].append({'name':name,'repetition':rep,'settle_us':config.mux_settle_us,'vmid':config.vmid,
                         'engine':config.spiengine,'order':config.scanorder,'profile_enabled':profiling['enabled'],
+                        'vmid_settle_us':config.vmid_settle_us,
                         'frames':len(data),'measured_frames':int(measured.sum()),'duration_s':float(elapsed[-1]),
                         'sha256':hashlib.sha256((folder/'capture.bin').read_bytes()).hexdigest(),
                         'errors':errors,**accounting})
@@ -141,7 +144,7 @@ def main():
                 old = original['protocol_version'] in ('1','2')
                 restore = bench.BenchmarkConfig(original['array'],'adc' if old else original['scanorder'],original['spiengine'],
                     int(original['spi_clock_hz']),int(original['channelrepeat']),int(original['mux_settle_us']),original['vmid_between_groups']=='true',
-                    'single' if old else original.get('spi_frame','burst'))
+                    'single' if old else original.get('spi_frame','burst'),bench.vmid_settle_from_status(original))
                 original_routes=tuple(bench.Route.parse(r) for r in original['adcchannels'].split(','))
                 meta['restored_status']=bench.configure(protocol,restore,original_routes)
             finally:

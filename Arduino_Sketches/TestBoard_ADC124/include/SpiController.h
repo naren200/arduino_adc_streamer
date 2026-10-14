@@ -34,23 +34,9 @@ class SpiController {
 
   bool beginLpspiSession();
   void endLpspiSession();
+  bool transferLpspiBurst(const ChipSelect &cs, const uint16_t *tx, uint16_t *rx,
+                         uint8_t words, uint32_t timeout_ticks, uint32_t service_ticks);
   bool startLpspi16(uint8_t cs_pin, uint16_t tx_word);
-  bool startLpspiBurst(const ChipSelect &cs, uint16_t word) {
-    if (!startLpspi16(cs, word)) return false;
-    burst_active_ = true;
-    return true;
-  }
-  bool continueLpspiBurst(uint16_t word) {
-#if defined(__IMXRT1062__)
-    if (!burst_active_ || lpspi_active_) return false;
-    lpspi_->SR = LPSPI_SR_TCF;
-    lpspi_->TDR = word;
-    lpspi_active_ = true;
-    return true;
-#else
-    (void)word; return false;
-#endif
-  }
   void endLpspiBurst() {
     if (!burst_active_) return;
     burst_active_ = false;
@@ -130,6 +116,7 @@ class SpiController {
   bool burst_active_ = false;
   uint8_t dma_words_ = 0;
   uint32_t saved_tcr_ = 0;
+  uint8_t lpspi_tx_depth_ = 0, lpspi_rx_depth_ = 0;
   EventResponder dma_event_;
   uint8_t *dma_tx_ = nullptr;
   uint8_t *dma_rx_ = nullptr;

@@ -10,7 +10,7 @@ from capture_adc124_settling import decode, bench
 LSB = 3.3 / 4096
 BIN = .05
 
-def quiet_mask(t, x, groups, start=1., end=16.):
+def quiet_mask(t, x, groups, start=1., end=16., require_coverage=True):
     """Common time mask from lower-envelope statistics, without sample clipping."""
     edges = np.arange(start, end + BIN/2, BIN)
     envelopes = np.full((len(edges)-1, len(groups)), np.nan)
@@ -40,7 +40,7 @@ def quiet_mask(t, x, groups, start=1., end=16.):
     inside=(index>=0)&(index<len(keep))&(t<end)
     mask=np.zeros(len(t),dtype=bool)
     mask[inside]=keep[index[inside]]
-    if keep.sum()*BIN<1 or mask.sum()<100:
+    if require_coverage and (keep.sum()*BIN<1 or mask.sum()<100):
         raise ValueError('Less than 1 second / 100 frames of retained quiet data')
     return mask, edges, envelopes, thresholds, keep, above
 
@@ -68,7 +68,7 @@ def analyze(source, output, partial=False, engine='lpspi'):
         actual={(r['settle_us'],r['vmid'],r['repetition']) for r in selected_runs}
         if actual!=expected:
             raise ValueError('Incomplete or incorrect settling/VMID/repetition matrix')
-    routes=bench.payload_order(bench.load_manifest(bench.DEFAULT_MANIFEST)['both_full'],'channel')
+    routes=tuple(sorted(bench.load_manifest(bench.DEFAULT_MANIFEST)['both_full']))
     groups=[[i for i,r in enumerate(routes) if r.array==a and r.mux==m] for a in (1,2) for m in (1,2,3,4)]
     output.mkdir(parents=True,exist_ok=True)
     runs=[]; channel_runs=[]; plots={}
