@@ -86,12 +86,22 @@ inline uint32_t fake_cycle_offset = 0;
 inline uint32_t fake_cycles() { return fake_us * (F_CPU_ACTUAL / 1000000) + fake_cycle_offset++; }
 #define ARM_DWT_CYCCNT fake_cycles()
 extern int pin_values[64];
+struct GpioEvent { uint8_t pin; int value; uint64_t ns; int enable_a, enable_b; };
+struct DelayEvent { uint32_t us; int a, b; uint64_t ns; };
+inline std::vector<GpioEvent> gpio_events;
+inline std::vector<DelayEvent> delay_events;
+inline uint64_t guard_ns = 0;
+inline uint64_t fake_ns() { return uint64_t(fake_us) * 1000 + guard_ns; }
+inline void gpio_write(uint8_t pin, int value) {
+  pin_values[pin] = value;
+  gpio_events.push_back({pin, value, fake_ns(), pin_values[0], pin_values[32]});
+}
 inline unsigned fake_micros_reads = 0, fake_yield_calls = 0;
 // Model atomic GPIO set/clear writes immediately, just like the Teensy ports.
 struct FakeGpioRegister {
   uint8_t pin;
   int value;
-  void operator=(uint32_t mask) { if (mask) pin_values[pin] = value; }
+  void operator=(uint32_t mask) { if (mask) gpio_write(pin, value); }
 };
 inline FakeGpioRegister fake_gpio_set[64], fake_gpio_clear[64];
 inline unsigned fake_gpio_lookups = 0;
@@ -111,7 +121,11 @@ inline uint32_t millis() { return fake_us / 1000; }
 inline void yield() { ++fake_yield_calls; ++fake_us; }
 inline bool isDigit(char c) { return std::isdigit(static_cast<unsigned char>(c)); }
 inline void pinMode(uint8_t, int) {}
-inline void digitalWriteFast(uint8_t pin, int value) { pin_values[pin] = value; }
-inline void digitalWrite(uint8_t pin, int value) { pin_values[pin] = value; }
-inline void delayMicroseconds(uint32_t us) { fake_us += us; }
-inline void delayNanoseconds(uint32_t) {}
+inline void digitalWriteFast(uint8_t pin, int value) { gpio_write(pin, value); }
+inline void digitalWrite(uint8_t pin, int value) { gpio_write(pin, value); }
+inline void delayMicroseconds(uint32_t us) {
+  int a = pin_values[1] | (pin_values[2] << 1) | (pin_values[3] << 2);
+  int b = pin_values[29] | (pin_values[30] << 1) | (pin_values[31] << 2);
+  delay_events.push_back({us, a, b, fake_ns()}); fake_us += us;
+}
+inline void delayNanoseconds(uint32_t ns) { guard_ns += ns; }

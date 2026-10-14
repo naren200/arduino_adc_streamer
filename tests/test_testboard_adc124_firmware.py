@@ -36,7 +36,7 @@ def test_production_adc_driver_pipeline_gpio_and_error_recovery(tmp_path, profil
     assert compiled.returncode == 0, compiled.stdout + compiled.stderr
     tested = subprocess.run([str(executable)], capture_output=True, text=True, timeout=10)
     assert tested.returncode == 0, tested.stdout + tested.stderr
-    assert "486 ADC124 digital acquisition cases and USB/failure checks passed" in tested.stdout
+    assert "708 ADC124 digital acquisition cases and USB/failure checks passed" in tested.stdout
     if profiling:
         from Arduino_Sketches.TestBoard_ADC124.benchmarks.testboard_adc124_benchmark import parse_status
         from Arduino_Sketches.TestBoard_ADC124.benchmarks.firmware_profile import decode_profile

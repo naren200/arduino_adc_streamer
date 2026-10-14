@@ -26,11 +26,13 @@ class Adc124s101 {
   void refreshTiming();
   void disable();
   void selectAddress(uint8_t address, uint32_t settle_us);
+  bool switchAddress(uint8_t address);
   void park(uint32_t settle_us);
   bool transfer(uint8_t adc_input, SpiEngine engine, uint16_t &sample);
   bool prepareBatch(const SensorRoute *routes, uint8_t count, uint8_t repeat,
                     PreparedBatch &batch) const;
-  bool readPrepared(const PreparedBatch &batch, SpiEngine engine, uint16_t *samples);
+  bool readPrepared(const PreparedBatch &batch, SpiEngine engine, uint16_t *samples, bool burst = false);
+  bool readVmid(SpiEngine engine, bool burst);
 #if TESTBOARD_PROFILE
   void setProfiler(AcquisitionProfiler &profile) { profile_ = &profile; }
 #endif
@@ -45,8 +47,21 @@ class Adc124s101 {
  private:
   template <SpiEngine Engine> bool transferWord(uint16_t command, uint16_t &sample);
   template <SpiEngine Engine> bool executeBatch(const PreparedBatch &batch, uint16_t *samples);
+  bool executeBurst(const PreparedBatch &batch, SpiEngine engine, uint16_t *samples);
+  bool consumeResponses(const PreparedBatch &batch, const uint16_t *responses, uint16_t *samples);
+  bool waitComplete(bool dma);
   bool decode(uint16_t response, uint16_t &sample);
   void enable(bool enabled);
+  struct Gpio {
+    uint8_t pin = 0;
+#if defined(__IMXRT1062__)
+    decltype(portSetRegister(0)) set = nullptr, clear = nullptr;
+    uint32_t mask = 0;
+#endif
+    void resolve(uint8_t value);
+    void write(bool high) const;
+  };
+  Gpio enable_gpio_, address_gpio_[3];
   SpiController &spi_;
   uint8_t index_;
   SpiController::ChipSelect chip_select_;

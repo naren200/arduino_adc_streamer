@@ -40,12 +40,14 @@ def test_manifest_cannot_silently_override_fixed_reference_or_bias(tmp_path):
 
 def test_scan_orders_keep_identity_and_group_mux_addresses():
     routes = tuple(bench.Route.parse(r) for r in ("2:4:6", "1:3:0", "2:1:0", "1:1:0", "1:1:1"))
-    assert tuple(map(str, bench.payload_order(routes, "mux"))) == (
+    assert tuple(map(str, bench.payload_order(routes, "adc"))) == (
         "1:1:0", "1:3:0", "1:1:1", "2:1:0", "2:4:6")
-    assert tuple(map(str, bench.payload_order(routes, "channel"))) == (
+    assert tuple(map(str, bench.payload_order(routes, "channel", 2))) == (
         "1:1:0", "1:1:1", "1:3:0", "2:1:0", "2:4:6")
-    assert tuple(map(str, bench.payload_order(routes, "interleaved"))) == (
+    assert tuple(map(str, bench.payload_order(routes, "interleaved", 2))) == (
         "1:1:0", "2:1:0", "1:3:0", "1:1:1", "2:4:6")
+    assert tuple(map(str, bench.payload_order(routes, "mux"))) == (
+        "1:1:0", "1:3:0", "2:1:0", "1:1:1", "2:4:6")
 
 
 def test_default_matrix_and_smoke_cover_both_arrays_all_engines():
@@ -57,6 +59,7 @@ def test_default_matrix_and_smoke_cover_both_arrays_all_engines():
     smoke = bench.build_matrix(bench.parse_args(["--smoke-only"]), routes)
     assert len(smoke) == 9
     assert {c.spiengine for c in smoke} == {"blocking", "dma", "lpspi"}
+    assert {c.scanorder for c in configs} == {"adc", "mux"}
 
 
 @pytest.mark.parametrize("args", [["--spi-clock-hz", "20000000"], ["--spi-clock-hz", "7999999"],
@@ -68,7 +71,7 @@ def test_invalid_options_rejected(args):
 
 
 def status_for(config, routes, sweeps=0):
-    return {"board": "TestBoard_ADC124", "protocol_version": "1", "mode": "PZT",
+    return {"board": "TestBoard_ADC124", "protocol_version": "3", "mode": "PZT",
         "array": config.array, "scanorder": config.scanorder, "spiengine": config.spiengine,
         "spi_clock_hz": str(config.spi_clock_hz), "channelrepeat": str(config.channelrepeat),
         "mux_settle_us": str(config.mux_settle_us), "vmid_between_groups": str(config.vmid).lower(),
@@ -77,14 +80,18 @@ def status_for(config, routes, sweeps=0):
         "adcchannels": ",".join(map(str, routes)),
         "payload_routes": ",".join(map(str, bench.payload_order(bench.selected_routes(routes, config.array), config.scanorder))),
         "route_count": str(len(bench.selected_routes(routes, config.array))),
-        "transfer_errors": "0", "data_errors": "0", "sweep_count": str(sweeps)}
+        "transfer_errors": "0", "data_errors": "0", "sweep_count": str(sweeps),
+        "scan_semantics": "array_sequential_address_grouped" if config.scanorder == "adc" else "shared_address_settle_adc_sequential",
+        "spi_frame": config.spi_frame, "adc_pipeline_frames": "1", "vmid_parking_scope": "start_stop_failure",
+        "running": "false", "usb_stream_policy": "discard_if_busy", "profile_available": "false", "profile_enabled": "false",
+        **{key: "0" for key in bench.LIVE_COUNTERS}}
 
 
 @pytest.mark.parametrize("field,value", [("payload_routes", "1:1:0"), ("mux_enable_active_high", "true,true"),
     ("vref", "2.5"), ("active_spi_buses", "1,2"), ("data_errors", "missing")])
 def test_status_rejects_wrong_board_assumptions(field, value):
     routes = bench.load_manifest(bench.DEFAULT_MANIFEST)["full_array1"]
-    config = bench.BenchmarkConfig("1", "mux", "blocking", 16000000, 1, 5, False)
+    config = bench.BenchmarkConfig("1", "adc", "blocking", 16000000, 1, 5, False)
     status = status_for(config, routes)
     status[field] = value
     with pytest.raises(bench.BenchmarkError, match="Status mismatch"):
@@ -160,12 +167,11 @@ class FakeSerial:
             return len(data)
         if command == "status":
             status = status_for(self.config, self.routes, self.sweeps)
-            if self.live:
-                status.update(protocol_version="2", running="false", profile_available="false", profile_enabled="false",
-                    usb_stream_policy="discard_if_busy", sampling_sweeps=str(self.run_sweeps),
-                    usb_frames_sent=str(self.run_sweeps - int(self.discard and bool(self.run_sweeps))),
-                    usb_frames_discarded=str(int(self.discard and bool(self.run_sweeps))),
-                    sampling_period_max_us="1000", sampling_period_over_1ms="0", usb_write_errors="0")
+            status.update(protocol_version="3", running="false", profile_available="false", profile_enabled="false",
+                usb_stream_policy="discard_if_busy", sampling_sweeps=str(self.run_sweeps),
+                usb_frames_sent=str(self.run_sweeps - int(self.discard and bool(self.run_sweeps))),
+                usb_frames_discarded=str(int(self.discard and bool(self.run_sweeps))),
+                sampling_period_max_us="1000", sampling_period_over_1ms="0", usb_write_errors="0")
             self.pending.extend("".join(f"# {k}={v}\n" for k, v in status.items()).encode())
         elif command == "mcu":
             self.pending.extend(b"# TestBoard_ADC124\n")
@@ -184,7 +190,7 @@ def test_capture_streams_warmup_samples_and_detects_dropped_or_invalid_frames(tm
     clock = FakeClock()
     monkeypatch.setattr(bench, "time", clock)
     routes = (bench.Route(1, 1, 0), bench.Route(1, 4, 6))
-    config = bench.BenchmarkConfig("1", "mux", "blocking", 16000000, 1, 5, False)
+    config = bench.BenchmarkConfig("1", "adc", "blocking", 16000000, 1, 5, False)
     serial = FakeSerial(clock, config, routes, corrupt=corrupt, drop=drop)
     protocol = bench.SerialProtocol(serial, io.StringIO())
     args = bench.parse_args(["--warm-up-ms", "1", "--window-ms", "3", "--idle-ms", "1", "--grace-ms", "100"])
@@ -222,8 +228,8 @@ def test_command_rejection_and_no_ack_timeout(monkeypatch):
 
 
 def test_comparisons_match_routes_settings_and_repetition():
-    base = bench.BenchmarkConfig("both", "mux", "blocking", 16000000, 1, 5, False)
-    dma = bench.BenchmarkConfig("both", "mux", "dma", 16000000, 1, 5, False)
+    base = bench.BenchmarkConfig("both", "adc", "blocking", 16000000, 1, 5, False)
+    dma = bench.BenchmarkConfig("both", "adc", "dma", 16000000, 1, 5, False)
     results = [{**bench.asdict(c), "test_id": c.test_id, "repetition": 1,
                 "result": "PASS", "sweeps_per_second": rate}
                for c, rate in ((base, 1000), (dma, 500))]
@@ -249,12 +255,12 @@ def test_main_fake_session_writes_reviewable_csv_json_workbook(tmp_path, monkeyp
     clock = FakeClock()
     monkeypatch.setattr(bench, "time", clock)
     routes = (bench.Route(1, 1, 0), bench.Route(1, 4, 6))
-    config = bench.BenchmarkConfig("1", "mux", "blocking", 16000000, 1, 5, False)
+    config = bench.BenchmarkConfig("1", "adc", "blocking", 16000000, 1, 5, False)
     device = FakeSerial(clock, config, routes)
     monkeypatch.setattr(serial, "Serial", lambda *a, **k: device)
     output = tmp_path / "session"
     assert bench.main(["--port", "FAKE", "--output", str(output), "--routes", "1:1:0,1:4:6",
-        "--scan-order", "mux", "--spi-engine", "blocking", "--mux-settle-us", "5",
+        "--scan-order", "adc", "--spi-engine", "blocking", "--mux-settle-us", "5",
         "--warm-up-ms", "1", "--window-ms", "3", "--repetitions", "1",
         "--idle-ms", "1", "--grace-ms", "100"]) == 0
     assert json.loads((output / "session.json").read_text())["state"] == "complete"
@@ -270,7 +276,7 @@ def test_live_capture_accepts_accounted_discards_but_fails_missing_sent_frames(t
     clock = FakeClock()
     monkeypatch.setattr(bench, "time", clock)
     routes = (bench.Route(1, 1, 0), bench.Route(1, 4, 6))
-    config = bench.BenchmarkConfig("1", "mux", "blocking", 16000000, 1, 5, False)
+    config = bench.BenchmarkConfig("1", "adc", "blocking", 16000000, 1, 5, False)
     device = FakeSerial(clock, config, routes, live=True, discard=discard, drop=drop)
     protocol = bench.SerialProtocol(device, io.StringIO())
     args = bench.parse_args(["--warm-up-ms", "1", "--window-ms", "3", "--idle-ms", "1", "--grace-ms", "100"])
@@ -297,10 +303,10 @@ def test_accounting_uses_run_counters_and_wrap_safe_cumulative_sweeps():
 @pytest.mark.parametrize("field,value", [("usb_frames_sent", "bad"), ("usb_frames_discarded", "-1"),
     ("sampling_sweeps", ""), ("sampling_period_max_us", "missing"), ("usb_stream_policy", "blocking"), ("running", "true")])
 def test_live_status_requires_complete_consistent_transport_fields(field, value):
-    config = bench.BenchmarkConfig("1", "mux", "blocking", 16000000, 1, 5, False)
+    config = bench.BenchmarkConfig("1", "adc", "blocking", 16000000, 1, 5, False)
     routes = (bench.Route(1, 1, 0),)
     status = status_for(config, routes)
-    status.update(protocol_version="2", running="false", usb_stream_policy="discard_if_busy",
+    status.update(protocol_version="3", running="false", usb_stream_policy="discard_if_busy",
                   **{key: "0" for key in bench.LIVE_COUNTERS})
     status[field] = value
     with pytest.raises(bench.BenchmarkError, match="Status mismatch"):
@@ -310,7 +316,7 @@ def test_live_status_requires_complete_consistent_transport_fields(field, value)
 def test_profile_on_requires_diagnostic_firmware_before_acquisition():
     clock = FakeClock()
     routes = (bench.Route(1, 1, 0),)
-    config = bench.BenchmarkConfig("1", "mux", "blocking", 16000000, 1, 5, False)
+    config = bench.BenchmarkConfig("1", "adc", "blocking", 16000000, 1, 5, False)
     device = FakeSerial(clock, config, routes, live=True)
     protocol = bench.SerialProtocol(device, io.StringIO())
     with pytest.raises(bench.BenchmarkError, match="teensy41_profile"):
@@ -330,7 +336,7 @@ def test_deliberate_reader_pause_occurs_once_without_changing_device_timestamps(
     clock = FakeClock()
     monkeypatch.setattr(bench, "time", clock)
     routes = (bench.Route(1, 1, 0), bench.Route(1, 4, 6))
-    config = bench.BenchmarkConfig("1", "mux", "blocking", 16000000, 1, 5, False)
+    config = bench.BenchmarkConfig("1", "adc", "blocking", 16000000, 1, 5, False)
     device = FakeSerial(clock, config, routes, live=True)
     log = io.StringIO()
     args = bench.parse_args(["--warm-up-ms", "1", "--window-ms", "3", "--idle-ms", "1", "--grace-ms", "100",

@@ -32,8 +32,9 @@ The USB and acquisition improvements from ADS7953 commits `92be24d` and
   current data. No acquisition backlog is stored. USB/Windows may still deliver
   previously accepted bytes late. Unexpected write errors stop the run.
 - Address groups, pipeline commands, discarded repeats, payload destinations,
-  and array parking transitions are prepared once per run. LPSPI retains one
-  shared-bus transaction per sweep, with separate CS frames for each conversion.
+  and address phases are prepared once per run. LPSPI retains one
+  shared-bus transaction per sweep. Continuous-CS bursts use one CS frame per
+  prepared ADC/address batch; `spiframe single` retains per-conversion CS frames.
   CS GPIO registers are cached; receive readiness **and fresh transfer completion**
   are required before CS release. Session setup uses a known 16-bit command
   instead of asynchronous TCR readback. SPI state is restored before USB enqueue
@@ -48,13 +49,71 @@ These changes do not import ADS7953 Auto-1 masks, its two-frame response delay,
 uses one shared bus, one-frame input selection, the original triple routes,
 opposite MUX EN polarity, and fixed 3.3 V reference.
 
-The binary frame is unchanged. Status now reports `protocol_version=2` and
+The binary frame is unchanged. Status now reports `protocol_version=3` and
 `usb_stream_policy=discard_if_busy`. `sampling_sweeps`, `usb_frames_sent`,
 `usb_frames_discarded`, `sampling_period_max_us`, and `sampling_period_over_1ms`
 reset on each accepted run. `sweep_count` remains the lifetime completed-sweep
 counter (including discarded sweeps). `usb_write_errors` is cumulative. On a
 successful run, sampling equals sent plus discarded; only sent frames should
 equal received frames. Use the updated runner to account for this policy.
+
+## Protocol-3 scan modes
+
+`scanorder adc*` is the former protocol-1/2 `mux` behavior: finish the populated
+address groups of array A, then array B. The wire order is array, external
+address, ADC input/MUX. Each address applies one analog settling wait to that
+bank before its populated ADC inputs are read.
+
+`scanorder mux*` now switches the participating banks to the same address,
+finishes each bank's disable/address/enable guards, then applies **one shared
+analog wait**. It reads ADC A's populated inputs then ADC B's on the shared SPI
+bus. The wire order is external address, array, ADC input/MUX. Sparse routes
+and single-array selections include only the banks/ADC inputs needed at each
+address. Full arrays use inputs IN1..IN4 at addresses 0..5 and IN4 only at 6.
+
+`channel`, `interleaved` and old scan-order aliases are rejected. The meaning
+of `mux` changed explicitly at protocol 3: old captures must use their saved
+protocol version and `payload_routes`, not reinterpret an old name. The runner
+uses the new names. Original firmware can be tested explicitly with
+`--scan-order adc --spi-frame single`, mapped to its former `scanorder mux`.
+It cannot perform the new shared-bank mode. Saved capture metadata includes
+protocol version, semantics and exact physical payload labels. There is still
+no desktop ADC124 profile or persisted GUI acquisition setting: the existing
+ADS7953 GUI's scan-order vocabulary is separate and unchanged.
+
+CS rising makes this ADC's DOUT high impedance; its analog inputs are driven by
+separate unity buffers. No SPI isolation requires parking the external bank
+merely to read another ADC input or select the other chip. Protocol 3 preserves
+parking at startup, run preparation, stop and failure, and optional VMID work.
+It removes the copied ownership/end-of-sweep parking. EN is cached and toggled
+only when an address change needs break-before-make, or explicitly disabling/
+re-enabling an inactive bank. GPIO register masks are cached and unchanged
+address bits are not rewritten. The 200 ns turn-off and turn-on guards remain.
+
+With VMID on, each phase switches its participating banks to address 7 before
+one corresponding wait, then takes a discarded five-word VMID batch per ADC
+(one selector prime + four inputs). Shared mode thus shares both sensor and
+VMID waits. With VMID off a bank may stay enabled at its last sensor address
+between phases/sweeps; identical addresses skip redundant switching and waits.
+Stop always leaves both banks enabled on VMID, with both ADC CS lines high.
+
+TI SNAS283D pp.16-17 and 19 explicitly allow consecutive 16-clock conversions
+with CS held low. Each sensor/VMID burst stays at one fixed external address.
+The first response is discarded to prime the next-conversion selector; only
+the last requested repeat is stored for each route. Blocking keeps one SPI
+transaction/CS frame per batch; DMA launches one 2N-byte transfer from persistent
+aligned buffers; LPSPI retains its sweep session and CS across all batch words,
+requiring fresh transfer completion on each word and before final CS release.
+CS setup and high allowances are paid once per burst; timeout/error paths
+release CS, restore SPI state and park safely. Interrupts remain enabled.
+
+For full arrays at repeat 1, both modes use 64 words/14 sensor batches with
+VMID off, and 134 words/28 sensor+VMID batches with VMID on. Pure configured
+CS-allowance savings are `(64-14)*0.2 = 10.0 us` off and
+`(134-28)*0.2 = 21.2 us` on. These are calculations, not measured savings.
+ADC mode uses 14/28 settling waits; shared MUX uses 7/14. Actual GPIO change
+counts depend on routes, current cached state and VMID; analog delays are not
+shortened to compensate for CPU overhead.
 
 ## Optional phase profiling
 
@@ -75,8 +134,10 @@ and longest-period snapshots in each run's `firmware_profile.jsonl`. Default
 `--profile off` normalizes diagnostic builds and remains compatible with the
 original protocol-1 firmware.
 
-`prepare` includes MUX address/parking work, and `transfer` includes the ADC
-batch plus optional Vmid sampling. `validate` measures response checks nested
+`prepare` includes sensor and VMID address switching, guards and settling;
+`transfer` includes their ADC batches. Protocol-2 profiles included VMID
+switching/settling in `transfer`, so these scopes differ between versions.
+`validate` measures response checks nested
 inside transfer; phases are not all disjoint. Statistics cover warm-up and
 measurement, include interrupt time, and add instrumentation overhead. Profile
 observations are diagnostic; compare throughput using production builds.
@@ -135,10 +196,9 @@ an active stream at a complete frame boundary before its text response.
 | `mode PZT*` | Only supported mode; PZR/555 hardware is absent |
 | `array 1|2|both*` | Filter configured routes to the selected physical arrays |
 | `adcchannels 1:1:0,1:4:6,2:2:0*` | Array/ADC `1..2`, MUX `1..4`, external input `0..6` |
-| `scanorder mux*` | Sort by array, external input, MUX; read up to four signals per GPIO address change |
-| `scanorder channel*` | Sort by array, MUX, external input; finish each MUX's channels |
-| `scanorder interleaved*` | Sort by external input, MUX, array; alternate arrays when both have that route |
-| `scanorder array|adc*` | Aliases for `channel`, reported canonically as `channel` |
+| `scanorder adc*` | Group by address within array A, then B; independent bank settling |
+| `scanorder mux*` | Switch participating banks together; one wait per address; ADC A then B |
+| `spiframe burst|single*` | Continuous-CS prepared batches (default) or per-word reference path |
 | `spiengine blocking|dma|lpspi*` | SPIClass, asynchronous byte DMA, or direct 16-bit LPSPI transfer |
 | `spiclock 8000000..16000000*` | Requested Hz |
 | `channelrepeat 1..3*` | Consecutive conversions per sensor; transmit only the final value |
@@ -164,13 +224,13 @@ and advances to the next ADC input on the final repeat. ADC124S101 has no
 returned channel tag: software ordering can be tested, but electrical identity
 still requires input stimulation or a logic analyzer.
 
-Mandatory GPIO parking runs at startup, before runs, before changing ADC
-ownership, at the end of a two-array sweep, and on stop/failure. It leaves the
+Mandatory GPIO parking runs at startup, before runs, and on stop/failure. It leaves the
 quads enabled at Vmid without requiring SPI traffic. Unselected arrays are
 disabled during a run. With `vmid true`, after each address group the active
-quad is parked and all four ADC inputs are converted once (plus one selector
-prime); those five transfers are discarded. With `vmid false` parking still
-runs. Repeat and Vmid settings never change payload width.
+participating banks are parked and all four ADC inputs are converted once per
+bank (plus one selector prime); those five transfers are discarded. In shared
+MUX mode switching/settling precedes both VMID batches. With `vmid false`,
+startup/stop/failure parking still runs. Repeat and Vmid settings never change payload width.
 
 ## Binary frame
 
@@ -192,6 +252,15 @@ bits increment `data_errors` and stop the run. No partial sweep is transmitted.
 
 ## Benchmarks and validation
 
+The [2026-10-13 scan-mode benchmark](../../docs/testing/results/testboard-adc124/scan_modes_2026-10-13/README.md)
+records 252 captures across both modes, all three engines, VMID off/on and
+1/2/5/10/50 us settling. Both firmware builds and 106 focused tests passed.
+At 5 us, LPSPI MUX mode improved rate by 40.2% without VMID and 31.4% with
+VMID against the supplied sequential reference. The report separates timing
+estimates from measurements and retains a reproducible short-delay noise issue:
+ADC/LPSPI at 1 us, VMID off, showed about 6 counts SD on B MUX2 input 1.
+Production firmware was restored and acquisition left stopped.
+
 The [2026-10-13 COM4 readiness check](../../docs/testing/benchmarks/testboard-adc124/TESTBOARD_ADC124_COM4_QUICK_RESULTS_2026-10-13.md)
 completed 25 short captures with no malformed/missing transmitted frames or
 firmware errors. With disconnected sensor strips and 500 us settling, all 50
@@ -206,12 +275,13 @@ configuration support; its ADS7953 profile must not be used for this board.
 Host checks from the repository root:
 
 ```powershell
-uv run --with ziglang --with unicorn --with pyelftools pytest tests/test_testboard_adc124_benchmark.py tests/test_testboard_adc124_firmware.py tests/test_testboard_adc124_usb_patch.py
+uv run --with ziglang --with unicorn --with pyelftools pytest tests/test_testboard_adc124_benchmark.py tests/test_testboard_adc124_firmware.py tests/test_adc124_scan_modes.py tests/test_adc124_settling_report.py tests/test_testboard_adc124_usb_patch.py
 ```
 
 The optional Zig compiler executes the production driver, SPI controller, USB
 wrapper and application against simulated GPIO/ADC/registers. Both environments
-cover 486 digital acquisition combinations, sparse routes, stalls, timeout and
+cover 708 digital acquisition combinations, sparse routes, shared waits,
+redundant-switch avoidance, switching guards, CS bursts, stalls, timeout and
 error cleanup. Unicorn verifies the compiled ARM USB writer against busy-ring,
 disconnect, ring-wrap and autoflush-interruption scenarios. These tools are test
 dependencies only; regular pytest skips checks with unavailable dependencies.
@@ -222,7 +292,7 @@ do not validate the physical board. Before accepting hardware results:
    and 1.65 V Vmid. Confirm there is no board inverter on EN.
 2. Probe EN/address: array 1 enables high, array 2 low; address writes happen
    while disabled. Confirm CS9/CS24 are never asserted together.
-3. Check 16 SCLK pulses, actual 8–16 MHz clock, CS setup/high timing, and
+3. Check 16 SCLK pulses per conversion, actual 8–16 MHz clock, CS setup/high timing, and
    DIN address bits 12:11. Verify DMA byte boundaries keep CS low.
 4. Apply distinct known voltages to individual MUX inputs. Confirm route
    identity through every scan order, all engines and repeat counts 1–3,

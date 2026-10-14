@@ -11,8 +11,8 @@ Adc124s101::Adc124s101(SpiController &spi, uint8_t array_index)
     : spi_(spi), index_(array_index) {}
 
 void Adc124s101::enable(bool enabled) {
-  digitalWrite(kMuxEnablePins[index_],
-               enabled == kMuxEnableActiveHigh[index_] ? HIGH : LOW);
+  if (enabled_ == enabled) return;
+  enable_gpio_.write(enabled == kMuxEnableActiveHigh[index_]);
   enabled_ = enabled;
 }
 
@@ -20,9 +20,14 @@ void Adc124s101::begin() {
   refreshTiming();
   chip_select_ = spi_.registerChipSelect(kCsPins[index_]);
   // Set the output latch before changing direction, especially active-low EN.
-  enable(false);
+  enable_gpio_.resolve(kMuxEnablePins[index_]);
+  enable_gpio_.write(!kMuxEnableActiveHigh[index_]);
+  enabled_ = false;
   pinMode(kMuxEnablePins[index_], OUTPUT);
-  for (uint8_t pin : kMuxAddressPins[index_]) pinMode(pin, OUTPUT);
+  for (uint8_t bit = 0; bit < 3; ++bit) {
+    address_gpio_[bit].resolve(kMuxAddressPins[index_][bit]);
+    pinMode(kMuxAddressPins[index_][bit], OUTPUT);
+  }
   park(kDefaultMuxSettleUs);
 }
 
@@ -34,21 +39,42 @@ void Adc124s101::refreshTiming() {
 }
 
 void Adc124s101::disable() {
+  if (!enabled_) return;
   enable(false);
   delayNanoseconds(kMuxDisableTimeNs);
 }
 
 void Adc124s101::selectAddress(uint8_t address, uint32_t settle_us) {
-  if (enabled_ && address_ == address) return;
-  disable();
+  if (switchAddress(address) && settle_us) delayMicroseconds(settle_us);
+}
+
+void Adc124s101::Gpio::resolve(uint8_t value) {
+  pin = value;
+#if defined(__IMXRT1062__)
+  set = portSetRegister(pin); clear = portClearRegister(pin); mask = digitalPinToBitMask(pin);
+#endif
+}
+
+void Adc124s101::Gpio::write(bool high) const {
+#if defined(__IMXRT1062__)
+  *(high ? set : clear) = mask;
+#else
+  digitalWrite(pin, high ? HIGH : LOW);
+#endif
+}
+
+bool Adc124s101::switchAddress(uint8_t address) {
+  if (address > 7 || (enabled_ && address_ == address)) return false;
+  disable();  // Required turn-off guard precedes address changes.
+  const uint8_t changed = address_ == 0xFF ? 7 : address_ ^ address;
   for (uint8_t bit = 0; bit < 3; ++bit)
-    digitalWrite(kMuxAddressPins[index_][bit], (address >> bit) & 1);
+    if (changed & (1 << bit)) address_gpio_[bit].write((address >> bit) & 1);
   address_ = address;
   enable(true);
   // Even settle_us=0 includes a switch turn-on allowance; the configurable
   // delay is additional analog settling, to be measured on the real board.
   delayNanoseconds(kMuxDisableTimeNs);
-  if (settle_us) delayMicroseconds(settle_us);
+  return true;
 }
 
 void Adc124s101::park(uint32_t settle_us) {
@@ -172,7 +198,8 @@ bool Adc124s101::executeBatch(const PreparedBatch &batch, uint16_t *samples) {
   return true;
 }
 
-bool Adc124s101::readPrepared(const PreparedBatch &batch, SpiEngine engine, uint16_t *samples) {
+bool Adc124s101::readPrepared(const PreparedBatch &batch, SpiEngine engine, uint16_t *samples, bool burst) {
+  if (burst) return executeBurst(batch, engine, samples);
   if (engine == SpiEngine::BLOCKING) return executeBatch<SpiEngine::BLOCKING>(batch, samples);
   if (engine == SpiEngine::DMA) return executeBatch<SpiEngine::DMA>(batch, samples);
   return executeBatch<SpiEngine::LPSPI>(batch, samples);
@@ -180,7 +207,72 @@ bool Adc124s101::readPrepared(const PreparedBatch &batch, SpiEngine engine, uint
 
 bool Adc124s101::sampleVmid(uint32_t settle_us, SpiEngine engine) {
   park(settle_us);
+  return readVmid(engine, false);
+}
+
+bool Adc124s101::readVmid(SpiEngine engine, bool burst) {
   static const PreparedBatch batch{{0, 1 << 11, 2 << 11, 3 << 11, 3 << 11},
                                    {0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, 5};
-  return readPrepared(batch, engine, nullptr);
+  return readPrepared(batch, engine, nullptr, burst);
+}
+
+bool Adc124s101::waitComplete(bool dma) {
+#if defined(__IMXRT1062__)
+  const uint32_t started = dma ? micros() : ARM_DWT_CYCCNT;
+#else
+  const uint32_t started = micros();
+#endif
+  uint32_t last_service = started;
+#if defined(__IMXRT1062__)
+  const uint32_t timeout = dma ? kSpiTransferTimeoutUs : timeout_ticks_;
+#else
+  const uint32_t timeout = kSpiTransferTimeoutUs;
+#endif
+  while (!(dma ? spi_.dmaComplete() : spi_.lpspiComplete())) {
+#if defined(__IMXRT1062__)
+    const uint32_t now = dma ? micros() : ARM_DWT_CYCCNT;
+#else
+    const uint32_t now = micros();
+#endif
+    if (uint32_t(now - started) >= timeout) return false;
+    if (dma || now - last_service >= service_ticks_) { yield(); last_service = now; }
+  }
+  return true;
+}
+
+bool Adc124s101::executeBurst(const PreparedBatch &batch, SpiEngine engine, uint16_t *samples) {
+  if (faulted_ || !batch.count || batch.count > 13) return false;
+  uint16_t responses[13];
+  bool success = false;
+  if (engine == SpiEngine::BLOCKING) {
+    success = spi_.transferBurst(kCsPins[index_], batch.commands, responses, batch.count);
+  } else if (engine == SpiEngine::DMA) {
+    success = spi_.startDmaBurst(kCsPins[index_], batch.commands, batch.count) &&
+              waitComplete(true) && spi_.finishDmaBurst(responses, batch.count);
+    if (!success) spi_.cancelDma16();
+  } else {
+    success = spi_.startLpspiBurst(chip_select_, batch.commands[0]);
+    for (uint8_t i = 0; success && i < batch.count; ++i) {
+      if (i) success = spi_.continueLpspiBurst(batch.commands[i]);
+      success = success && waitComplete(false) && spi_.finishLpspi16(responses[i]);
+    }
+    if (success) spi_.endLpspiBurst(); else spi_.cancelLpspi16();
+  }
+  if (!success) { ++transfer_errors_; faulted_ = true; return false; }
+#if TESTBOARD_PROFILE
+  if (profile_ != nullptr) {
+    AcquisitionProfiler::Scope validation(*profile_, AcquisitionProfiler::Validate);
+    return consumeResponses(batch, responses, samples);
+  }
+#endif
+  return consumeResponses(batch, responses, samples);
+}
+
+bool Adc124s101::consumeResponses(const PreparedBatch &batch, const uint16_t *responses, uint16_t *samples) {
+  for (uint8_t i = 0; i < batch.count; ++i) {
+    uint16_t value;
+    if (!decode(responses[i], value)) return false;
+    if (batch.destinations[i] != 0xFF) samples[batch.destinations[i]] = value;
+  }
+  return true;
 }

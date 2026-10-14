@@ -99,9 +99,12 @@ class SPIClass {
   void endTransaction() { ++ends; }
   uint16_t transfer16(uint16_t command) { return emulate_conversion(regs, command); }
   bool transfer(uint8_t *tx, uint8_t *rx, size_t n, EventResponder &event) {
-    assert(n == 2);
-    auto word = emulate_conversion(regs, static_cast<uint16_t>((tx[0] << 8) | tx[1]));
-    rx[0] = word >> 8; rx[1] = word & 255; event.ready = true; return true;
+    assert(n >= 2 && n <= 26 && n % 2 == 0);
+    for (size_t i = 0; i < n; i += 2) {
+      auto word = emulate_conversion(regs, static_cast<uint16_t>((tx[i] << 8) | tx[i + 1]));
+      rx[i] = word >> 8; rx[i + 1] = word & 255;
+    }
+    event.ready = true; return true;
   }
   IMXRT_LPSPI_t *regs;
   unsigned begins = 0, ends = 0;

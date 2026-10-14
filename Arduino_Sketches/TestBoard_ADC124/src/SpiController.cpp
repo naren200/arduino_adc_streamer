@@ -77,15 +77,35 @@ uint16_t SpiController::transfer16(uint8_t cs_pin, uint16_t tx_word) {
 }
 
 bool SpiController::startDma16(uint8_t cs_pin, uint16_t tx_word) {
+  return startDmaBurst(cs_pin, &tx_word, 1);
+}
+
+bool SpiController::transferBurst(uint8_t cs_pin, const uint16_t *tx,
+                                 uint16_t *rx, uint8_t words) {
+  if (!words || words > 13 || transaction_active_) return false;
+  endLpspiSession();
+  bus_.beginTransaction(SPISettings(clock_hz_, testboard_config::kSpiBitOrder, testboard_config::kSpiMode));
+  digitalWriteFast(cs_pin, LOW);
+  delayNanoseconds(testboard_config::kCsSetupTimeNs);
+  for (uint8_t i = 0; i < words; ++i) rx[i] = bus_.transfer16(tx[i]);
+  digitalWriteFast(cs_pin, HIGH);
+  bus_.endTransaction();
+  delayNanoseconds(testboard_config::kCsHighTimeNs);
+  return true;
+}
+
+bool SpiController::startDmaBurst(uint8_t cs_pin, const uint16_t *tx, uint8_t words) {
 #if defined(SPI_HAS_TRANSFER_ASYNC)
-  if (transaction_active_ || lpspi_session_active_ ||
+  if (!words || words > 13 || transaction_active_ || lpspi_session_active_ ||
       dma_tx_ == nullptr || dma_rx_ == nullptr) {
     return false;
   }
-  dma_tx_[0] = static_cast<uint8_t>(tx_word >> 8);
-  dma_tx_[1] = static_cast<uint8_t>(tx_word & 0xFF);
-  dma_rx_[0] = 0;
-  dma_rx_[1] = 0;
+  dma_words_ = words;
+  for (uint8_t i = 0; i < words; ++i) {
+    dma_tx_[2 * i] = static_cast<uint8_t>(tx[i] >> 8);
+    dma_tx_[2 * i + 1] = static_cast<uint8_t>(tx[i]);
+    dma_rx_[2 * i] = dma_rx_[2 * i + 1] = 0;
+  }
   dma_event_.clearEvent();
   const SPISettings settings(
       clock_hz_,
@@ -96,7 +116,7 @@ bool SpiController::startDma16(uint8_t cs_pin, uint16_t tx_word) {
   transaction_active_ = true;
   digitalWriteFast(cs_pin, LOW);
   delayNanoseconds(testboard_config::kCsSetupTimeNs);
-  if (!bus_.transfer(dma_tx_, dma_rx_, 2, dma_event_)) {
+  if (!bus_.transfer(dma_tx_, dma_rx_, words * 2, dma_event_)) {
     endActiveTransfer();
     return false;
   }
@@ -104,7 +124,7 @@ bool SpiController::startDma16(uint8_t cs_pin, uint16_t tx_word) {
   return true;
 #else
   (void)cs_pin;
-  (void)tx_word;
+  (void)tx; (void)words;
   return false;
 #endif
 }
@@ -114,8 +134,13 @@ bool SpiController::dmaComplete() {
 }
 
 bool SpiController::finishDma16(uint16_t &rx_word) {
-  if (!dmaComplete()) return false;
-  rx_word = (static_cast<uint16_t>(dma_rx_[0]) << 8) | dma_rx_[1];
+  return finishDmaBurst(&rx_word, 1);
+}
+
+bool SpiController::finishDmaBurst(uint16_t *rx, uint8_t words) {
+  if (!dmaComplete() || words != dma_words_) return false;
+  for (uint8_t i = 0; i < words; ++i)
+    rx[i] = (uint16_t(dma_rx_[2 * i]) << 8) | dma_rx_[2 * i + 1];
   dma_event_.clearEvent();
   dma_active_ = false;
   endActiveTransfer();
@@ -163,7 +188,7 @@ bool SpiController::beginLpspiSession() {
 void SpiController::endLpspiSession() {
 #if defined(__IMXRT1062__)
   if (!lpspi_session_active_) return;
-  if (lpspi_active_) {
+  if (lpspi_active_ || burst_active_) {
     lpspi_single_word_ = false;
     cancelLpspi16();
   }
@@ -197,6 +222,7 @@ void SpiController::cancelLpspi16() {
   }
 #endif
   lpspi_active_ = false;
+  burst_active_ = false;
   releaseChipSelect();
   transaction_active_ = false;
   if (lpspi_single_word_) endLpspiSession();
