@@ -14,7 +14,8 @@ def _window() -> LiveWindow:
 
 def test_engine_channel_names_cover_all_groups():
     assert names.ENGINE_CHANNEL_NAMES == set(
-        names.PZT_COLUMNS + names.INTEGRATED_COLUMNS + names.SHEAR_NORMAL_COLUMNS + names.FORCE_COLUMNS)
+        names.PZT_COLUMNS + names.INTEGRATED_COLUMNS + names.SHEAR_NORMAL_COLUMNS
+        + names.NORMAL_JERK_RESIDUE_COLUMNS + names.FORCE_COLUMNS)
     assert names.INTEGRATED_COLUMNS[0] == "PZT3_B_integrated"
 
 

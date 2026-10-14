@@ -83,6 +83,7 @@ class PipelineResult:
     shear_jerk_lr: np.ndarray
     shear_jerk_tb: np.ndarray
     normal_jerk: np.ndarray
+    normal_jerk_residue: Mapping[str, np.ndarray]  # keyed by NORMAL_JERK_RESIDUE_COLUMNS names
     normal_force: np.ndarray | None
     shear_force_lr: np.ndarray | None
     shear_force_tb: np.ndarray | None
@@ -274,6 +275,7 @@ class PiezoEnginePipeline:
             shear_jerk_lr=derived["shear_jerk_lr"][warmup_dropped:],
             shear_jerk_tb=derived["shear_jerk_tb"][warmup_dropped:],
             normal_jerk=derived["normal_jerk"][warmup_dropped:],
+            normal_jerk_residue=MappingProxyType(_slice_chunk(derived["normal_jerk_residue"], warmup_dropped)),
             normal_force=None if force is None else force.normal_force[warmup_dropped:],
             shear_force_lr=None if force is None else force.shear_force_lr[warmup_dropped:],
             shear_force_tb=None if force is None else force.shear_force_tb[warmup_dropped:],

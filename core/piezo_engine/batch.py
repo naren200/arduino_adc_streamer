@@ -126,3 +126,33 @@ def compute_shear_normal_batch(
     total_force = normalized_c + normalized_l + normalized_r + normalized_t + normalized_b + baseline_force
 
     return b_lr, b_tb, total_force
+
+
+def compute_shear_residual_batch(
+    centered_by_position: Mapping[str, np.ndarray],
+) -> dict[str, np.ndarray]:
+    """Per-position shear-removed residual: each sensor's centered value minus
+    its share of the shear strain vector (C untouched, L/R/T/B shifted by the
+    detected shear pair). Same b_lr/b_tb arithmetic as compute_shear_normal_batch,
+    deliberately duplicated so that function stays untouched. These are the
+    un-normalized residuals (no baseline offset); their sum equals normal_jerk
+    up to float rounding, because the offset terms cancel in total_force.
+    """
+    c = np.asarray(centered_by_position[SHEAR_POSITION_CENTER], dtype=np.float64)
+    left = np.asarray(centered_by_position[SHEAR_POSITION_LEFT], dtype=np.float64)
+    right = np.asarray(centered_by_position[SHEAR_POSITION_RIGHT], dtype=np.float64)
+    top = np.asarray(centered_by_position[SHEAR_POSITION_TOP], dtype=np.float64)
+    bottom = np.asarray(centered_by_position[SHEAR_POSITION_BOTTOM], dtype=np.float64)
+
+    lr_pair = (left != SHEAR_ZERO_VALUE) & (right != SHEAR_ZERO_VALUE) & (np.sign(left) != np.sign(right))
+    tb_pair = (top != SHEAR_ZERO_VALUE) & (bottom != SHEAR_ZERO_VALUE) & (np.sign(top) != np.sign(bottom))
+    b_lr = np.where(lr_pair, np.copysign(np.minimum(np.abs(left), np.abs(right)), right), SHEAR_ZERO_VALUE)
+    b_tb = np.where(tb_pair, np.copysign(np.minimum(np.abs(top), np.abs(bottom)), top), SHEAR_ZERO_VALUE)
+
+    return {
+        SHEAR_POSITION_CENTER: c,
+        SHEAR_POSITION_LEFT: left + b_lr,
+        SHEAR_POSITION_RIGHT: right - b_lr,
+        SHEAR_POSITION_TOP: top + b_tb,
+        SHEAR_POSITION_BOTTOM: bottom - b_tb,
+    }

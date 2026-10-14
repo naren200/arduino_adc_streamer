@@ -205,6 +205,7 @@ class DerivedChannelPipeline:
             "shear_jerk_lr": result.shear_jerk_lr,
             "shear_jerk_tb": result.shear_jerk_tb,
             "normal_jerk": result.normal_jerk,
+            **result.normal_jerk_residue,
         }
         if self.engine_config.compute_force:
             derived["shear_force_lr"] = result.shear_force_lr

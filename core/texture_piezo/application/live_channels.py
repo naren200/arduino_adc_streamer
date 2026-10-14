@@ -18,6 +18,7 @@ from core.piezo_engine.channel_names import (
     FORCE_COLUMNS,
     INTEGRATED_COLUMN_SUFFIX,
     INTEGRATED_COLUMNS,
+    NORMAL_JERK_RESIDUE_COLUMNS,
     PZT_COLUMNS,
     SHEAR_NORMAL_COLUMNS,
 )
@@ -58,7 +59,8 @@ def named_engine_channels(
     available.update({
         engine + INTEGRATED_COLUMN_SUFFIX: derived["integrated"][column] for column, engine in engine_by_column.items()
     })
-    available.update({name: derived[name] for name in SHEAR_NORMAL_COLUMNS + FORCE_COLUMNS if name in derived})
+    derived_names = SHEAR_NORMAL_COLUMNS + NORMAL_JERK_RESIDUE_COLUMNS + FORCE_COLUMNS
+    available.update({name: derived[name] for name in derived_names if name in derived})
     missing = [name for name in names if name not in available]
     if missing:
         raise KeyError(

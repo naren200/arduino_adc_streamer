@@ -39,7 +39,7 @@ from core.piezo_engine.baseline import (
     bounded_sum_batch,
     total_warmup_sample_count,
 )
-from core.piezo_engine.batch import compute_shear_normal_batch
+from core.piezo_engine.batch import compute_shear_normal_batch, compute_shear_residual_batch
 from core.piezo_engine.config import (
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
     DEFAULT_JERK_INTEGRATION_WINDOW_SAMPLES,
@@ -48,7 +48,7 @@ from core.piezo_engine.config import (
 
 # Rewired per task: these two classes now come from this repo's own
 # core/piezo_engine modules instead of texture_piezo's shear_normal_utils_v1.
-from core.piezo_engine.channel_names import CHANNEL_LABELS
+from core.piezo_engine.channel_names import CHANNEL_LABELS, NORMAL_JERK_RESIDUE_PREFIX
 from core.piezo_engine.shear_detector import ShearDetector
 from core.piezo_engine.normal_force_calculator import NormalForceCalculator
 
@@ -165,7 +165,8 @@ class CausalDerivedChannels:
         different value without affecting anything; see `reset()`.
 
         Returns {"integrated": {pzt_column_name: array}, "shear_jerk_lr": array,
-        "shear_jerk_tb": array, "normal_jerk": array} -- one output value per
+        "shear_jerk_tb": array, "normal_jerk": array,
+        "normal_jerk_residue": {"normal_jerk_residue_<B|L|C|R|T>": array}} -- one output value per
         input sample in THIS chunk (not the whole history), untrimmed; see
         `warmup_sample_count`/`samples_seen` for what the caller should still
         discard.
@@ -220,6 +221,7 @@ class CausalDerivedChannels:
         # -- see compute_shear_normal_batch's docstring for the bit-
         # exactness argument and its verification.
         shear_jerk_lr, shear_jerk_tb, normal_jerk = compute_shear_normal_batch(centered)
+        residue_by_position = compute_shear_residual_batch(centered)
 
         self.samples_seen += n
         return {
@@ -227,4 +229,7 @@ class CausalDerivedChannels:
             "shear_jerk_lr": shear_jerk_lr,
             "shear_jerk_tb": shear_jerk_tb,
             "normal_jerk": normal_jerk,
+            "normal_jerk_residue": {
+                NORMAL_JERK_RESIDUE_PREFIX + position: residue_by_position[position] for position in CHANNEL_LABELS
+            },
         }
