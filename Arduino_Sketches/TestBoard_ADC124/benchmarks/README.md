@@ -1,5 +1,41 @@
 # TestBoard ADC124 benchmarks
 
+All ADC124 capture, benchmark, analysis and report tools live in this folder,
+alongside the route manifest and shared helpers, matching TestBoard_7953.
+`tmp/` is reserved for temporary inspection files and scratch artifacts.
+Raw captures remain under ignored `docs/testing/datasets/`; reports and plots
+remain under `docs/testing/results/`. Run the commands below from the repository root.
+
+## Tools
+
+| Purpose | Scripts |
+| --- | --- |
+| General matrix, smoke tests, sparse routes | `testboard_adc124_benchmark.py` |
+| Quick production upload and 8/16 MHz check | `benchmark_adc124_lookahead_quick.py`, `analyze_adc124_lookahead_quick.py` |
+| Scan-mode, FIFO/GPIO and VMID comparisons | `benchmark_adc124_scan_modes.py`, `benchmark_adc124_fifo_gpio.py`, `benchmark_adc124_vmid_settle.py` and matching `analyze_` / `report_` tools |
+| Extended disconnected-board matrix | `benchmark_adc124_upgrade.py`, `analyze_adc124_upgrade.py`, `report_adc124_upgrade.py` |
+| Settling captures and diagnostic profiles | `capture_adc124_settling.py`, `run_adc124_mux_profiles.py`, `report_adc124_settling.py`, `report_adc124_timing.py`, `report_adc124_mux_timing.py` |
+| Noise analysis and timing models | `analyze_adc124_noise_patterns.py`, `analyze_adc124_selected_noise.py`, `adc124_quiet_windows.py`, `adc124_timing_model.py` |
+
+Historical comparison runners check their corresponding firmware revisions;
+use the general runner or quick lookahead runner for the current revision.
+The specialized upload/profile tools currently target COM4.
+
+For the quick check, build both firmware environments first. The runner uploads
+the built production HEX, checks 28 settings, and leaves production stopped with
+the previous configuration restored. `--baseline` adds 24 matched captures of
+an already installed `adc124-vmid-settle-v1` image before uploading the new build.
+By default it checks only the new build; it does not upload an old baseline image.
+Dry-run opens no serial port, uploads nothing and creates no output files.
+
+```powershell
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/benchmark_adc124_lookahead_quick.py --dry-run
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/benchmark_adc124_lookahead_quick.py RAW_ROOT
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/analyze_adc124_lookahead_quick.py RAW_ROOT RESULT_ROOT
+```
+
+## General runner
+
 `testboard_adc124_benchmark.py` owns the USB serial port, checks firmware
 identity and status, configures a matrix, captures continuously through warm-up
 and measurement, and compares DMA/LPSPI measurements with matching blocking
@@ -15,16 +51,21 @@ requires explicit `--scan-order adc --spi-frame single`; the runner maps this
 to its former `scanorder mux`. The new MUX mode requires protocol 3.
 
 `--spi-frame burst` is the default; `--spi-frame single` keeps per-conversion
-CS as a comparison control. Both modes preserve one discarded pipeline prime
-per ADC/address batch. Include both values to compare matched frame settings.
+CS as a comparison control. Historical firmware used one discarded pipeline prime
+per ADC/address batch. Current `adc_selector_policy=lookahead` firmware uses
+four conversions for a four-channel group and one for address 6 at repeat 1,
+without acquisition primes. Startup may initialize each ADC once while parked.
+VMID batches use four discarded conversions and select the next sensor input.
+Analysis detects the status policy; historical captures keep their old word
+budgets. Include both frame values to compare matched frame settings.
 
 The completed [scan-mode hardware report](../../../docs/testing/results/testboard-adc124/scan_modes_2026-10-13/README.md)
 includes production/diagnostic timings, burst controls and common-window noise
-analysis. Its raw-only recorder, `scripts/benchmark_adc124_scan_modes.py`,
+analysis. Its raw-only recorder, `Arduino_Sketches/TestBoard_ADC124/benchmarks/benchmark_adc124_scan_modes.py`,
 avoids per-sample CSV work during capture and restores production firmware.
 
 The [FIFO/GPIO comparison](../../../docs/testing/results/testboard-adc124/fifo_gpio_2026-10-14/README.md)
-uses `scripts/benchmark_adc124_fifo_gpio.py before|after RAW_ROOT` to retain
+uses `Arduino_Sketches/TestBoard_ADC124/benchmarks/benchmark_adc124_fifo_gpio.py before|after RAW_ROOT` to retain
 frozen images/source hashes, matched production/diagnostic matrices and stopped
 production restoration. Build both environments and load the corresponding
 production image first. The paired analyzer records failed quiet coverage
@@ -45,7 +86,7 @@ has distinct test IDs and comparison keys; sessions/results record requested
 and effective delay/mode. Restore helpers preserve explicit zero as well.
 
 The [VMID-settling report](../../../docs/testing/results/testboard-adc124/vmid_settle_2026-10-14/README.md)
-and `scripts/benchmark_adc124_vmid_settle.py` cover fresh previous-firmware,
+and `Arduino_Sketches/TestBoard_ADC124/benchmarks/benchmark_adc124_vmid_settle.py` cover fresh previous-firmware,
 default/explicit-5 parity and 0/1 us measurements across both modes/all engines.
 
 From the repository root:

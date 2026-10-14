@@ -237,6 +237,7 @@ bool Adc124s101::transferWord(uint16_t command, uint16_t &sample) {
       return false;
     }
   }
+  selected_input_ = (command >> 11) & 3;
 #if TESTBOARD_PROFILE
   if (profile_ != nullptr) {
     AcquisitionProfiler::Scope validation(*profile_, AcquisitionProfiler::Validate);
@@ -258,7 +259,8 @@ bool Adc124s101::decode(uint16_t response, uint16_t &sample) {
 bool Adc124s101::readBatch(const SensorRoute *routes, uint8_t count,
                           uint8_t repeat, SpiEngine engine, uint16_t *samples) {
   PreparedBatch batch;
-  return prepareBatch(routes, count, repeat, batch) && readPrepared(batch, engine, samples);
+  return prepareBatch(routes, count, repeat, batch) &&
+         selectInput(batch.first_input, engine) && readPrepared(batch, engine, samples);
 }
 
 bool Adc124s101::prepareBatch(const SensorRoute *routes, uint8_t count,
@@ -268,13 +270,10 @@ bool Adc124s101::prepareBatch(const SensorRoute *routes, uint8_t count,
   for (uint8_t i = 0; i < count; ++i)
     if (!validSensorRoute(routes[i]) || routes[i].array != index_ + 1 ||
         routes[i].input != routes[0].input) return false;
-  // Flush the preceding input selection after any MUX/address/ADC switch.
-  batch.commands[0] = uint16_t(kMuxToAdcInput[routes[0].mux - 1]) << 11;
-  batch.destinations[0] = 0xFF;
-  batch.count = 1;
+  batch.first_input = kMuxToAdcInput[routes[0].mux - 1];
   for (uint8_t i = 0; i < count; ++i) {
     for (uint8_t r = 0; r < repeat; ++r) {
-      const uint8_t next = (r + 1 == repeat && i + 1 < count) ? i + 1 : i;
+      const uint8_t next = r + 1 == repeat ? (i + 1) % count : i;
       batch.commands[batch.count] = uint16_t(kMuxToAdcInput[routes[next].mux - 1]) << 11;
       batch.destinations[batch.count++] = r + 1 == repeat ? i : 0xFF;
     }
@@ -294,6 +293,12 @@ bool Adc124s101::executeBatch(const PreparedBatch &batch, uint16_t *samples) {
 }
 
 bool Adc124s101::readPrepared(const PreparedBatch &batch, SpiEngine engine, uint16_t *samples, bool burst) {
+  if (faulted_ || !batch.count || batch.count > 12) return false;
+  // Acquisition must already have selected this input in the preceding
+  // batch (or run preparation). Never silently add a prime inside a sweep.
+  if (selected_input_ != batch.first_input) {
+    ++transfer_errors_; faulted_ = true; return false;
+  }
   if (burst) return executeBurst(batch, engine, samples);
   if (engine == SpiEngine::BLOCKING) return executeBatch<SpiEngine::BLOCKING>(batch, samples);
   if (engine == SpiEngine::DMA) return executeBatch<SpiEngine::DMA>(batch, samples);
@@ -306,9 +311,27 @@ bool Adc124s101::sampleVmid(uint32_t settle_us, SpiEngine engine) {
 }
 
 bool Adc124s101::readVmid(SpiEngine engine, bool burst) {
-  static const PreparedBatch batch{{0, 1 << 11, 2 << 11, 3 << 11, 3 << 11},
-                                   {0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, 5};
-  return readPrepared(batch, engine, nullptr, burst);
+  PreparedBatch batch;
+  prepareVmid(0, batch);
+  return selectInput(batch.first_input, engine) && readPrepared(batch, engine, nullptr, burst);
+}
+
+bool Adc124s101::prepareVmid(uint8_t next_input, PreparedBatch &batch) {
+  if (next_input > 3) return false;
+  batch.first_input = 0;
+  batch.count = 4;
+  for (uint8_t i = 0; i < 4; ++i) {
+    batch.commands[i] = uint16_t(i == 3 ? next_input : i + 1) << 11;
+    batch.destinations[i] = 0xFF;
+  }
+  return true;
+}
+
+bool Adc124s101::selectInput(uint8_t input, SpiEngine engine) {
+  if (faulted_ || input > 3) return false;
+  if (selected_input_ == input) return true;
+  uint16_t discarded;
+  return transfer(input, engine, discarded);
 }
 
 bool Adc124s101::waitComplete(bool dma) {
@@ -349,7 +372,8 @@ bool Adc124s101::executeBurst(const PreparedBatch &batch, SpiEngine engine, uint
     success = spi_.transferLpspiBurst(chip_select_, batch.commands, responses,
                                     batch.count, timeout_ticks_, service_ticks_);
   }
-  if (!success) { ++transfer_errors_; faulted_ = true; return false; }
+  if (!success) { selected_input_ = 0xFF; ++transfer_errors_; faulted_ = true; return false; }
+  selected_input_ = (batch.commands[batch.count - 1] >> 11) & 3;
 #if TESTBOARD_PROFILE
   if (profile_ != nullptr) {
     AcquisitionProfiler::Scope validation(*profile_, AcquisitionProfiler::Validate);

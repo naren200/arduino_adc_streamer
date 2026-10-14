@@ -78,9 +78,9 @@ The per-switch residual includes 0.4 us explicit turn-off/turn-on allowances plu
 From repository root:
 
 ```powershell
-.venv/Scripts/python.exe scripts/capture_adc124_settling.py <new-primary-folder> --engines blocking dma lpspi --window-ms 5000
-.venv/Scripts/python.exe scripts/capture_adc124_settling.py <new-controls-folder> --engines blocking dma lpspi --orders mux --repetitions 1 --window-ms 3000
-.venv/Scripts/python.exe scripts/report_adc124_timing.py <primary-folder> <controls-folder> <profile-folder> <output-folder> --pdf <report.pdf>
+.venv/Scripts/python.exe Arduino_Sketches/TestBoard_ADC124/benchmarks/capture_adc124_settling.py <new-primary-folder> --engines blocking dma lpspi --window-ms 5000
+.venv/Scripts/python.exe Arduino_Sketches/TestBoard_ADC124/benchmarks/capture_adc124_settling.py <new-controls-folder> --engines blocking dma lpspi --orders mux --repetitions 1 --window-ms 3000
+.venv/Scripts/python.exe Arduino_Sketches/TestBoard_ADC124/benchmarks/report_adc124_timing.py <primary-folder> <controls-folder> <profile-folder> <output-folder> --pdf <report.pdf>
 .venv/Scripts/python.exe -m pytest tests/test_adc124_timing_model.py tests/test_adc124_settling_report.py tests/test_testboard_adc124_benchmark.py -q
 ```
 

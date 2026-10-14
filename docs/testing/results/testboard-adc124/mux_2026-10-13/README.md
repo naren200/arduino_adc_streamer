@@ -61,10 +61,10 @@ The diagnostic firmware upload/reboot and final production restoration both comp
 ## Reproduce from repository root
 
 ```powershell
-.venv/Scripts/python.exe scripts/capture_adc124_settling.py <new-production-folder> --orders mux --engines blocking dma lpspi --window-ms 15000
-.venv/Scripts/python.exe scripts/run_adc124_mux_profiles.py <new-profile-folder> <timing-output-folder>
-.venv/Scripts/python.exe scripts/report_adc124_settling.py <production-folder> <noise-output-folder> --engine lpspi --pdf <noise-report.pdf>
-.venv/Scripts/python.exe scripts/report_adc124_mux_timing.py <production-folder> <profile-folder> <timing-output-folder> --pdf <timing-report.pdf>
+.venv/Scripts/python.exe Arduino_Sketches/TestBoard_ADC124/benchmarks/capture_adc124_settling.py <new-production-folder> --orders mux --engines blocking dma lpspi --window-ms 15000
+.venv/Scripts/python.exe Arduino_Sketches/TestBoard_ADC124/benchmarks/run_adc124_mux_profiles.py <new-profile-folder> <timing-output-folder>
+.venv/Scripts/python.exe Arduino_Sketches/TestBoard_ADC124/benchmarks/report_adc124_settling.py <production-folder> <noise-output-folder> --engine lpspi --pdf <noise-report.pdf>
+.venv/Scripts/python.exe Arduino_Sketches/TestBoard_ADC124/benchmarks/report_adc124_mux_timing.py <production-folder> <profile-folder> <timing-output-folder> --pdf <timing-report.pdf>
 .venv/Scripts/python.exe -m pytest tests/test_adc124_settling_report.py tests/test_adc124_timing_model.py tests/test_testboard_adc124_benchmark.py -q
 ```
 

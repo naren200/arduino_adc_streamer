@@ -9,7 +9,7 @@ import time
 from capture_adc124_settling import bench,serial
 from serial.tools import list_ports
 
-ROOT=Path(__file__).resolve().parents[1]
+ROOT=Path(__file__).resolve().parents[3]
 FW=ROOT/'Arduino_Sketches/TestBoard_ADC124'
 LOADER=Path('C:/Users/shera/.platformio/packages/tool-teensy/teensy_loader_cli.exe')
 
@@ -57,7 +57,7 @@ def main():
             record['diagnostic_status']=status(args.output)
             if record['diagnostic_status']['profile_available']!='true':raise RuntimeError('Diagnostic build not identified')
             record['state']='diagnostic_loaded_verified';save()
-            subprocess.run([sys.executable,str(ROOT/'scripts/capture_adc124_settling.py'),str(args.capture),
+            subprocess.run([sys.executable,str(ROOT/'Arduino_Sketches/TestBoard_ADC124/benchmarks/capture_adc124_settling.py'),str(args.capture),
                 '--orders','mux','--engines','blocking','dma','lpspi','--repetitions','1',
                 '--window-ms','2000','--profile','on'],check=True)
         except BaseException as error:

@@ -27,6 +27,7 @@ uint32_t run_started_ms = 0, duration_ms = 0, sweep_count = 0;
 struct PreparedGroup {
   uint8_t array, input, destination;
   Adc124s101::PreparedBatch batch;
+  Adc124s101::PreparedBatch vmid_batch;
 };
 PreparedGroup groups[kMaxRoutes];
 uint8_t group_count = 0;
@@ -108,6 +109,16 @@ bool prepareAcquisition() {
     else phases[phase_count++] = {uint8_t(group_count - 1), 1, r.input};
     i = end;
   }
+  // Each ADC retains its own selector while the other ADC owns SPI. Link
+  // batches per ADC, across phase boundaries and the sweep wraparound.
+  for (uint8_t i = 0; i < group_count; ++i) {
+    uint8_t next = (i + 1) % group_count;
+    while (groups[next].array != groups[i].array) next = (next + 1) % group_count;
+    auto &group = groups[i];
+    const uint8_t next_input = groups[next].batch.first_input;
+    group.batch.commands[group.batch.count - 1] = uint16_t(vmid ? 0 : next_input) << 11;
+    Adc124s101::prepareVmid(next_input, group.vmid_batch);
+  }
   return group_count != 0;
 }
 
@@ -158,7 +169,9 @@ void printRoute(const SensorRoute &r) {
 void status() {
   Serial.println("# board=TestBoard_ADC124");
   Serial.println("# protocol_version=3");
-  Serial.println("# firmware_revision=adc124-vmid-settle-v1");
+  Serial.println("# firmware_revision=adc124-selector-lookahead-v1");
+  Serial.println("# adc_selector_policy=lookahead");
+  Serial.println("# adc_batch_prime_frames=0");
   Serial.println("# lpspi_burst_policy=fifo_bounded");
   Serial.println("# mux_gpio_policy=grouped_ports");
   Serial.println("# mux_switch_guards=coordinated");
@@ -299,6 +312,15 @@ bool command(const String &name, const String &args) {
 #endif
     if (!prepareAcquisition()) return false;
     parkAll();
+    bool initialized[2] = {};
+    for (uint8_t i = 0; i < group_count; ++i) {
+      const auto &group = groups[i];
+      const uint8_t adc = group.array - 1;
+      if (!initialized[adc]) {
+        if (!adcs[adc]->selectInput(group.batch.first_input, engine)) { stop(); return false; }
+        initialized[adc] = true;
+      }
+    }
     for (uint8_t i = 0; i < 2; ++i) if (!selected(i + 1)) adcs[i]->disable();
     sampling_sweeps = usb_frames_sent = usb_frames_discarded = 0;
     sampling_period_max_us = sampling_period_over_1ms = 0;
@@ -356,7 +378,7 @@ bool capture() {
       {
         TB_PROFILE_SCOPE(vmid_transfer_profile, Transfer);
         for (uint8_t i = phase.first; i < phase.first + phase.count; ++i)
-          if (!adcs[groups[i].array - 1]->readVmid(engine, burst_frames)) return false;
+          if (!adcs[groups[i].array - 1]->readPrepared(groups[i].vmid_batch, engine, nullptr, burst_frames)) return false;
       }
     }
   }

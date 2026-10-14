@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import numpy as np
 import serial
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'Arduino_Sketches/TestBoard_ADC124/benchmarks'))
 import testboard_adc124_benchmark as bench
 from benchmark_common import BinaryFrameParser, uint32_delta

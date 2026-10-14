@@ -6,7 +6,7 @@ import pytest
 
 @pytest.fixture
 def analysis(monkeypatch):
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'scripts'))
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'Arduino_Sketches/TestBoard_ADC124/benchmarks'))
     return importlib.import_module('report_adc124_settling')
 
 def test_adjacent_code_toggling_is_not_a_burst(analysis):

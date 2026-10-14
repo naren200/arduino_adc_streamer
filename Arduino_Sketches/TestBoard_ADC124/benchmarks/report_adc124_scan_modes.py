@@ -9,7 +9,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT))
 from capture_adc124_settling import decode, bench
 from report_adc124_settling import canonical_samples
@@ -148,7 +148,7 @@ def main():
       "## Evidence and reproduction", "",
       f"Raw sessions: `{root.relative_to(ROOT)}`. Each capture keeps full raw bytes, command/status logs, exact payload routes, hashes and profile evidence. `firmware_lifecycle.json` records pre-test production images, new image/source hashes, diagnostic loading, and final production revision/configuration. Final flags: profile unavailable, running false, both arrays, ADC mode, blocking, 16 MHz, repeat 1, 5 us, VMID off, CS bursts. Original protocol-2 `mux` preference was explicitly migrated to protocol-3 ADC semantics.", "",
       "References: [sequential timing/engine PDF](../../../../reports/exports/TestBoard_ADC124_MUX_Timing_Engines_2026-10-13.pdf) and [sequential settling/VMID PDF](../../../../reports/exports/TestBoard_ADC124_MUX_Settling_VMID_2026-10-13.pdf). Their raw reports/datasets remain intact. The new script uses the associated timing JSON and common-window method.", "",
-      "Reproduce: `scripts/benchmark_adc124_scan_modes.py` (hardware with production/diagnostic restoration), `scripts/analyze_adc124_scan_modes.py` (raw hash/frame/timing/noise evidence), `scripts/report_adc124_scan_modes.py` (this report/plots). `summary.csv`, `capture_metrics.csv`, `comparisons.csv`, `channel_noise_baselines.csv`, per-capture quiet-bin/threshold files and `analysis.json` supply all numeric values. No commit or push was performed."]
+      "Reproduce: `Arduino_Sketches/TestBoard_ADC124/benchmarks/benchmark_adc124_scan_modes.py` (hardware with production/diagnostic restoration), `Arduino_Sketches/TestBoard_ADC124/benchmarks/analyze_adc124_scan_modes.py` (raw hash/frame/timing/noise evidence), `Arduino_Sketches/TestBoard_ADC124/benchmarks/report_adc124_scan_modes.py` (this report/plots). `summary.csv`, `capture_metrics.csv`, `comparisons.csv`, `channel_noise_baselines.csv`, per-capture quiet-bin/threshold files and `analysis.json` supply all numeric values. No commit or push was performed."]
     (out/"README.md").write_text("\n".join(text)+"\n",encoding="utf-8")
     print(out/"README.md")
 

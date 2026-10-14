@@ -11,7 +11,7 @@ import json
 import sys
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from Arduino_Sketches.TestBoard_ADC124.benchmarks import testboard_adc124_benchmark as bench
 from Arduino_Sketches.TestBoard_ADC124.benchmarks.scan_modes import operation_counts
@@ -71,7 +71,8 @@ def process(source, run, session, output, allow_insufficient_quiet=False):
     # from sent+discarded counters and delivered endpoints is explicitly estimated.
     c = operation_counts(bench.load_manifest(bench.DEFAULT_MANIFEST)["both_full"], config.scanorder,
                          config.channelrepeat, config.vmid, config.spi_frame,
-                         coordinated=status.get('mux_switch_guards') == 'coordinated')
+                         coordinated=status.get('mux_switch_guards') == 'coordinated',
+                         lookahead=status.get('adc_selector_policy') == 'lookahead')
     rows.update({"estimated_" + k:v for k,v in c.items() if k != "basis"})
     rows["estimated_settle_budget_us"] = (c['sensor_settling_windows'] * config.mux_settle_us +
         c['vmid_settling_windows'] * rows['vmid_settle_effective_us'])

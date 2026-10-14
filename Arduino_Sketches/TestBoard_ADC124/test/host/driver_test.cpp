@@ -93,7 +93,11 @@ void verifyCapture(const char *order, bool burst, bool full, unsigned sweep) {
     assert(le16(4 + i * 2) == r.array * 1000 + (r.mux - 1) * 100 + r.input);
   }
   unsigned words = 0;
-  for (int i = 0; i < group_count; ++i) words += groups[i].batch.count + (vmid ? 5 : 0);
+  for (int i = 0; i < group_count; ++i) {
+    words += groups[i].batch.count + (vmid ? 4 : 0);
+    assert(groups[i].batch.count <= 12);
+  }
+  assert(words == unsigned(plan_count * channel_repeat + (vmid ? 4 * group_count : 0)));
   assert(conversions - words_before == words);
   unsigned cs_low = 0, en_writes = 0;
   for (const auto &e : gpio_events) {
@@ -147,11 +151,32 @@ int main() {
           assert(command("array", array)); assert(command("scanorder", order));
           assert(command("spiengine", mode)); assert(command("muxsettle", delay));
           assert(command("channelrepeat", repeat)); assert(command("vmid", vmid_arg)); assert(command("spiframe", frame));
+          const unsigned preparation_words = conversions;
           assert(command("run", ""));
+          assert(conversions - preparation_words <= (array_mask == 3 ? 2u : 1u));
           for (unsigned sweep = 0; sweep < 3; ++sweep) verifyCapture(order, burst_frames, true, sweep);
           stop(); checkParked(); ++cases;
         }
   assert(cases == 648 && IMXRT_LPSPI4_S.TCR.unstable_reads == 0);
+  unsigned lookahead_cases = 0;
+  for (const char *clock : {"8000000", "16000000"}) for (const char *order : {"adc", "mux"})
+    for (const char *mode : {"blocking", "dma", "lpspi"}) for (const char *v : {"false", "true"})
+      for (const char *frame : {"single", "burst"}) {
+        assert(command("array", "both") && command("scanorder", order));
+        assert(command("spiclock", clock) && command("spiengine", mode));
+        assert(command("channelrepeat", "1") && command("vmid", v) && command("spiframe", frame));
+        assert(command("run", ""));
+        for (uint8_t i = 0; i < group_count; ++i) {
+          const auto &g = groups[i];
+          assert(g.batch.count == (g.input == 6 ? 1 : 4));
+          if (g.input == 5) assert((vmid ? g.vmid_batch.commands[3] : g.batch.commands[3]) == (3 << 11));
+          if (g.input == 6) assert((vmid ? g.vmid_batch.commands[3] : g.batch.commands[0]) == 0);
+        }
+        for (unsigned sweep = 0; sweep < 3; ++sweep) verifyCapture(order, burst_frames, true, sweep);
+        stop(); checkParked(); ++lookahead_cases;
+      }
+  assert(lookahead_cases == 48);
+  std::cout << lookahead_cases << " no-prime lookahead clock/engine cases passed\n";
   unsigned vmid_cases = 0;
   for (const char *array : {"1", "2", "both"}) for (const char *order : {"adc", "mux"})
     for (const char *mode : {"blocking", "dma", "lpspi"}) for (const char *frame : {"single", "burst"})
@@ -210,18 +235,19 @@ int main() {
   assert(!Adc124s101::switchTogether(&adc1, &adc2, 8));
   stop(); checkParked();
 
-  // Repeat=3 batches have 13 words. Exercise FIFOs smaller than a batch and
+  // Repeat=3 batches have 12 useful words. Exercise FIFOs smaller than a batch and
   // asymmetric TX/RX capacities, then inject errors and a wrapped timeout.
   adc1.selectAddress(5, 0);
   SensorRoute fifo_routes[] = {{1,1,5},{1,2,5},{1,3,5},{1,4,5}};
   Adc124s101::PreparedBatch fifo_batch; assert(adc1.prepareBatch(fifo_routes, 4, 3, fifo_batch));
+  assert(adc1.selectInput(fifo_batch.first_input, SpiEngine::LPSPI));
   for (uint8_t tx_log : {0, 2, 4}) for (uint8_t rx_log : {0, 2, 4}) {
     IMXRT_LPSPI4_S.PARAM = tx_log | (uint32_t(rx_log) << 8);
     IMXRT_LPSPI4_S.max_tx = IMXRT_LPSPI4_S.max_rx = 0;
     uint16_t samples[4]; assert(adc1.readPrepared(fifo_batch, SpiEngine::LPSPI, samples, true));
     for (int i = 0; i < 4; ++i) assert(samples[i] == 1005 + i * 100);
     assert(IMXRT_LPSPI4_S.max_tx <= (1u << tx_log) && IMXRT_LPSPI4_S.max_rx <= (1u << rx_log));
-    if (tx_log == 4 && rx_log == 4) assert(IMXRT_LPSPI4_S.max_tx == 13 && IMXRT_LPSPI4_S.max_rx == 13);
+    if (tx_log == 4 && rx_log == 4) assert(IMXRT_LPSPI4_S.max_tx == 12 && IMXRT_LPSPI4_S.max_rx == 12);
     assert(IMXRT_LPSPI4_S.rx.empty() && SPI.begins == SPI.ends);
   }
   IMXRT_LPSPI4_S.PARAM = (4u << 8) | 4u;
@@ -287,5 +313,15 @@ int main() {
   assert(!adc2.transfer(0, SpiEngine::LPSPI, discarded)); IMXRT_LPSPI4_S.stall = false;
   spi.endLpspiSession(); stop(); assert(adc2.transferErrors() == 1); checkParked();
   assert(!adc2.transfer(0, SpiEngine::BLOCKING, discarded));
+  // A broken selector plan must stop before any clocks, never insert a prime
+  // or emit a mislabeled sample. Restart remains blocked after this fault.
+  SensorRoute mismatch_routes[] = {{1, 2, 0}};
+  Adc124s101::PreparedBatch mismatch;
+  assert(adc1.prepareBatch(mismatch_routes, 1, 1, mismatch));
+  assert(adc1.selectInput(0, SpiEngine::BLOCKING));
+  const unsigned before_mismatch = conversions;
+  assert(!adc1.readPrepared(mismatch, SpiEngine::BLOCKING, &discarded, true));
+  assert(conversions == before_mismatch && adc1.transferErrors() == 1);
+  assert(!command("run", "")); checkParked();
   std::cout << cases << " ADC124 digital acquisition cases and USB/failure checks passed\n";
 }

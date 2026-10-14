@@ -99,16 +99,18 @@ address. The 200 ns turn-off and turn-on guards remain and overlap in shared
 phases. The cache uses 48,096 bytes on ARM to avoid mask assembly during scans.
 
 With VMID on, each phase switches its participating banks to address 7 before
-one corresponding wait, then takes a discarded five-word VMID batch per ADC
-(one selector prime + four inputs). Shared mode thus shares both sensor and
+one corresponding wait, then takes a discarded four-word VMID batch per ADC
+(all four inputs, without a selector prime). Shared mode thus shares both sensor and
 VMID waits. With VMID off a bank may stay enabled at its last sensor address
 between phases/sweeps; identical addresses skip redundant switching and waits.
 Stop always leaves both banks enabled on VMID, with both ADC CS lines high.
 
 TI SNAS283D pp.16-17 and 19 explicitly allow consecutive 16-clock conversions
 with CS held low. Each sensor/VMID burst stays at one fixed external address.
-The first response is discarded to prime the next-conversion selector; only
-the last requested repeat is stored for each route. Blocking keeps one SPI
+The last command of each batch selects the first ADC input of the next batch
+on that ADC, including VMID, sparse routes and sweep wraparound. No selector
+prime is discarded inside a sweep; only the last requested repeat is stored
+for each route. Blocking keeps one SPI
 transaction/CS frame per batch; DMA launches one 2N-byte transfer from persistent
 aligned buffers; LPSPI retains its sweep session and CS across all batch words.
 It queues prepared words within TX/RX FIFO capacity, drains ordered responses,
@@ -118,19 +120,45 @@ still require fresh completion for each word.
 CS setup and high allowances are paid once per burst; timeout/error paths
 release CS, restore SPI state and park safely. Interrupts remain enabled.
 
-For full arrays at repeat 1, both modes use 64 words/14 sensor batches with
-VMID off, and 134 words/28 sensor+VMID batches with VMID on. Pure configured
-CS-allowance savings are `(64-14)*0.2 = 10.0 us` off and
-`(134-28)*0.2 = 21.2 us` on. These are calculations, not measured savings.
+For full arrays at repeat 1, both modes use 50 words/14 sensor batches with
+VMID off, and 106 words/28 sensor+VMID batches with VMID on. Pure configured
+CS-allowance savings versus single framing are `(50-14)*0.2 = 7.2 us` off and
+`(106-28)*0.2 = 15.6 us` on. These are calculations, not measured savings.
+Four-channel groups use four conversions; address 6 uses one IN4 conversion.
+At nominal 16/8 MHz those batches occupy 4/8 us and 1/2 us of clocking,
+respectively, before peripheral/software overhead. Compared with the preceding
+firmware, lookahead removes 14/28 conversion words per full sweep (VMID off/on).
+The historical benchmark reports below retain their original primed timings.
 ADC mode uses 14/28 settling waits; shared MUX uses 7/14. Actual GPIO change
 counts depend on routes, current cached state and VMID; analog delays are not
 shortened to compensate for CPU overhead.
 
-Current revision `adc124-vmid-settle-v1` retains the FIFO/GPIO optimization
+Current revision `adc124-selector-lookahead-v1` adds selector lookahead to the
+VMID settling and FIFO/GPIO optimizations. Status reports
+`adc_selector_policy=lookahead` and `adc_batch_prime_frames=0`; the ADC's
+one-conversion selector latency (`adc_pipeline_frames=1`) is unchanged.
+The preceding revision `adc124-vmid-settle-v1` retains the FIFO/GPIO optimization
 from `adc124-fifo-grouped-gpio-v2`; protocol remains 3.
 For full arrays, coordinated MUX guard allowance is 2.8 us off / 5.6 us on,
 versus 5.6 / 11.2 us with separate bank switching. These are configured
 allowance estimates, not measured GPIO propagation or total speed gains.
+
+## Selector lookahead validation
+
+Selector lookahead is checked by the native model across both scan orders,
+all SPI engines, single/burst framing, repeats 1..3, full/sparse/single-array
+plans, VMID overrides and consecutive sweeps. An additional 48 cases exercise
+8/16 MHz requests and explicitly verify four-word groups, the one-word IN4
+group, and selector wraparound. Each capture checks exact conversion counts
+and tagged physical payloads, so a hidden prime or incorrect selector fails.
+Both production and diagnostic builds must pass before upload. The analog
+effects of this shorter conversion history have not yet been measured on the
+board. Hardware validation: upload the production build, run matched ADC/MUX
+captures at 8/16 MHz, repeat 1, sensor settling 5 us and VMID off/on; verify
+status policy, error counters, complete frames and near-VMID bias. Repeat
+VMID-on captures with VMID delays 5/1/0 us and compare noise with the preceding
+revision. Confirm individual channel identity with known input stimulation
+or a logic analyzer; disconnected near-VMID readings cannot establish it.
 
 ## Independent VMID settling
 
@@ -258,10 +286,17 @@ words; sparse selection produces one word per active route. Each frame is
 one complete sweep. `repeat`, `buffer`, ADS7953 `adcseq`, and range-changing
 `ref` commands are deliberately unsupported.
 
-The ADC's DIN channel address applies to the **next** conversion. At each
-address group, the firmware primes that selector with one discarded transfer,
-keeps the GPIO address unchanged while receiving every requested conversion,
-and advances to the next ADC input on the final repeat. ADC124S101 has no
+The ADC's DIN channel address applies to the **next** conversion. Run preparation,
+with the MUXes parked at VMID, initializes each active ADC's first selector
+with at most one discarded conversion if the selector is unknown/different.
+These initialization conversions are outside acquisition timestamps/counters.
+The prepared plan then keeps the GPIO address unchanged while receiving every
+requested conversion, advances inputs on the final repeat, and selects the
+next batch's first input in the last command. For a full scan, IN4 selects IN1
+except before address 6, where it selects IN4; the single IN4 read then selects
+IN1 for the next sweep. VMID batches similarly select the next sensor input.
+A selector mismatch inside acquisition stops the run without a hidden prime.
+ADC124S101 has no
 returned channel tag: software ordering can be tested, but electrical identity
 still requires input stimulation or a logic analyzer.
 
@@ -269,7 +304,7 @@ Mandatory GPIO parking runs at startup, before runs, and on stop/failure. It lea
 quads enabled at Vmid without requiring SPI traffic. Unselected arrays are
 disabled during a run. With `vmid true`, after each address group the active
 participating banks are parked and all four ADC inputs are converted once per
-bank (plus one selector prime); those five transfers are discarded. In shared
+bank; those four transfers are discarded. In shared
 MUX mode switching/settling precedes both VMID batches. With `vmid false`,
 startup/stop/failure parking still runs. Repeat and Vmid settings never change payload width.
 
