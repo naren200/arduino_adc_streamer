@@ -476,6 +476,8 @@ def normalize_combined_sensor_config(config: Dict[str, object]) -> Dict[str, obj
             normalized['arrays'] = deepcopy(arrays)
             if config.get("board_profile"):
                 normalized["board_profile"] = config["board_profile"]
+                if config.get('route_encoding'):
+                    normalized['route_encoding'] = deepcopy(config['route_encoding'])
                 from config.boards.validation import validate_sensor_layout
                 validate_sensor_layout(normalized, profile)
         except (ValueError, TypeError, KeyError):

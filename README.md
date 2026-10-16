@@ -72,15 +72,19 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 - `Arduino_Sketches/TestBoard_ADC124/`: Teensy 4.1 firmware and a standalone
   [benchmark runner](Arduino_Sketches/TestBoard_ADC124/benchmarks/README.md) for
   two ADC124S101 ADCs and eight external MUXes on one SPI bus, two 25-channel
-  arrays, and a fixed 3.3 V reference; desktop GUI board profile pending
+  arrays, and a fixed 3.3 V reference; GUI support includes independent sensor
+  and VMID settling controls through `config/boards/profiles/testboard_adc124.json`
 
 ### Configuration And Data
 
 - `sensors_library/sensor_configurations.json`: bundled starter sensor library shipped with the repo
 - `config/boards/`: versioned MCU profiles, shared parameters/rules and adapters; see [board maintenance](config/boards/README.md) and [MCU coverage](config/boards/coverage.md)
 - Acquisition uses shared runtime, routing, worker and rendering modules selected by board JSON; see [the architecture and replay validation](docs/architecture/gui/GUI_GENERIC_ACQUISITION_REFACTOR.md)
+- Routed-board command order, ACKs and status verification also come from JSON; see [the configuration contract](docs/architecture/gui/PROFILE_CONFIGURATION_PROTOCOL.md)
 - Sensor JSON owns Array/ADC/PZT/input wiring; TestBoard defaults and scan order live in `config/boards/profiles/testboard_7953.json`
 - TestBoard GUI: PZT-only controls, live Display Array switching and complete two-array capture/export; see [the array configuration guide](docs/guides/configuration/ARRAY_CONFIGURATION_GUIDE.md#testboard_7953-two-ads7953-arrays)
+- ADC124 GUI: the same multi-array capture path, triple wire routes, 8–16 MHz
+  requested SCLK and configurable settling; see [ADC124 configuration](docs/guides/configuration/ARRAY_CONFIGURATION_GUIDE.md#testboard_adc124-external-mux-arrays)
 - `~/.adc_streamer/sensors/sensor_configurations.json`: user-edited sensor library persisted by the GUI
 - `~/.adc_streamer/spectrum/`: last-used spectrum settings
 

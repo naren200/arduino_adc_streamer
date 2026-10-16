@@ -49,6 +49,9 @@ class BoardRegistry:
             raise ValueError('Invalid standalone firmware identity/reason')
         if self.fallback not in self.profiles:
             raise ValueError('Unknown fallback profile')
+        self.compatibility_profiles = freeze(index.get('compatibility_profiles', {}))
+        if any(profile not in self.profiles for profile in self.compatibility_profiles.values()):
+            raise ValueError('Unknown compatibility profile')
         priorities = set()
         patterns = set()
         for family in self.families:
@@ -86,6 +89,9 @@ class BoardRegistry:
             if resolved_mode.id not in allowed:
                 raise ValueError(f'Mode {resolved_mode.id} is not supported by explicit variant {variant}')
         return BoardContext((mcu_name or '').strip(), profile, resolved_mode, variant)
+
+    def compatibility_context(self, role):
+        return self.context(self.compatibility_profiles[role])
 
 
 @lru_cache(maxsize=1)

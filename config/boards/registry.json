@@ -11,14 +11,13 @@
     "profiles/array_pzt_pzr17.json",
     "profiles/array_dual_compat.json",
     "profiles/testboard_7953.json",
+    "profiles/testboard_adc124.json",
     "profiles/generic_555.json",
     "profiles/generic_adc.json",
     "profiles/generic_array.json"
   ],
   "fallback": "generic_adc",
-  "standalone_firmware": {
-    "TestBoard_ADC124": "Standalone benchmarks only; a desktop GUI profile and protocol adapter are not implemented yet"
-  },
+  "standalone_firmware": {},
   "bootstrap": {
     "baud_rate": 460800,
     "command_terminator": "***",
@@ -55,5 +54,8 @@
       "value": "teensy",
       "profile": "teensy_adc_compat"
     }
-  ]
+  ],
+  "compatibility_profiles": {
+    "routed_status": "testboard_7953"
+  }
 }

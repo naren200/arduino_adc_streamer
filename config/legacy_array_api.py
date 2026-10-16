@@ -9,7 +9,8 @@ def legacy_array_default(key):
     Configuration of an active board always replaces them from its own profile.
     """
     from config.boards import get_board_registry
-    profile = get_board_registry().profiles.get('testboard_7953')
+    registry = get_board_registry()
+    profile = registry.profiles.get(getattr(registry, 'compatibility_profiles', {}).get('routed_status'))
     if profile is not None:
         return profile.mode().parameters[key].default
     return {'array_selection': 'both', 'scan_order': 'adc', 'spi_clock_hz': 0,

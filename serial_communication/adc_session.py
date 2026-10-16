@@ -252,21 +252,31 @@ class ADCSessionController:
         self.serial_port.reset_input_buffer()
 
     def read_testboard_status(self, timeout=2.0):
+        """Compatibility name for the profile-driven status reader."""
+        return self.read_profile_status(timeout)
+
+    def read_profile_status(self, timeout=2.0):
         from serial_communication.adc_connection_state import build_default_arduino_status
-        from serial_communication.testboard_status import apply_testboard_status_line
+        from serial_communication.profile_status import apply_status_line, marker_matches
+        context = self.board_context
+        if context is None:
+            from config.boards import get_board_registry
+            context = get_board_registry().compatibility_context('routed_status')
+        contract = context.mode.definition.get('configuration', {}).get('status')
+        if not contract:
+            return None
         status = build_default_arduino_status()
         started = False
 
         def collect(line):
             nonlocal started
-            if "STATUS (PZT/ADS7953)" in line:
-                started = True
+            started = started or marker_matches(line, contract['start'])
             if started:
-                apply_testboard_status_line(status, line, self.board_context)
-            return started and line.startswith("# ---") and "STATUS" not in line
+                apply_status_line(status, line, context)
+            return started and marker_matches(line, contract['end'])
 
         completed = self.wait_for_line(collect, timeout, consume=True,
-                                       send_action=lambda: self.send_command("status"))
+                                       send_action=lambda: self.send_command(contract['command']))
         return status if completed else None
 
     # ------------------------------------------------------------------

@@ -141,6 +141,7 @@ def apply_board_controls(owner, *, defaults=False):
                     if parameter is None:
                         return
                     owner.config.parameters[parameter.legacy_key] = parameter.normalize(widget_value(control, parameter))
+                    refresh_parameter_rules(owner, capture_locked=getattr(owner, 'is_capturing', False))
                     owner.config_is_valid = False
                     owner.update_start_button_state()
                 signal = widget.currentIndexChanged if isinstance(widget, QComboBox) else widget.valueChanged if isinstance(widget, (QSpinBox, QDoubleSpinBox)) else widget.toggled if isinstance(widget, QCheckBox) else widget.textChanged
@@ -154,7 +155,7 @@ def apply_board_controls(owner, *, defaults=False):
         widget.setVisible(resolved.visible[key] or param.definition.get('policy') == 'fixed' and key == 'ground_pin')
         widget.setEnabled(resolved.enabled[key] and not getattr(owner, 'is_capturing', False))
         if label:
-            label.setText(param.label)
+            label.setText('' if isinstance(widget, QCheckBox) else param.label)
             label.setVisible(resolved.visible[key] or key == 'ground_pin')
     for attr, label_attr in BINDINGS.values():
         widget = getattr(owner, attr, None)
