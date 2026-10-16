@@ -14,12 +14,61 @@ remain under `docs/testing/results/`. Run the commands below from the repository
 | Quick production upload and 8/16 MHz check | `benchmark_adc124_lookahead_quick.py`, `analyze_adc124_lookahead_quick.py` |
 | Scan-mode, FIFO/GPIO and VMID comparisons | `benchmark_adc124_scan_modes.py`, `benchmark_adc124_fifo_gpio.py`, `benchmark_adc124_vmid_settle.py` and matching `analyze_` / `report_` tools |
 | Extended disconnected-board matrix | `benchmark_adc124_upgrade.py`, `analyze_adc124_upgrade.py`, `report_adc124_upgrade.py` |
+| Full LPSPI-only selector-lookahead rerun | `benchmark_adc124_lookahead_lpspi.py`, `analyze_adc124_lookahead_lpspi.py`, `noise_adc124_lookahead_lpspi.py`, `report_adc124_lookahead_lpspi.py` |
+| Connected PZT comparison and cold-start charging | `benchmark_adc124_connected.py`, `analyze_adc124_connected.py`, `analyze_adc124_charge.py`, `noise_adc124_connected.py`, `report_adc124_connected.py` |
 | Settling captures and diagnostic profiles | `capture_adc124_settling.py`, `run_adc124_mux_profiles.py`, `report_adc124_settling.py`, `report_adc124_timing.py`, `report_adc124_mux_timing.py` |
 | Noise analysis and timing models | `analyze_adc124_noise_patterns.py`, `analyze_adc124_selected_noise.py`, `adc124_quiet_windows.py`, `adc124_timing_model.py` |
 
 Historical comparison runners check their corresponding firmware revisions;
 use the general runner or quick lookahead runner for the current revision.
 The specialized upload/profile tools currently target COM4.
+
+The connected runner verifies the already-installed lookahead production
+firmware and snapshots local sources/images, without uploading or resetting it.
+Capture startup before the matrix, after physical power-off and sensor discharge.
+Startup is 60 s at MUX/LPSPI/16 MHz/5 us/VMID off, with no warm-up discarded.
+Time zero is the first recorded sweep, not the USB power edge. Additional
+physically discharged attempts use distinct `--startup-name` values.
+The matrix has the same 28 LPSPI settings and three repetitions as the latest
+disconnected rerun. Every stage restores stopped original settings.
+
+```powershell
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/benchmark_adc124_connected.py startup RAW_ROOT --discharge-description "Document power-off duration and discharge method"
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/analyze_adc124_charge.py RAW_ROOT/cold_poweron RESULT_ROOT/cold_poweron
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/benchmark_adc124_connected.py matrix RAW_ROOT
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/analyze_adc124_connected.py RAW_ROOT RESULT_ROOT
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/noise_adc124_connected.py RESULT_ROOT
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/report_adc124_connected.py RESULT_ROOT REPORT.pdf
+```
+
+The connected analyzer compares exact settings against the latest same-firmware
+`selector_lookahead_lpspi_2026-10-14` results. It preserves unfiltered metrics
+and identical common quiet-window metrics. Baseline plots are line graphs.
+The charging analyzer uses absolute final-baseline thresholds B/3 and 2B/3,
+confirmed for 2 ms, and never extrapolates a threshold missed before recording.
+Every route's initial level, final baseline, censoring status and measured
+interval remain in the startup CSVs. Crossing resolution is approximately one
+sweep; interpolation does not add physical timing precision.
+
+The full LPSPI-only lookahead runner repeats the extended disconnected matrix
+without blocking/DMA or diagnostic captures: 28 settings, three repetitions,
+1 s warm-up plus 15 s measurement. It covers both scan modes, all five sensor
+delays with matching VMID delays and VMID off/on, the sensor-5-us/VMID-0-or-1-us
+extras, and requested 8/16 MHz at sensor=VMID=5 us. Build both environments
+before starting; the runner freezes their images/source, uploads only the
+production image, verifies lookahead/zero-prime status, and restores stopped
+production settings. The analyzer compares exact settings against the saved
+`upgrade_disconnected_2026-10-14` LPSPI reference, preserving both unfiltered
+and common quiet-window metrics. The noise tool adds selected-route time/PSD
+plots and comparisons with the previously structured routes.
+
+```powershell
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/benchmark_adc124_lookahead_lpspi.py RAW_ROOT --dry-run
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/benchmark_adc124_lookahead_lpspi.py RAW_ROOT
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/analyze_adc124_lookahead_lpspi.py RAW_ROOT RESULT_ROOT
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/noise_adc124_lookahead_lpspi.py RESULT_ROOT
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/report_adc124_lookahead_lpspi.py RESULT_ROOT REPORT.pdf
+```
 
 For the quick check, build both firmware environments first. The runner uploads
 the built production HEX, checks 28 settings, and leaves production stopped with
