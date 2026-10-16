@@ -79,7 +79,7 @@ def build_descriptor(mcu, config, layout, reported=None, context=None):
                 ordered_routes=[list(r) for r in routes], channel_specs=specs, reference=requested['reference'],
                 full_scale_volts=context.mode.full_scale_volts(requested['reference']),
                 adc_resolution_bits=context.profile.hardware['adc_resolution_bits'], spi_clock_hz=requested['spi_clock_hz'],
-                sequence=requested['sequence'], channelrepeat_requested=requested['settling_conversions'],
+                sequence=requested.get('sequence'), channelrepeat_requested=requested['settling_conversions'],
                 channelrepeat_effective=effective['settling_conversions'], vmid_sampling=requested['vmid_sampling'],
                 vmid_channel=context.profile.hardware['reserved_inputs']['vmid'], scan_order=requested['scan_order'],
                 spi_engine=protocol_adapter(context).capture_engine(reported))
@@ -101,7 +101,7 @@ def validate_descriptor(descriptor, sample_count=None, labels=None):
     try:
         if descriptor['version'] not in (1, 2):
             raise ValueError('Unsupported acquisition descriptor version')
-        if descriptor['scan_order'] not in ('adc', 'array', 'interleaved'):
+        if descriptor['scan_order'] not in ('adc', 'array', 'interleaved', 'mux'):
             raise ValueError('Missing or invalid captured scan order')
         layout, arrays, selected = descriptor['sensor_configuration'], descriptor['sampled_arrays'], descriptor['selected_pzts']
         available = sorted(int(a) for a in layout['arrays'])
@@ -125,7 +125,7 @@ def validate_descriptor(descriptor, sample_count=None, labels=None):
                                      ('channelrepeat_requested', 'settling_conversions'),
                                      ('spi_clock_hz', 'spi_clock_hz'), ('vmid_sampling', 'vmid_sampling'),
                                      ('scan_order', 'scan_order')):
-                if descriptor[field] != captured['requested'][parameter]:
+                if descriptor[field] != captured['requested'].get(parameter):
                     raise ValueError(f'Inconsistent captured {field}')
             if descriptor['channelrepeat_effective'] != captured['effective']['settling_conversions']:
                 raise ValueError('Inconsistent effective settling conversions')

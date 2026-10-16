@@ -70,6 +70,13 @@ existing scalar-command contract can declare `command`; algorithm changes requir
 a Python adapter. The shared frame codecs retain the existing AA55/LE16/footer
 format, including combined PZT_RS, whose wire samples are also uint16.
 
+Routed boards select `adapters.protocol: "profile_commands"` and declare a
+`configuration` command/status contract. JSON owns command order and wire names,
+ACK policy, status transcript markers, field decoding and expected values.
+All commands, including added scalar parameters, finish before status is read
+and verified. ADC124 and 7953 use the same executor and decoder with no Python
+identity checks. See [the contract design and examples](../../docs/architecture/gui/PROFILE_CONFIGURATION_PROTOCOL.md).
+
 ## Capture and preferences
 
 Modes may define `streaming: {"pipeline": "batched_timed_sweeps",
@@ -104,6 +111,15 @@ they do not require another dataclass field. The former Python
 `profiles/testboard_7953.json` → `modes.PZT.parameters.scan_order.default`.
 
 ## Adding a board
+
+ADC124 uses `profiles/testboard_adc124.json` with the shared multi-array runtime.
+Its declarative command/status contract selects native `array:mux:input` routes
+and verifies protocol-3 status and exact payload order through the shared executor.
+`hardware.inputs_per_adc` counts addressable endpoints including external MUXes;
+`hardware.route_encoding.inputs_per_mux` defines their packing, and
+`hardware.unavailable_inputs` excludes unwired/VMID endpoints. Sensor JSON carries
+the same encoding so captures can interpret routes without installed profiles.
+See [ADC124 configuration](../../docs/guides/configuration/ARRAY_CONFIGURATION_GUIDE.md#testboard_adc124-external-mux-arrays).
 
 1. Audit its firmware identity, commands/ACKs, frame, modes, numeric scaling,
    physical capacities and defaults. Select existing adapters when compatible.

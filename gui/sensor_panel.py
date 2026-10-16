@@ -358,6 +358,8 @@ class SensorPanelMixin:
         policy = resolve_board(declared).definition.get('sensor_editability', {}) if declared else {}
         lane_label = resolve_board(declared).hardware.get('lane_label', 'MUX') if declared else 'MUX'
         fixed_board = not policy.get('electrical', True)
+        for cell in self.array_matrix_cells.values():
+            cell.setEnabled(policy.get('spatial', True))
         for spin in self.sensor_position_spins.values():
             spin.setEnabled(not fixed_board)
         self.array_channels_per_sensor.setEnabled(not fixed_board)
@@ -385,13 +387,19 @@ class SensorPanelMixin:
 
         self._load_channel_layout_into_editor(config)
         self._load_array_layout_into_editor(config)
-        self.sensor_editor_tabs.setCurrentIndex(current_tab_index if current_tab_index in (0, 1) else 0)
+        self.sensor_editor_tabs.setCurrentIndex(current_tab_index if self.sensor_editor_tabs.isTabVisible(current_tab_index) else 1)
         
         self.sensor_status_label.setText("")
         self.refresh_sensor_mapping_usage()
 
     def _load_channel_layout_into_editor(self, config: dict):
         """Load channel layout configuration into the editor."""
+        spatial = set(config['channel_sensor_map']) == set(SENSOR_POSITION_ORDER)
+        self.sensor_editor_tabs.setTabVisible(0, spatial)
+        if not spatial:
+            self.sensor_editor_tabs.setCurrentIndex(1)
+            self._update_sensor_mapping_preview()
+            return
         position_channels = mapping_to_position_channels(list(config["channel_sensor_map"]))
 
         for sensor_label in SENSOR_POSITION_ORDER:
@@ -717,7 +725,7 @@ class SensorPanelMixin:
         default_array_config = default_array_configuration()
         return {
             "name": str(name if name is not None else self.active_sensor_config_name),
-            **{key: current_config[key] for key in ("array_count", "arrays", "board_profile") if key in current_config},
+            **{key: current_config[key] for key in ("array_count", "arrays", "board_profile", "route_encoding") if key in current_config},
             "type": str(config_type if config_type is not None else current_config.get("type", "channel_layout")),
             "channel_sensor_map": list(
                 channel_sensor_map
@@ -910,6 +918,15 @@ class SensorPanelMixin:
 
     def _build_normalized_sensor_config_from_editor(self):
         """Build a normalized active sensor configuration from the current editor state."""
+        current = self.get_active_sensor_configuration()
+        from config.boards import resolve_board
+        policy = resolve_board(current['board_profile']).definition.get('sensor_editability', {}) if current.get('board_profile') else {}
+        if not policy.get('electrical', True) and not policy.get('spatial', True):
+            updated = self._build_sensor_config_update(reverse_polarity=self.sensor_reverse_polarity_check.isChecked())
+            normalized = normalize_combined_sensor_config(updated)
+            if normalized is None:
+                raise ValueError('Sensor configuration is incomplete or invalid.')
+            return normalized
         cells, mux_mapping, channels_per_sensor = self._collect_array_layout_editor_data()
         updated_config = self._build_sensor_config_update(
             channel_sensor_map=position_channels_to_mapping(self._current_position_channels()),

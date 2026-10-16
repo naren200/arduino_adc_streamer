@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "profile_version": 2,
+  "profile_version": 3,
   "id": "testboard_7953",
   "mcu_aliases": [
     "TestBoard_7953",
@@ -78,7 +78,8 @@
                 "5.0"
               ]
             }
-          ]
+          ],
+          "command": "ref"
         },
         "vmid_sampling": {
           "type": "boolean",
@@ -86,7 +87,8 @@
           "label": "Use Vmid Sample",
           "policy": "editable",
           "section": "acquisition",
-          "legacy_key": "use_ground"
+          "legacy_key": "use_ground",
+          "command": "vmid"
         },
         "samples_per_channel": {
           "type": "integer",
@@ -120,7 +122,8 @@
           "tooltip": "Requested SPI clock; values above 20 MHz are experimental",
           "legacy_key": "testboard_spi_clock_hz",
           "minimum": 100000,
-          "maximum": 30000000
+          "maximum": 30000000,
+          "command": "spiclock"
         },
         "settling_conversions": {
           "type": "integer",
@@ -131,7 +134,8 @@
           "tooltip": "Settling conversions per channel; only the final result is retained",
           "legacy_key": "testboard_channel_repeat",
           "minimum": 1,
-          "maximum": 3
+          "maximum": 3,
+          "command": "channelrepeat"
         },
         "sequence": {
           "type": "enum",
@@ -151,7 +155,8 @@
               "label": "auto1",
               "wire_value": "auto1"
             }
-          ]
+          ],
+          "command": "adcseq"
         },
         "array_selection": {
           "type": "enum",
@@ -176,7 +181,8 @@
               "label": "Array 2",
               "wire_value": "2"
             }
-          ]
+          ],
+          "command": "array"
         },
         "scan_order": {
           "type": "enum",
@@ -201,14 +207,15 @@
               "label": "interleaved",
               "wire_value": "interleaved"
             }
-          ]
+          ],
+          "command": "scanorder"
         }
       },
       "scaling": {
         "units": "adc_counts"
       },
       "adapters": {
-        "protocol": "ads7953",
+        "protocol": "profile_commands",
         "frame": "ads7953_u16_timed",
         "acquisition": "multi_array",
         "timing": "unavailable"
@@ -244,6 +251,176 @@
       "streaming": {
         "pipeline": "batched_timed_sweeps",
         "render_interval_ms": 200
+      },
+      "configuration": {
+        "acknowledgement": "bare",
+        "commands": [
+          {
+            "command": "mode",
+            "value": {
+              "source": "mode"
+            }
+          },
+          {
+            "parameter": "reference"
+          },
+          {
+            "parameter": "spi_clock_hz"
+          },
+          {
+            "parameter": "array_selection"
+          },
+          {
+            "parameter": "scan_order"
+          },
+          {
+            "command": "adcchannels",
+            "value": {
+              "source": "configured_routes"
+            }
+          },
+          {
+            "parameter": "settling_conversions"
+          },
+          {
+            "parameter": "vmid_sampling"
+          },
+          {
+            "parameter": "sequence"
+          }
+        ],
+        "status": {
+          "command": "status",
+          "start": {
+            "contains": "STATUS (PZT/ADS7953)"
+          },
+          "end": {
+            "prefix": "# ---",
+            "exclude": "STATUS"
+          },
+          "retain_unknown": false,
+          "fields": {
+            "array": {
+              "type": "text",
+              "target": "testboard_array",
+              "expected": {
+                "parameter": "array_selection"
+              }
+            },
+            "scanorder": {
+              "type": "text",
+              "target": "testboard_scan_order",
+              "expected": {
+                "parameter": "scan_order"
+              }
+            },
+            "spi_clock_hz": {
+              "type": "integer",
+              "target": "testboard_spi_clock_hz",
+              "expected": {
+                "parameter": "spi_clock_hz"
+              }
+            },
+            "route_count": {
+              "type": "integer",
+              "target": "testboard_route_count",
+              "expected": {
+                "source": "route_count"
+              }
+            },
+            "vref": {
+              "type": "parameter",
+              "target": "reference",
+              "parameter": "reference",
+              "expected": {
+                "parameter": "reference"
+              }
+            },
+            "adcchannels": {
+              "type": "routes",
+              "target": "testboard_routes",
+              "comparison": "canonical_routes",
+              "expected": {
+                "source": "configured_routes"
+              }
+            },
+            "adcseq": {
+              "type": "text",
+              "target": "testboard_sequence",
+              "expected": {
+                "parameter": "sequence"
+              }
+            },
+            "channelrepeat_requested": {
+              "type": "integer",
+              "target": "testboard_channel_repeat",
+              "expected": {
+                "parameter": "settling_conversions"
+              }
+            },
+            "channelrepeat_effective": {
+              "type": "integer",
+              "target": "testboard_effective_repeat",
+              "expected": {
+                "parameter": "settling_conversions",
+                "setting": "effective"
+              }
+            },
+            "vmid_channel": {
+              "type": "integer",
+              "target": "ground_pin",
+              "expected": {
+                "source": "vmid_channel"
+              }
+            },
+            "vmid_between_channels_requested": {
+              "type": "boolean",
+              "target": "testboard_vmid",
+              "expected": {
+                "parameter": "vmid_sampling"
+              }
+            },
+            "vmid_between_channels_effective": {
+              "type": "boolean",
+              "target": "testboard_effective_vmid",
+              "expected": {
+                "parameter": "vmid_sampling",
+                "setting": "effective"
+              }
+            },
+            "spiengine": {
+              "type": "text",
+              "target": "testboard_engine",
+              "required": true,
+              "choices": [
+                "blocking",
+                "dma",
+                "lpspi"
+              ]
+            },
+            "sampling_sweeps": {
+              "type": "integer",
+              "target": "stream_diagnostics.sampling_sweeps"
+            },
+            "usb_frames_sent": {
+              "type": "integer",
+              "target": "stream_diagnostics.usb_frames_sent"
+            },
+            "usb_frames_discarded": {
+              "type": "integer",
+              "target": "stream_diagnostics.usb_frames_discarded"
+            },
+            "sampling_period_max_us": {
+              "type": "integer",
+              "target": "stream_diagnostics.sampling_period_max_us"
+            },
+            "sampling_period_over_1ms": {
+              "type": "integer",
+              "target": "stream_diagnostics.sampling_period_over_1ms"
+            }
+          }
+        },
+        "capture_engine_field": "testboard_engine"
       }
     }
   }

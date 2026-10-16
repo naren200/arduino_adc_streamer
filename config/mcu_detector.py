@@ -304,18 +304,6 @@ class MCUDetectorMixin:
         if profile.is_array_dual and hasattr(self, 'config'):
             self.config['array_operation_mode'] = selected_mode
 
-        if hasattr(self, 'update_heatmap_ui_for_mode'):
-            self.update_heatmap_ui_for_mode()
-
-        if hasattr(self, 'update_array_acquisition_inputs_visibility'):
-            self.update_array_acquisition_inputs_visibility()
-
-        if hasattr(self, 'update_pzt_rs_timeseries_tabs_visibility'):
-            self.update_pzt_rs_timeseries_tabs_visibility()
-
-        if hasattr(self, 'update_pressure_map_timeline_controls'):
-            self.update_pressure_map_timeline_controls()
-
         if hasattr(self, 'refresh_spectrum_filter_availability'):
             self.refresh_spectrum_filter_availability(log_message=False)
 

@@ -100,12 +100,12 @@ class ModeProfile:
     def defaults(self):
         return {k: p.default for k, p in self.parameters.items()}
 
-    def resolve_settings(self, values=None):
+    def resolve_settings(self, values=None, *, configuration_defaults=True):
         values = values or {}
         requested = {}
         for key, param in self.parameters.items():
             value = values.get(key, values.get(param.legacy_key, param.default))
-            if param.definition.get('policy') in ('config_file_only', 'fixed'):
+            if param.definition.get('policy') == 'fixed' or configuration_defaults and param.definition.get('policy') == 'config_file_only':
                 value = param.default
             requested[key] = param.normalize(value)
         effective = dict(requested)

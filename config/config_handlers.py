@@ -109,7 +109,7 @@ class ConfigurationMixin(AcquisitionRuntimeMixin):
         return context_for(self).mode.resolve_settings(parameter_values(self.config)).requested.get('scan_order', 'adc')
 
     def get_array_adc_routes(self, *, ordered: bool = True) -> list[tuple[int, int]]:
-        """Return only the physical ADS7953 inputs requested by the user."""
+        """Return only the physical ADC endpoints requested by the user."""
         if not self.is_multi_array_mode():
             return []
         groups = self.get_array_selected_sensor_groups()
@@ -125,7 +125,7 @@ class ConfigurationMixin(AcquisitionRuntimeMixin):
         return routes
 
     def get_array_adc_routes_text(self) -> str:
-        return format_array_routes(self.get_array_adc_routes(ordered=False))
+        return format_array_routes(self.get_array_adc_routes(ordered=False), self.get_active_sensor_configuration())
 
     def is_array_pzt1_mode(self) -> bool:
         """Return True when the connected MCU streams paired MUX data."""
@@ -1421,7 +1421,7 @@ class ConfigurationMixin(AcquisitionRuntimeMixin):
                 f"rxmax={float(self.config.get('rxmax_ohms', 0.0)):.0f}Î©"
             )
         if self.is_multi_array_mode():
-            ordered_routes = format_array_routes(self.get_array_adc_routes())
+            ordered_routes = format_array_routes(self.get_array_adc_routes(), self.get_active_sensor_configuration())
             self.log_status(
                 "TestBoard routing -> "
                 f"arrays={self.get_array_selection()}, "

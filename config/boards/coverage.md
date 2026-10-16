@@ -4,13 +4,13 @@ Software audit: 2026-10-02. Active identities come from
 `Arduino_Sketches/README.md`; historical entries preserve host/test contracts.
 No firmware files changed. Hardware checks remain manual.
 
-9 October 2026 update: the shared acquisition refactor supports profile-defined
-ADC capacities and sensor-defined array IDs. ADC124 is explicitly listed as
-standalone firmware in the registry; it is not counted as desktop GUI support.
-The current audit validates 13 GUI profiles, seven active GUI identities and
-one standalone firmware identity. See [refactor validation](../../docs/architecture/gui/GUI_GENERIC_ACQUISITION_REFACTOR.md).
+16 October 2026 update: ADC124 has a dedicated protocol-3 profile using the
+shared acquisition pipeline, triple wire routes, and independent sensor/VMID
+settling controls. The current audit validates 14 GUI profiles, eight active
+GUI identities and zero standalone firmware identities. Hardware acceptance
+for the GUI integration remains pending. See [ADC124 configuration and checks](../../docs/guides/configuration/ARRAY_CONFIGURATION_GUIDE.md#testboard_adc124-external-mux-arrays).
 
-Implementation verification: 900 tests and 34 subtests passed. The registry audit
+Historical verification before ADC124: 900 tests and 34 subtests passed. The registry audit
 validated all 13 profiles and seven active sketch-map identities. An offscreen GUI
 smoke check passed startup and all 18 profile/mode transitions.
 
@@ -26,6 +26,7 @@ smoke check passed startup and all 18 profile/mode transitions.
 | `array_pzt_pzr17` | Array_PZT_PZR1.7 | PZT, PZR, PZT_RS | Both active monolithic/modular PCB1.7 pairs |
 | `array_dual_compat` | Array_PZT_PZR_v1; unmatched dual prefix | PZT, PZR | Historical compatibility; RS is not inferred |
 | `testboard_7953` | TestBoard_7953, PCB_TestBoard_7953 | PZT | PlatformIO ADS7953 project; no PZR hardware |
+| `testboard_adc124` | TestBoard_ADC124 | PZT | Protocol 3, two ADC124S101s with four external MUXes each; fixed 3.3 V; no PZR hardware |
 | `generic_555` | 555 Analyzer; unmatched 555 substring | 555 | Historical analyzer fallback; checked before Teensy substring |
 | `generic_array` | Unmatched Array prefix | PZT | Historical array fallback; one effective ADC lane |
 | `generic_adc` | Unknown / no identity | ADC | Historical generic ADC fallback and legacy reference interpretation |

@@ -143,6 +143,60 @@ archive larger than the RAM buffer exports/reloads both arrays correctly. Check
 for missing frames or returned-channel errors. Measure SCLK when validating actual
 clock frequency.
 
+## TestBoard_ADC124 external MUX arrays
+
+Connect firmware reporting `TestBoard_ADC124` (protocol 3). The GUI selects the
+bundled ADC124 sensor layout and exposes **Physical Arrays**, **PZT Sensors**,
+**SPI CLK [MHz]**, settling-conversion **Repeat Count**, **Use Vmid Sample**,
+**Settle time [us]**, **VMID settle follows sensor**, and **VMID settle time [us]**.
+Disable follow-sensor to enter an independent VMID delay. Both delays accept
+0..1000 us; zero retains the firmware switching guards. Sensor settling defaults
+to 5 us and VMID follows it by default. Vmid parking at startup/stop/failure is
+mandatory even when optional Vmid sampling is off.
+
+All parameter defaults, bounds, labels and policies live in
+`config/boards/profiles/testboard_adc124.json`. Edit `scan_order.default` to
+`adc` (array sequential) or `mux` (shared address settling), `spi_engine.default`
+to `blocking`, `dma` or `lpspi`, and `spi_frame.default` to `burst` or `single`.
+These three parameters are config-file-only, like the 7953 scan order. Restart
+after editing JSON. Requested SPI clock is limited to 8–16 MHz; voltage scaling
+is fixed at 3.3 V / 12 bits. Reconnect restores profile defaults.
+
+Each array contains PZT1, PZT3, PZT5, PZT6 and PZT7 (25 channels per array).
+PZT1/3/5/6 use inputs 0..4 on MUX1/2/3/4 respectively. PZT7 uses input 5 on all
+four MUXes followed by MUX4 input 6. The shared runtime represents each endpoint
+as `(ADC, packed input)`, where `packed input = (MUX - 1) * 8 + external input`.
+The bundled sensor JSON declares this encoding; the protocol adapter sends
+native triples. MUX1..3 input 6 and every input 7 are excluded from sensor routes.
+The Sensor tab displays this fixed wiring; JSON remains its electrical owner.
+
+The firmware supplies numbered channels without spatial orientation. The layout
+therefore labels them CH1..CH5; a directional B/L/C/R/T assignment must be
+established before interpreting spatial pressure/force results. The spatial
+channel editor is hidden for the numbered layout. Time Series, Spectrum, capture,
+array switching and export retain every selected channel with labels such as
+`A2_PZT7_CH5`. Both arrays share one SPI bus and are converted sequentially.
+
+Configure requires successful ACKs plus matching reported reference, route list,
+exact payload order, scan settings, and effective sensor/VMID delays. Repeat is
+1..3 conversions with only the last retained; each frame is one complete sweep.
+Captures include frozen settings and wiring for export and offline reload.
+
+Hardware validation for this GUI integration remains pending:
+
+1. Connect, Configure each array and both arrays, and compare status for sensor
+   delay 5 us with VMID following, then explicit VMID delays 0/1/5 us. Change
+   sensor delay and confirm follow mode tracks it while explicit mode stays fixed.
+2. Restart with each JSON scan order and engine. Test full and sparse PZT7 routes
+   and repeats 1/3. Apply distinct known voltages to verify channel identity and
+   fixed 3.3 V scaling; measure actual SCLK when checking frequency.
+3. Capture while switching Display Array. Stop, disconnect, export and reload;
+   verify both arrays and their channel labels. Check firmware transfer/data/USB
+   errors, complete frames and sampled = sent + discarded counters.
+4. Check MUX parking at address 7 on stop/failure, then run a long capture and
+   export a recording larger than RAM. Compare sensor noise/carryover separately
+   when changing settling settings; software replay does not establish analog timing.
+
 ## Example JSON Shape
 
 ```json

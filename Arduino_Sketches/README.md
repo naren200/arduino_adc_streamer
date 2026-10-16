@@ -12,7 +12,7 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 - `PCB1.7_SPI/`: Teensy+MG24 SPI array firmware for PCB v1.7 (DRDY + combined PZT/RS mode)
 - `PCB1.7_with_libraries/`: library-backed PCB v1.7 sketches with the same `PZT_RS` protocol behavior
 - `TestBoard_7953/`: PlatformIO project for the Teensy 4.1 master driving four ADS7953 ADCs on two SPI buses (superseded the archived Arduino IDE `PCB_TestBoard_7953` sketch, now under `legacy/`)
-- `TestBoard_ADC124/`: PlatformIO Teensy 4.1 firmware and standalone benchmarks for two ADC124S101 converters on one SPI bus, each connected to four GPIO-controlled MUXes; fixed 3.3 V reference (desktop GUI profile not yet implemented)
+- `TestBoard_ADC124/`: PlatformIO Teensy 4.1 firmware and standalone benchmarks for two ADC124S101 converters on one SPI bus, each connected to four GPIO-controlled MUXes; fixed 3.3 V reference, GUI profile with sensor/VMID settling controls
 
 ## Current Sketch Map
 
@@ -38,7 +38,7 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 - Use `PCB1.7_SPI/` for PCB v1.7 hardware, including the combined `PZT_RS` mode (recommended for v1.7).
 - Use `PCB1.7_with_libraries/` when you want the PCB v1.7 pair in the library-backed sketch layout.
 - Use `TestBoard_7953/` for the Teensy 4.1 test board with four ADS7953 ADCs.
-- Use `TestBoard_ADC124/` for the ADC124S101/TMUX1108/TMUX1308A board; use its [standalone runner](TestBoard_ADC124/benchmarks/README.md), since GUI configuration support is not yet implemented.
+- Use `TestBoard_ADC124/` for the ADC124S101/TMUX1108/TMUX1308A board. The GUI selects its dedicated protocol-3 profile; its [standalone runner](TestBoard_ADC124/benchmarks/README.md) remains available for benchmarks.
 - Use `PCB1.5_SPI/` for PCB v1.5 dual-board array hardware.
 - Use `PCB1.0_SPI/` only for legacy PCB v1.0 hardware.
 
@@ -276,6 +276,11 @@ Notes on sample payload meaning:
   ADC1/2 are array 1 and ADC3/4 are array 2. The host sends and mirrors the same
   sparse route plan, so unrequested ADC inputs are not converted or transmitted.
 - The legacy `legacy/MG24/ADC_Streamer_binary_buffer/` sketch uses a shorter trailer (`avg_dt_us` only, no `block_start_us`/`block_end_us`); see `legacy/MG24/ADC_Streamer_binary_buffer/README.md` for details.
+- For `TestBoard_ADC124`, each word belongs to an `array:mux:input` route.
+  `scanorder adc` sorts array, external address, then MUX; `scanorder mux` sorts
+  external address, array, then MUX. Both emit one result per route per frame;
+  sensor/VMID settling and repeat counts do not change payload width. The GUI
+  verifies the exact `payload_routes` reported by protocol-3 firmware.
 
 ### PCB1.7 `PZT_RS` Combined Payload
 

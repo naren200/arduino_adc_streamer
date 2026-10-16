@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from config.channel_utils import unique_channels_in_order
-from config.array_scan import format_array_routes, order_array_routes, selected_arrays
 from config.buffer_utils import validate_and_limit_sweeps_per_block
 from constants.serial import INTER_COMMAND_DELAY
 from constants.serial import DEFAULT_CONFIG_BUFFER_SIZE
@@ -101,8 +100,13 @@ class ADCConfigurationService:
     """Run ADC protocol commands using plain data and a command callback."""
 
     def __init__(self, send_command_and_wait_ack: Callable[[str, str | None], tuple[bool, str | None]], read_testboard_status=None):
-        self._send_command_and_wait_ack = send_command_and_wait_ack
+        self._command_callback = send_command_and_wait_ack
+        self._sent_command_names = set()
         self._read_testboard_status = read_testboard_status
+
+    def _send_command_and_wait_ack(self, command, expected):
+        self._sent_command_names.add(command.split()[0])
+        return self._command_callback(command, expected)
 
     def apply_555_parameter(
         self,
@@ -161,24 +165,32 @@ class ADCConfigurationService:
             except ValueError as exc:
                 return ADCConfigurationResult(False, context.mode.definition['device_mode'],
                     build_default_arduino_status(), request.buffer_size, [f'Invalid board settings: {exc}'])
-        result = protocol_adapter(context).configure(self, request)
-        if result.success and request.parameters is not None:
-            handled = {'reference', 'osr', 'gain', 'samples_per_channel', 'sweeps_per_block', 'ground_pin',
-                       'ground_sampling', 'vmid_sampling', 'spi_clock_hz', 'settling_conversions', 'sequence',
-                       'array_selection', 'scan_order', 'conversion_speed', 'sampling_speed', 'sample_rate',
-                       'rb_ohms', 'rk_ohms', 'cf_farads', 'rxmax_ohms'}
+        self._sent_command_names.clear()
+        adapter = protocol_adapter(context)
+        result = adapter.configure(self, request)
+        if result.success:
+            from config.profile_configuration import encode
+            ack_policy = context.mode.definition.get('configuration', {}).get('acknowledgement', 'echo')
             for key, param in context.mode.parameters.items():
                 command = param.definition.get('command')
-                if key in handled or not command or param.definition.get('policy') == 'reported':
+                if not command or command in self._sent_command_names or param.definition.get('policy') == 'reported':
                     continue
-                value = param.wire_value(request.parameters[key])
-                encoded = str(value).lower() if isinstance(value, bool) else str(value)
-                success, received = self._send_command_and_wait_ack(f'{command} {encoded}', encoded)
+                requested = request.parameters[key] if request.parameters is not None else getattr(request, param.legacy_key, param.default)
+                value = param.wire_value(requested)
+                encoded = encode(value)
+                success, received = self._send_command_and_wait_ack(f'{command} {encoded}', encoded if ack_policy == 'echo' else None)
                 if not success:
                     result.success = False
                     result.messages.append(f'Configuration failed: {command}')
                     break
                 result.arduino_status.parameters[key] = received if received is not None else value
+        if result.success:
+            adapter.complete(self, request, result)
+        if result.success:
+            messages = adapter.verify(self, request, result.arduino_status, result.resolved_device_mode)
+            result.messages.extend(messages)
+            result.success = not any(message.startswith('MISMATCH:') or message == 'No status data received yet'
+                                     for message in messages)
         return result
 
     def _send_legacy_config(self, request: ADCConfigurationRequest) -> ADCConfigurationResult:
@@ -203,10 +215,8 @@ class ADCConfigurationService:
             command_success, normalized_buffer_size, command_messages = self._send_adc_config(request, arduino_status)
             messages.extend(command_messages)
 
-        messages.extend(self._verify_configuration(request, arduino_status, resolved_device_mode))
-        verify_success = not any(message.startswith("MISMATCH:") or message == "No status data received yet" for message in messages)
         return ADCConfigurationResult(
-            command_success and verify_success,
+            command_success,
             resolved_device_mode,
             arduino_status,
             normalized_buffer_size,
@@ -429,40 +439,13 @@ class ADCConfigurationService:
 
         return all_success, normalized_buffer_size
 
-    def _verify_configuration(self, request: ADCConfigurationRequest, arduino_status: ArduinoStatus, resolved_device_mode: str) -> list[str]:
-        messages: list[str] = []
-        if request.is_lane_aware:
-            from config.boards import get_board_registry
-            from config.boards.sensors import default_sensor_layout
-            context = request.board_context or get_board_registry().context(request.current_mcu, request.array_operation_mode)
-            layout = request.sensor_configuration or default_sensor_layout(context.profile)
-            values = context.mode.resolve_settings(dict(reference=request.reference,
-                         spi_clock_hz=request.testboard_spi_clock_hz, settling_conversions=request.testboard_channel_repeat,
-                         sequence=request.testboard_sequence, vmid_sampling=request.use_ground))
-            expected = {
-                "reference": values.requested['reference'],
-                "testboard_array": request.testboard_array_selection,
-                "testboard_scan_order": request.testboard_scan_order,
-                "testboard_sequence": values.requested['sequence'],
-                "testboard_spi_clock_hz": request.testboard_spi_clock_hz,
-                "testboard_channel_repeat": request.testboard_channel_repeat,
-                "testboard_effective_repeat": values.effective['settling_conversions'],
-                "testboard_vmid": request.use_ground,
-                "testboard_effective_vmid": request.use_ground,
-                "ground_pin": context.profile.hardware['reserved_inputs']['vmid'],
-                "testboard_route_count": len(request.testboard_adc_routes),
-            }
-            for key, value in expected.items():
-                actual = getattr(arduino_status, key)
-                if actual != value:
-                    messages.append(f"MISMATCH: Expected {key}={value}, got {actual}")
-            actual_routes = arduino_status.testboard_routes
-            if actual_routes is None or order_array_routes(actual_routes, request.testboard_scan_order, layout) != order_array_routes(request.testboard_adc_routes, request.testboard_scan_order, layout):
-                messages.append("MISMATCH: TestBoard ADC route membership/order")
-            if arduino_status.testboard_engine not in ("blocking", "dma", "lpspi"):
-                messages.append("MISMATCH: Missing or invalid TestBoard SPI engine status")
-            return messages or ["TestBoard configuration matches reported status"]
+    def _verify_configuration(self, request, arduino_status, resolved_device_mode):
+        from config.profile_configuration import request_context
+        from serial_communication.protocols.registry import protocol_adapter
+        return protocol_adapter(request_context(request)).verify(self, request, arduino_status, resolved_device_mode)
 
+    def _verify_legacy_configuration(self, request, arduino_status, resolved_device_mode):
+        messages = []
         if resolved_device_mode == "555":
             expected_channels = list(request.channels)
             actual_channels = arduino_status.channels
@@ -546,43 +529,3 @@ class ADCConfigurationService:
         if request.is_array_pzt_pzr_mode and str(request.array_operation_mode).strip().upper() == "PZT_RS":
             normalized = min(normalized, limits['max_sweeps'])
         return normalized
-
-    def _send_testboard_config(self, request):
-        from config.boards import get_board_registry
-        from config.boards.sensors import default_sensor_layout
-        from config.array_acquisition import normalize_settings
-        context = request.board_context or get_board_registry().context(request.current_mcu, request.array_operation_mode)
-        layout = request.sensor_configuration or default_sensor_layout(context.profile)
-        reference, clock, repeat, sequence, vmid = normalize_settings(
-            request.reference, request.testboard_spi_clock_hz, request.testboard_channel_repeat,
-            request.testboard_sequence, request.use_ground, context)
-        context.mode.parameters['scan_order'].normalize(request.testboard_scan_order)
-        allowed = {lane for array in selected_arrays(request.testboard_array_selection, layout)
-                   for lane in layout['arrays'][str(array)]['adc_lanes']}
-        routes = request.testboard_adc_routes
-        hardware = context.profile.hardware
-        if not routes or len(set(routes)) != len(routes) or any(lane not in allowed or not 0 <= ch < hardware['inputs_per_adc'] or ch in hardware['reserved_inputs'].values() for lane, ch in routes):
-            raise ValueError("Invalid or empty TestBoard ADC routes")
-        reference_wire = context.mode.parameters['reference'].wire_value(reference)
-        commands = [("mode", context.mode.id), ("ref", reference_wire), ("spiclock", str(clock)),
-                    ("array", request.testboard_array_selection), ("scanorder", request.testboard_scan_order),
-                    ("adcchannels", format_array_routes(routes)), ("channelrepeat", str(repeat)),
-                    ("vmid", str(vmid).lower()), ("adcseq", sequence)]
-        messages = []
-        for name, value in commands:
-            success, _ = self._send_command_and_wait_ack(f"{name} {value}", None)
-            if not success:
-                return ADCConfigurationResult(False, "adc", build_default_arduino_status(), 1,
-                                              [f"TestBoard config command failed: {name} {value}"])
-            messages.append(f"Set TestBoard {name}: {value}")
-        status = self._read_testboard_status() if self._read_testboard_status is not None else None
-        if status is None:
-            return ADCConfigurationResult(False, "adc", build_default_arduino_status(), 1,
-                                          messages + ["No status data received yet"])
-        messages.extend(self._verify_configuration(request, status, "adc"))
-        success = not any(m.startswith("MISMATCH:") for m in messages)
-        if success:
-            status.repeat = status.buffer = 1
-            status.channels = unique_channels_in_order(request.channels_to_send)
-            status.use_ground = vmid
-        return ADCConfigurationResult(success, "adc", status, 1, messages)

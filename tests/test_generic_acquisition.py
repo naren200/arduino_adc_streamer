@@ -103,7 +103,7 @@ def test_other_board_modes_keep_established_block_path():
     registry = get_board_registry()
     for board in registry.profiles.values():
         for mode in board.modes.values():
-            assert streaming_policy(mode).batched == (board.id == 'testboard_7953')
+            assert streaming_policy(mode).batched == (board.id in ('testboard_7953', 'testboard_adc124'))
 
 
 def test_optional_pcb_profile_is_not_required_for_state_startup(future_board, monkeypatch):

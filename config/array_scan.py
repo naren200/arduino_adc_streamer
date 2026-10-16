@@ -61,6 +61,15 @@ def _round_robin(routes_by_lane, lanes: Iterable[int]):
 def order_array_routes(routes, scan_order, layout):
     unique = unique_routes(routes)
     lanes = sorted(lane for array in layout['arrays'].values() for lane in array['adc_lanes'])
+    if layout.get('route_encoding'):
+        width = layout['route_encoding']['inputs_per_mux']
+        if any(lane not in lanes for lane, _ in unique):
+            raise ValueError('ADC route is absent from the sensor layout')
+        if scan_order == 'adc':
+            return sorted(unique, key=lambda r: (r[0], r[1] % width, r[1] // width))
+        if scan_order == 'mux':
+            return sorted(unique, key=lambda r: (r[1] % width, r[0], r[1] // width))
+        raise ValueError(f'Unsupported external-MUX scan order: {scan_order!r}')
     by_lane = {lane: [r for r in unique if r[0] == lane] for lane in lanes}
     if any(lane not in by_lane for lane, _ in unique):
         raise ValueError('ADC route is absent from the sensor layout')
@@ -74,7 +83,10 @@ def order_array_routes(routes, scan_order, layout):
     raise ValueError(f'Unsupported scan order: {scan_order!r}')
 
 
-def format_array_routes(routes):
+def format_array_routes(routes, layout=None):
+    if layout and layout.get('route_encoding'):
+        width = layout['route_encoding']['inputs_per_mux']
+        return ','.join(f'{lane}:{ch // width + 1}:{ch % width}' for lane, ch in routes)
     return ','.join(f'{int(lane)}:{int(channel)}' for lane, channel in routes)
 
 

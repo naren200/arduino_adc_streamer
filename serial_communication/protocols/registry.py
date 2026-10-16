@@ -6,28 +6,47 @@ import numpy as np
 @dataclass(frozen=True)
 class ProtocolAdapter:
     id: str
-    implementation: str
+    implementation: str | None
+    context: object = None
 
     def configure(self, service, request):
+        if self.implementation is None:
+            from config.profile_configuration import configure
+            return configure(service, request)
         return getattr(service, self.implementation)(request)
 
+    def complete(self, service, request, result):
+        if self.context.mode.definition.get('configuration', {}).get('status'):
+            from config.profile_configuration import complete
+            complete(service, request, result)
+
+    def verify(self, service, request, status, device_mode):
+        if self.context.mode.definition.get('configuration'):
+            from config.profile_configuration import verify
+            return verify(request, status)
+        return service._verify_legacy_configuration(request, status, device_mode)
+
     def stopped_status(self, session):
-        # This ASCII status contract is specific to this protocol, not the GUI.
-        return session.read_testboard_status() if self.id == 'ads7953' else None
+        return session.read_profile_status() if self.context.mode.definition.get('configuration', {}).get('status') else None
 
     def capture_engine(self, status):
-        return getattr(status, 'testboard_engine', None) if self.id == 'ads7953' else None
+        field = self.context.mode.definition.get('configuration', {}).get('capture_engine_field')
+        if field:
+            from config.profile_configuration import status_value
+            return status_value(status, field) if status else None
+        return None
 
 
 PROTOCOL_ADAPTERS = {
     name: ProtocolAdapter(name, '_send_legacy_config')
     for name in ('legacy_adc', 'legacy_555', 'array_dual')
 }
-PROTOCOL_ADAPTERS['ads7953'] = ProtocolAdapter('ads7953', '_send_testboard_config')
+PROTOCOL_ADAPTERS['profile_commands'] = ProtocolAdapter('profile_commands', None)
 
 
 def protocol_adapter(context):
-    return PROTOCOL_ADAPTERS[context.mode.definition['adapters']['protocol']]
+    from dataclasses import replace
+    return replace(PROTOCOL_ADAPTERS[context.mode.definition['adapters']['protocol']], context=context)
 
 
 # These are established codec families, not board identity tests. The stream

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from functools import lru_cache
 
-PROTOCOLS = {'legacy_adc', 'legacy_555', 'array_dual', 'ads7953'}
+PROTOCOLS = {'legacy_adc', 'legacy_555', 'array_dual', 'profile_commands'}
 FRAMES = {'adc_u16_timed', 'timer_555', 'pzt_rs_u16', 'ads7953_u16_timed'}
 ACQUISITIONS = {'channels', 'array_mux', 'array_combined', 'multi_array'}
 TIMING = {'unavailable', 'mg24_mux', 'reported'}
@@ -50,6 +50,14 @@ def validate_profile(data, source='<profile>'):
         for role, channel in hw.get('reserved_inputs', {}).items():
             if type(channel) is not int or not 0 <= channel < hw['inputs_per_adc']:
                 raise ValueError(f'invalid reserved input {role}')
+        for channel in hw.get('unavailable_inputs', []):
+            if type(channel) is not int or not 0 <= channel < hw['inputs_per_adc']:
+                raise ValueError('invalid unavailable input')
+        encoding = hw.get('route_encoding')
+        if encoding is not None:
+            if (set(encoding) != {'inputs_per_mux'} or type(encoding['inputs_per_mux']) is not int
+                    or encoding['inputs_per_mux'] < 1 or hw['inputs_per_adc'] % encoding['inputs_per_mux']):
+                raise ValueError('invalid external-MUX route encoding')
         if type(data['transport']['baud_rate']) is not int or data['transport']['baud_rate'] <= 0:
             raise ValueError('invalid baud rate')
         if not data['transport']['command_terminator']:
@@ -116,6 +124,8 @@ def validate_profile(data, source='<profile>'):
                         elif key not in params or not isinstance(value, bool):
                             raise ValueError('invalid rule target/state')
             ModeProfile(name, freeze(mode), freeze(params)).resolve_settings()
+            from .protocol_contract import validate_configuration
+            validate_configuration(mode, params)
             from .streaming import validate_streaming
             validate_streaming(mode)
     except (KeyError, TypeError, ValueError) as exc:
@@ -125,6 +135,8 @@ def validate_profile(data, source='<profile>'):
 def validate_sensor_layout(layout, profile):
     """Validate structural electrical capacity, never compare a baked-in wiring map."""
     hw = profile.hardware
+    if layout.get('route_encoding') != hw.get('route_encoding'):
+        raise ValueError('Sensor route encoding does not match board hardware')
     arrays = layout.get('arrays') or {'1': {'adc_lanes': list(range(1, hw['adc_lane_count'] + 1))}}
     if not 1 <= len(arrays) <= hw['max_arrays'] or layout.get('array_count', len(arrays)) != len(arrays):
         raise ValueError('Sensor array_count does not match board capacity/array entries')
@@ -163,7 +175,8 @@ def validate_sensor_layout(layout, profile):
             raise ValueError(f'{sensor}: invalid ADC position/channel count')
         for channel in channels:
             route = (mux, channel)
-            if type(channel) is not int or not 0 <= channel < hw['inputs_per_adc'] or channel in hw.get('reserved_inputs', {}).values():
+            if (type(channel) is not int or not 0 <= channel < hw['inputs_per_adc']
+                    or channel in hw.get('reserved_inputs', {}).values() or channel in hw.get('unavailable_inputs', ())):
                 raise ValueError(f'{sensor}: reserved or out-of-range channel')
             if route in occupied:
                 raise ValueError(f'{sensor}: overlapping channel mapping')

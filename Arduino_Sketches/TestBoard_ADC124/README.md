@@ -357,8 +357,14 @@ and accounted USB discards; sensor response and longer validation remain.
 
 Use [`benchmarks/README.md`](benchmarks/README.md) for dry-run, smoke, full
 matrix, outputs and interpretation. This project has a standalone runner.
-The desktop GUI does not yet have an ADC124 board profile or triple-route
-configuration support; its ADS7953 profile must not be used for this board.
+The desktop GUI detects `TestBoard_ADC124` and uses its dedicated
+[`testboard_adc124.json`](../../config/boards/profiles/testboard_adc124.json)
+profile and triple-route adapter. It exposes sensor settling and independent
+VMID settling (including follow-sensor mode), alongside array, PZT, repeat,
+Vmid and SPI-clock controls. Scan order, engine and framing default to
+`adc`, `blocking` and `burst` in the profile JSON. Restart after profile edits.
+The current GUI contract requires protocol 3 and verifies reported routes and
+settling before capture. See the [configuration and hardware checks](../../docs/guides/configuration/ARRAY_CONFIGURATION_GUIDE.md#testboard_adc124-external-mux-arrays).
 
 Host checks from the repository root:
 
