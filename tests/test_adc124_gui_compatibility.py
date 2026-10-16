@@ -127,8 +127,8 @@ def test_gui_controls_rules_and_board_transition(gui):
     settle = gui._board_extra_controls['settle_time_us'][0]
     follow = gui._board_extra_controls['vmid_settle_follow_sensor'][0]
     vmid = gui._board_extra_controls['vmid_settle_time_us'][0]
-    assert settle.value() == 5 and follow.isChecked() and not vmid.isEnabled()
-    follow.setChecked(False)
+    assert settle.value() == 5 and not follow.isChecked() and not vmid.isEnabled()
+    gui.use_ground_check.setChecked(True)
     assert vmid.isEnabled()
     vmid.setValue(0)
     settle.setValue(20)
@@ -148,10 +148,10 @@ def test_gui_controls_rules_and_board_transition(gui):
 def test_configure_bare_acks_and_status_verification(gui, vmid_delay):
     from config.adc_configuration_service import ADCConfigurationService
     gui._board_extra_controls['settle_time_us'][0].setValue(10)
-    if vmid_delay is not None:
-        gui._board_extra_controls['vmid_settle_follow_sensor'][0].setChecked(False)
-        gui._board_extra_controls['vmid_settle_time_us'][0].setValue(vmid_delay)
     gui.use_ground_check.setChecked(True)
+    gui._board_extra_controls['vmid_settle_follow_sensor'][0].setChecked(vmid_delay is None)
+    if vmid_delay is not None:
+        gui._board_extra_controls['vmid_settle_time_us'][0].setValue(vmid_delay)
     request = gui._build_adc_configuration_request()
     commands = []
     service = ADCConfigurationService(lambda cmd, expected: (commands.append(cmd) or True, None), lambda: status_for(request))
@@ -170,6 +170,32 @@ def test_configure_bare_acks_and_status_verification(gui, vmid_delay):
     bad.parameters['vmid_settle_us'] += 1
     service._read_testboard_status = lambda: bad
     assert not service.send_config_with_verification(request).success
+
+
+def test_vmid_checkbox_enables_delay_and_preserves_explicit_value(gui):
+    from config.adc_configuration_service import ADCConfigurationService
+    delay = gui._board_extra_controls['vmid_settle_time_us'][0]
+    follow = gui._board_extra_controls['vmid_settle_follow_sensor'][0]
+    assert not gui.use_ground_check.isChecked() and not delay.isEnabled()
+    gui.use_ground_check.setChecked(True)
+    assert delay.isEnabled() and not follow.isChecked()
+    delay.setValue(1)
+    gui._board_extra_controls['settle_time_us'][0].setValue(20)
+    request = gui._build_adc_configuration_request()
+    commands = []
+    service = ADCConfigurationService(lambda cmd, _: (commands.append(cmd) or True, None), lambda: status_for(request))
+    result = service.send_config_with_verification(request)
+    assert result.success, result.messages
+    assert 'vmid true' in commands and 'vmidsettle 1' in commands and 'muxsettle 20' in commands
+    assert request.parameters['vmid_settle_time_us'] == 1
+    gui.use_ground_check.setChecked(False)
+    assert not delay.isEnabled()
+    gui.use_ground_check.setChecked(True)
+    assert delay.isEnabled() and delay.value() == 1
+    follow.setChecked(True)
+    assert not delay.isEnabled()
+    follow.setChecked(False)
+    assert delay.isEnabled() and delay.value() == 1
 
 
 def test_capture_export_and_offline_reload_keep_channel_identity(gui, tmp_path):
