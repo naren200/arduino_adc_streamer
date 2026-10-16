@@ -149,9 +149,10 @@ Connect firmware reporting `TestBoard_ADC124` (protocol 3). The GUI selects the
 bundled ADC124 sensor layout and exposes **Physical Arrays**, **PZT Sensors**,
 **SPI CLK [MHz]**, settling-conversion **Repeat Count**, **Use Vmid Sample**,
 **Settle time [us]**, **VMID settle follows sensor**, and **VMID settle time [us]**.
-Disable follow-sensor to enter an independent VMID delay. Both delays accept
-0..1000 us; zero retains the firmware switching guards. Sensor settling defaults
-to 5 us and VMID follows it by default. Vmid parking at startup/stop/failure is
+Enable **Use Vmid Sample** to edit the independent VMID delay. Both delays default
+to 5 us and accept 0..1000 us; zero retains the firmware switching guards.
+**VMID settle follows sensor** is off by default; selecting it uses sensor
+settling and disables the independent delay field. Vmid parking at startup/stop/failure is
 mandatory even when optional Vmid sampling is off.
 
 All parameter defaults, bounds, labels and policies live in

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "profile_version": 2,
+  "profile_version": 3,
   "id": "testboard_adc124",
   "mcu_aliases": [
     "TestBoard_ADC124"
@@ -238,11 +238,12 @@
         },
         "vmid_settle_follow_sensor": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "label": "VMID settle follows sensor",
           "policy": "editable",
           "section": "acquisition",
-          "order": 11
+          "order": 11,
+          "tooltip": "Optional: use sensor settling instead of the independent VMID delay"
         },
         "vmid_settle_time_us": {
           "type": "integer",
@@ -253,7 +254,7 @@
           "policy": "editable",
           "section": "acquisition",
           "order": 12,
-          "tooltip": "Independent VMID delay when follow sensor is off; zero retains switching guards"
+          "tooltip": "Enable Use Vmid Sample to edit this independent delay; zero retains switching guards"
         }
       },
       "scaling": {
@@ -266,6 +267,15 @@
         "timing": "unavailable"
       },
       "rules": [
+        {
+          "when": {
+            "parameter": "vmid_sampling",
+            "equals": false
+          },
+          "enabled": {
+            "vmid_settle_time_us": false
+          }
+        },
         {
           "when": {
             "parameter": "vmid_settle_follow_sensor",
