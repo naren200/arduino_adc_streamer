@@ -58,13 +58,13 @@ def record_capture(protocol, config, routes, output, warmup_ms, window_ms, profi
                 profile_enabled=profile["enabled"], **accounting)
 
 
-def capture_matrix(root, stage, configs, repetitions, warmup_ms, window_ms, profiling):
+def capture_matrix(root, stage, configs, repetitions, warmup_ms, window_ms, profiling, setup=None):
     output = root / stage; output.mkdir()
     routes = bench.load_manifest(bench.DEFAULT_MANIFEST)["both_full"]
     meta = dict(board="TestBoard_ADC124", protocol_version=3, stage=stage, profile=profiling,
                 created_utc=datetime.now(timezone.utc).isoformat(), warmup_s=warmup_ms / 1000,
                 measurement_s=window_ms / 1000, repetitions=repetitions, state="running", runs=[],
-                setup=dict(connectors="both disconnected", charger="connected", reference_volts=3.3,
+                setup=setup if setup is not None else dict(connectors="both disconnected", charger="connected", reference_volts=3.3,
                            vmid_volts=1.65, bias_ohms=[[470000,1000000,470000,1000000],[1000000,470000,1000000,470000]]))
     def save(): bench.write_json(output / "session.json", meta)
     save()
