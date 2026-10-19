@@ -11,7 +11,8 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 - `PCB1.5_SPI/`: Teensy+MG24 SPI array firmware for PCB v1.5 (DRDY-enabled path)
 - `PCB1.7_SPI/`: Teensy+MG24 SPI array firmware for PCB v1.7 (DRDY + combined PZT/RS mode)
 - `PCB1.7_with_libraries/`: library-backed PCB v1.7 sketches with the same `PZT_RS` protocol behavior
-- `PCB_TestBoard_7953/`: modular Teensy 4.1 master for four ADS7953 ADCs on two SPI buses
+- `TestBoard_7953/`: PlatformIO project for the Teensy 4.1 master driving four ADS7953 ADCs on two SPI buses (superseded the archived Arduino IDE `PCB_TestBoard_7953` sketch, now under `legacy/`)
+- `TestBoard_ADC124/`: PlatformIO Teensy 4.1 firmware and standalone benchmarks for two ADC124S101 converters on one SPI bus, each connected to four GPIO-controlled MUXes; fixed 3.3 V reference, GUI profile with sensor/VMID settling controls
 
 ## Current Sketch Map
 
@@ -25,7 +26,8 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 | Teensy + MG24 SPI (PCB1.5) | Mixed PZT/PZR array pair with DRDY | `PCB1.5_SPI/Teensy_SPI_Master_Array_PZT_PZR1.5_DRDY.ino` + `PCB1.5_SPI/MG24_Dual_MUX_SPI_Slave1.5_DRDY.ino` | Current board revision v1.5, DRDY-synchronized streaming | `# Array_PZT_PZR1` |
 | Teensy + MG24 SPI (PCB1.7) | Mixed PZT/PZR/RS array pair with DRDY and combined mode | `PCB1.7_SPI/Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY.ino` + `PCB1.7_SPI/MG24_Dual_MUX_SPI_Slave1.7_DRDY.ino` | PCB v1.7 with `PZT_RS` combined stream (`PZT_CH1`...`PZT_CH5`,`RS1_hold`,`RS2_hold`) per selected PZT sensor | `# Array_PZT_PZR1.7` |
 | Teensy + MG24 SPI (PCB1.7 library-backed) | Library-backed PCB v1.7 pair with DRDY and combined mode | `PCB1.7_with_libraries/Teensy/Teensy.ino` + `PCB1.7_with_libraries/MG24/MG24.ino` | PCB v1.7 with the same `PZT_RS` behavior packaged as sketch-local libraries | `# Array_PZT_PZR1.7` |
-| Teensy 4.1 + ADS7953 test board | Four ADS7953 ADCs on two SPI buses | `PCB_TestBoard_7953/PCB_TestBoard_7953.ino` | Two selectable sensor arrays with sparse lane routing and three scan orders; optional future 555/PZR module | `# PCB_TestBoard_7953` |
+| Teensy 4.1 + ADS7953 test board | Four ADS7953 ADCs on two SPI buses | `TestBoard_7953/` (PlatformIO project; build with `pio run`) | Two selectable sensor arrays with sparse lane routing and three scan orders; optional future 555/PZR module | `# TestBoard_7953` |
+| Teensy 4.1 + ADC124S101 test board | Two ADCs and eight external MUXes on one SPI bus | `TestBoard_ADC124/` (PlatformIO project) | Two 25-channel arrays; GPIO address grouping, opposite EN polarities, standalone benchmark runner | `# TestBoard_ADC124` |
 
 ## Which Sketch Should You Flash
 
@@ -35,7 +37,8 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 - Use `Teensy/Teensy555_streamer/` when the GUI is being used in 555 / displacement mode.
 - Use `PCB1.7_SPI/` for PCB v1.7 hardware, including the combined `PZT_RS` mode (recommended for v1.7).
 - Use `PCB1.7_with_libraries/` when you want the PCB v1.7 pair in the library-backed sketch layout.
-- Use `PCB_TestBoard_7953/` for the Teensy 4.1 test board with four ADS7953 ADCs.
+- Use `TestBoard_7953/` for the Teensy 4.1 test board with four ADS7953 ADCs.
+- Use `TestBoard_ADC124/` for the ADC124S101/TMUX1108/TMUX1308A board. The GUI selects its dedicated protocol-3 profile; its [standalone runner](TestBoard_ADC124/benchmarks/README.md) remains available for benchmarks.
 - Use `PCB1.5_SPI/` for PCB v1.5 dual-board array hardware.
 - Use `PCB1.0_SPI/` only for legacy PCB v1.0 hardware.
 
@@ -205,7 +208,7 @@ help*
 
 ### PCB TestBoard 7953 routing commands
 
-`PCB_TestBoard_7953` adds lane-aware commands while retaining the common frame:
+`TestBoard_7953` adds lane-aware commands while retaining the common frame:
 
 ```text
 array 1*                       # ADC1 + ADC2
@@ -215,15 +218,34 @@ scanorder interleaved*         # round-robin across all enabled ADCs
 scanorder array*               # finish ADC1/2, then ADC3/4
 scanorder adc*                 # finish each ADC before the next ADC
 adcchannels 1:0,1:1,2:10*     # explicit ADC-lane/input routes
-vmid 15*                       # park each ADC on input 15 after its data read
-vmid false*                    # disable Vmid parking
+adcseq manual*                 # manual ADS7953 channel sequencing
+adcseq auto1*                  # sparse Auto-1 sequencing, one sample/channel
+spiengine blocking*            # sequential reference engine
+spiengine dma*                 # parallel buses through async DMA
+spiengine lpspi*               # parallel buses through direct LPSPI
+spiclock 20000000*             # runtime clock for both buses, 100 kHz..30 MHz; >20 MHz experimental
+channelrepeat 1|2|3*           # manual settling conversions; emit final value
+vmid 15*                       # enable optional between-channel Vmid sampling
+vmid false*                    # disable optional sampling, not mandatory parking
+ref 2.5*                       # select ADS7953 1xVREF range (2.5V full-scale)
+ref 5*                         # select ADS7953 2xVREF range (5V full-scale)
 ```
 
 The desktop app creates `adcchannels` from its fixed TestBoard wiring profile
 and the user's Physical Arrays + PZT Sensors selection. There is no TestBoard
-`channels`, `repeat`, or `buffer` PZT command: every route is sampled once and
-every frame contains one sweep. `ground` remains an alias for `vmid`; Vmid
-conversions are discarded and never change the binary sample count.
+`channels`, `repeat`, or `buffer` PZT command: every route contributes one
+payload word and every frame contains one sweep. `channelrepeat` affects only
+manual settling conversions and does not change payload width. `ground` remains
+an alias for `vmid`; optional Vmid conversions are discarded and never change
+the binary sample count. Channel 15 is the board-fixed Vmid input. Active ADCs
+are always parked there at startup, stop, failures, and before another ADC takes
+over the same physical bus, even when `vmid false` is selected. `array 1` and
+`array 2` run only one physical bus; `array both` permits DMA/LPSPI overlap when
+both buses have routes. Unlike the
+other sketches, `TestBoard_7953`'s `ref` command is not a no-op: it toggles the
+ADS7953 mode-control range bit at runtime (board VREF is fixed at 2.5V, so
+`ref 2.5`/`ref 5` select the 1x/2x input span); `osr`, `gain`, `conv`, `samp`,
+and `rate` remain accepted no-ops for compatibility.
 
 ## Binary Block Format
 
@@ -249,11 +271,16 @@ Notes on sample payload meaning:
 
 - For the standard ADC streamer sketches (MG24, Teensy, PCB SPI array sketches), each `uint16` sample is a raw ADC reading.
 - For `Teensy/Teensy555_streamer/`, each `uint16` sample is instead an `Rx` resistance value in ohms (rounded and clamped to `0..65535`), not a raw ADC reading.
-- For `PCB_TestBoard_7953`, each payload word belongs to one explicitly routed
+- For `TestBoard_7953`, each payload word belongs to one explicitly routed
   `ADC:channel` pair. `scanorder interleaved|array|adc` determines payload order;
   ADC1/2 are array 1 and ADC3/4 are array 2. The host sends and mirrors the same
   sparse route plan, so unrequested ADC inputs are not converted or transmitted.
 - The legacy `legacy/MG24/ADC_Streamer_binary_buffer/` sketch uses a shorter trailer (`avg_dt_us` only, no `block_start_us`/`block_end_us`); see `legacy/MG24/ADC_Streamer_binary_buffer/README.md` for details.
+- For `TestBoard_ADC124`, each word belongs to an `array:mux:input` route.
+  `scanorder adc` sorts array, external address, then MUX; `scanorder mux` sorts
+  external address, array, then MUX. Both emit one result per route per frame;
+  sensor/VMID settling and repeat counts do not change payload width. The GUI
+  verifies the exact `payload_routes` reported by protocol-3 firmware.
 
 ### PCB1.7 `PZT_RS` Combined Payload
 
@@ -293,9 +320,11 @@ Example with `channels 14,14,15*`, `repeat 2*`:
 ch14 s1, ch14 s2, ch14 s3, ch14 s4, ch15 s1, ch15 s2
 ```
 
-For `PCB_TestBoard_7953`, the configured scan order replaces this generic
-channel order. Each route emits one sample, and each frame contains every
-active route exactly once.
+For `TestBoard_7953`, the configured scan order replaces this generic channel
+order as the payload-order contract. The DMA and direct-LPSPI engines may
+execute one route on each physical bus concurrently, then place both results
+into their canonical payload slots. Each route emits one sample, and each frame
+contains every active route exactly once.
 
 ## Host Integration Notes
 
@@ -306,6 +335,27 @@ active route exactly once.
 - Convert only the `RS1_hold` / `RS2_hold` words from scaled-ohms to ohms using the configured PZT_RS wire scale; the five `PZT_CH*` words remain raw MG24 ADC samples.
 - After `stop*`, expect text responses again on the same port.
 - The desktop app handles mixed text/binary transitions for the standard sketches listed above.
+
+## Hardware benchmarks
+
+The [ADC124 runner](TestBoard_ADC124/benchmarks/README.md) uses triple routes
+`array:mux:input`, one shared SPI bus, fixed 3.3 V reference and 8–16 MHz SCLK.
+Its [firmware protocol](TestBoard_ADC124/README.md) retains the common binary
+envelope but uses external MUX address sequencing rather than ADS7953 modes.
+ADC124 now also carries the audited Teensy USB repair, atomic complete-frame
+discard policy, cached run plans, sweep-level LPSPI sessions and optional phase
+profiling. Protocol-3 adds array-sequential ADC scans, shared-settling MUX scans
+and continuous-CS batches across all three engines. Status separates sampled,
+sent and discarded sweeps. Historical protocol-1/2 `mux` semantics are now
+called `adc`; the runner preserves legacy decoding using the saved version.
+
+Each PlatformIO test-board project can keep its board-specific runners in a
+local `benchmarks/` directory. The TestBoard 7953 runner owns the serial port,
+configures the firmware matrix, decodes the binary stream, and writes raw,
+interpreted, and comparison artifacts. Review
+[`TestBoard_7953/benchmarks/README.md`](TestBoard_7953/benchmarks/README.md)
+before using it; the GUI and all serial monitors must be closed during a
+benchmark session.
 
 ## Legacy And Experimental Sketches
 
@@ -320,3 +370,4 @@ Archived MG24 variants now live under `legacy/MG24/`:
 Also archived under `legacy/`:
 
 - `legacy/Teensy_MG24_SPI/`: predecessor of the `PCB1.0_SPI/` Teensy+MG24 array pair (`Teensy_SPI_Master_Array_PZT1.ino`, `# Array_PZT1`); same host-facing text command vocabulary, but a custom non-DRDY SPI command/ACK framing to the MG24 side, and no surviving matching MG24 slave sketch in this folder.
+- `legacy/PCB_TestBoard_7953-OLD_DONT_USE/`: superseded Arduino IDE predecessor of the `TestBoard_7953/` PlatformIO project; kept for reference only, do not flash.

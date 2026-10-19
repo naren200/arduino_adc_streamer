@@ -21,9 +21,10 @@ from __future__ import annotations
 import math
 import time
 from pathlib import Path
-from typing import Hashable
+from typing import Hashable, Mapping
 
 import numpy as np
+from config.boards.capture import adc_resolution_bits
 import pyqtgraph as pg
 from PyQt6.QtCore import QByteArray, QSettings, Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import (
@@ -1141,6 +1142,68 @@ class PressureMapPanelMixin:
             "quiet_hold_clear_s": self._spin_float("force_pzt_quiet_hold_spin", float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"])),
         }
 
+    def _apply_pzt_force_settings_to_widgets(self, settings: Mapping[str, object]) -> None:
+        """Force every PZT Force widget to reflect ``settings`` without re-triggering a rebuild."""
+        widget_names = (
+            "force_pzt_center_capacitance_spin", "force_pzt_outer_capacitance_spin",
+            "force_pzt_capacitance_unit_combo", "force_pzt_rleak_spin", "force_pzt_d33_spin",
+            "force_pzt_noise_spin", "force_pzt_off_mux_check", "force_pzt_off_mux_rleak_spin",
+            "force_display_max_n_spin", "force_arrow_gain_spin", "force_arrow_threshold_spin",
+            "force_pzt_stuck_failsafe_check", "force_pzt_stuck_hold_spin", "force_pzt_stuck_tau_spin",
+            "force_pzt_zero_floor_spin", "force_pzt_zero_band_fraction_spin",
+            "force_pzt_min_event_peak_spin", "force_pzt_quiet_release_spin", "force_pzt_quiet_hold_spin",
+        )
+        widgets = [getattr(self, name, None) for name in widget_names]
+        for widget in widgets:
+            if widget is not None and hasattr(widget, "blockSignals"):
+                widget.blockSignals(True)
+        try:
+            self._set_spin_value("force_pzt_center_capacitance_spin", settings, "center_capacitance_value", float)
+            self._set_spin_value("force_pzt_outer_capacitance_spin", settings, "outer_capacitance_value", float)
+            self._set_combo_value("force_pzt_capacitance_unit_combo", settings, "capacitance_unit")
+            self._set_spin_value("force_pzt_rleak_spin", settings, "rleak_ohm", float)
+            self._set_spin_value("force_pzt_d33_spin", settings, "d33_pc_per_n", float)
+            self._set_spin_value("force_pzt_noise_spin", settings, "noise_threshold_v", float)
+            self._set_check_value("force_pzt_off_mux_check", settings, "off_mux_leak_enabled")
+            self._set_spin_value("force_pzt_off_mux_rleak_spin", settings, "off_mux_rleak_ohm", float)
+            self._set_spin_value("force_display_max_n_spin", settings, "display_max_force_n", float)
+            self._set_spin_value("force_arrow_gain_spin", settings, "force_arrow_gain_mm_per_n", float)
+            self._set_spin_value("force_arrow_threshold_spin", settings, "force_arrow_min_threshold_n", float)
+            self._set_check_value("force_pzt_stuck_failsafe_check", settings, "stuck_force_failsafe_enabled")
+            self._set_spin_value("force_pzt_stuck_hold_spin", settings, "stuck_force_quiet_hold_s", float)
+            self._set_spin_value("force_pzt_stuck_tau_spin", settings, "stuck_force_decay_tau_s", float)
+            self._set_spin_value("force_pzt_zero_floor_spin", settings, "force_zero_band_min_n", float)
+            self._set_spin_value("force_pzt_zero_band_fraction_spin", settings, "force_zero_band_fraction", float)
+            self._set_spin_value("force_pzt_min_event_peak_spin", settings, "force_zero_min_event_peak_n", float)
+            self._set_spin_value("force_pzt_quiet_release_spin", settings, "quiet_hold_release_fraction", float)
+            self._set_spin_value("force_pzt_quiet_hold_spin", settings, "quiet_hold_clear_s", float)
+        finally:
+            for widget in widgets:
+                if widget is not None and hasattr(widget, "blockSignals"):
+                    widget.blockSignals(False)
+
+    def _warn_pzt_force_settings_rejected(self, reason: str) -> None:
+        """Surface a rejected PZT Force settings change loudly - never swallow it."""
+        message = (
+            "The PZT Force settings you entered are physically invalid and were "
+            f"rejected. Reverted to the last working configuration.\n\nReason: {reason}"
+        )
+        if hasattr(self, "force_display_status_label"):
+            self.force_display_status_label.setText(
+                "⚠ Force settings rejected — reverted to last working configuration"
+            )
+        if hasattr(self, "log_status"):
+            self.log_status(f"ERROR: PZT Force settings rejected - {reason}")
+        QMessageBox.warning(self, "Invalid PZT Force Settings", message)
+
+    def _on_force_worker_error(self, message: str) -> None:
+        """The force-integration worker halted itself rather than die silently."""
+        if hasattr(self, "force_display_status_label"):
+            self.force_display_status_label.setText(f"⚠ {message}")
+        if hasattr(self, "log_status"):
+            self.log_status(f"ERROR: {message}")
+        QMessageBox.critical(self, "Force Display Stopped", message)
+
     def on_pzt_force_settings_changed(self, _value: object | None = None) -> None:
         try:
             for widget in self._pressure_map_display_widgets():
@@ -1209,22 +1272,38 @@ class PressureMapPanelMixin:
             return 0.0025
         return max(1e-12, float(settings["noise_threshold_v"]) * capacitance_f / d33_c_per_n)
 
-    def _rebuild_pressure_force_engine(self) -> None:
-        if not hasattr(self, "pressure_map_geometry"):
-            return
-        new_engine = PressureForceDisplayEngine(
+    def _build_pzt_force_engine(self, settings: Mapping[str, object]) -> PressureForceDisplayEngine:
+        engine = PressureForceDisplayEngine(
             geometry=self.pressure_map_geometry,
-            settings=self._pzt_force_settings(),
+            settings=settings,
             normal_force_calculator=self.normal_force_calculator,
             shear_detector=self.shear_detector,
             pressure_map_array_generator=self.pressure_map_array_generator,
         )
+        engine.self_test()
+        return engine
+
+    def _rebuild_pressure_force_engine(self) -> None:
+        if not hasattr(self, "pressure_map_geometry"):
+            return
+        candidate_settings = self._pzt_force_settings()
+        try:
+            new_engine = self._build_pzt_force_engine(candidate_settings)
+            accepted_settings = candidate_settings
+        except (ValueError, KeyError, TypeError) as exc:
+            fallback_settings = getattr(self, "_last_good_pzt_force_settings", None) or dict(PZT_FORCE_DEFAULT_SETTINGS)
+            new_engine = self._build_pzt_force_engine(fallback_settings)
+            accepted_settings = fallback_settings
+            self._apply_pzt_force_settings_to_widgets(fallback_settings)
+            self._warn_pzt_force_settings_rejected(str(exc))
+        self._last_good_pzt_force_settings = dict(accepted_settings)
         self.pressure_force_engine = new_engine
         self._pressure_force_last_processed_sweep_count = int(getattr(self, "sweep_count", 0))
         worker = getattr(self, "_force_worker", None)
         if worker is None:
             self._force_worker = ForceBlockWorker(new_engine)
             self._force_worker.result_ready.connect(lambda r: self._on_force_result_ready(r))
+            self._force_worker.worker_error.connect(self._on_force_worker_error)
             self._force_worker.start()
         else:
             worker.swap_engine(new_engine)
@@ -1288,10 +1367,33 @@ class PressureMapPanelMixin:
             block, times, first_sweep_id, avg_sample_time_us, complete_packages
         )
 
+    def _cached_display_channel_specs(self) -> list:
+        """Return channel specs, refreshed once per force-dispatch cycle.
+
+        ``get_display_channel_specs()`` derives purely from configuration and
+        is otherwise unchanged for the ~30 sweeps between force dispatches, so
+        rebuilding it on every sweep is redundant work. Reusing the last
+        dispatch's cadence bounds staleness to one dispatch interval after a
+        config change, with no separate invalidation flag to keep in sync.
+        """
+        last_dispatch = getattr(self, "_force_last_dispatch_time", None)
+        cache = getattr(self, "_force_display_specs_cache", None)
+        if (
+            cache is not None
+            and last_dispatch is not None
+            and getattr(self, "_force_display_specs_cache_dispatch_time", None) == last_dispatch
+        ):
+            return cache
+        specs = getattr(self, "get_acquisition_channel_specs", self.get_display_channel_specs)()
+        self._force_display_specs_cache = specs
+        self._force_display_specs_cache_dispatch_time = last_dispatch
+        return specs
+
     def _resolve_force_complete_packages(self, block: np.ndarray) -> dict:
         """Return packages that have all five shear positions covered."""
+        specs = self._cached_display_channel_specs()
         specs_by_package: dict[str, dict[str, dict]] = {}
-        for spec_index, spec in enumerate(self.get_display_channel_specs()):
+        for spec_index, spec in enumerate(specs):
             position = self._get_shear_position_for_display_spec(spec, spec_index)
             sample_indices = [
                 int(index) for index in spec.get("sample_indices", [])
@@ -1379,7 +1481,7 @@ class PressureMapPanelMixin:
         self._force_sweep_accumulator = []
 
         dt_s = max(0.0, float(avg_sample_time_us) / 1_000_000.0)
-        voltage_scale = float(self.get_vref_voltage()) / float((2 ** IADC_RESOLUTION_BITS) - 1)
+        voltage_scale = float(self.get_vref_voltage()) / float((2 ** adc_resolution_bits(self)) - 1)
         ghost_net_centered = bool(
             getattr(self, "is_pzt_ghost_block_net_centered", lambda: False)()
         )
@@ -1400,6 +1502,9 @@ class PressureMapPanelMixin:
         multiplier = SENSOR_POLARITY_NORMAL_MULTIPLIER
         if hasattr(self, "is_active_sensor_reverse_polarity") and self.is_active_sensor_reverse_polarity():
             multiplier = SENSOR_POLARITY_REVERSED_MULTIPLIER
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
+        if descriptor:
+            multiplier = SENSOR_POLARITY_REVERSED_MULTIPLIER if descriptor['sensor_configuration'].get('reverse_polarity') else SENSOR_POLARITY_NORMAL_MULTIPLIER
         batch = ForceBlockBatch(
             sweeps=sweeps,
             timestamps=timestamps,
@@ -1411,7 +1516,7 @@ class PressureMapPanelMixin:
             complete_packages=complete_packages,
             baselines=dict(getattr(self, "plot_baselines", {})),
             polarity_multiplier=float(multiplier),
-            mux_timing=getattr(self, "adc_mux_timing", None),
+            mux_timing=None if descriptor else getattr(self, "adc_mux_timing", None),
             jerk_shapes=list(self._latest_jerk_package_displays),
             dropped_sweeps_before=0,
             grid_positions=self._get_force_display_grid_positions(),
@@ -1457,6 +1562,9 @@ class PressureMapPanelMixin:
         if result is None or not hasattr(self, "force_pressure_map_widget"):
             return
         results = result.package_results
+        if getattr(result, 'array_results', {}):
+            array = getattr(self, 'display_array_id', 1)
+            results = [item for item in results if item.sensor_id.startswith(f'A{array}_')]
         if not results:
             self.force_pressure_map_widget.update_force_display(None)
             return
@@ -1467,6 +1575,8 @@ class PressureMapPanelMixin:
         }:
             status.setText("")
         array_result = result.array_result
+        if getattr(result, 'array_results', {}):
+            array_result = result.array_results.get(getattr(self, 'display_array_id', 1))
         # A positioned package layout is always a complete, static Force
         # array.  Zero packages remain visible as zero fields rather than
         # being dropped when they have no current force increment.
@@ -3542,6 +3652,9 @@ class PressureMapPanelMixin:
 
     def _get_array_sensor_grid_positions(self) -> dict[str, tuple[int, int]]:
         active_config = self.get_active_sensor_configuration() if hasattr(self, "get_active_sensor_configuration") else {}
+        descriptor = self.get_array_descriptor() if hasattr(self, "get_array_descriptor") else None
+        if descriptor:
+            active_config = descriptor['sensor_configuration']
         array_layout = active_config.get("array_layout", {}) if isinstance(active_config, dict) else {}
         cells = array_layout.get("cells", []) if isinstance(array_layout, dict) else []
 
@@ -3553,6 +3666,8 @@ class PressureMapPanelMixin:
                 sensor_id = normalize_array_cell(cell_value)
                 if sensor_id:
                     positions[sensor_id] = (int(row_index), int(col_index))
+                    if descriptor:
+                        positions[f"A{getattr(self, 'display_array_id', 1)}_{sensor_id}"] = (int(row_index), int(col_index))
         return positions
 
     def _get_signal_integration_package_layout(self) -> list[dict[str, object]]:
@@ -3568,7 +3683,7 @@ class PressureMapPanelMixin:
 
             for index, group in enumerate(sensor_groups):
                 fallback_id = selected_sensors[index] if index < len(selected_sensors) else f"PACKAGE{index + 1}"
-                sensor_id = str(group.get("sensor_id") or fallback_id).strip().upper()
+                sensor_id = str(group.get("package_id") or group.get("sensor_id") or fallback_id).strip().upper()
                 layout.append({
                     "sensor_id": sensor_id,
                     "grid_position": grid_positions.get(sensor_id),
@@ -3597,6 +3712,11 @@ class PressureMapPanelMixin:
         Force Display layout must instead remain the complete configured PZT
         array so inactive packages render as zero-valued package fields.
         """
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
+        if descriptor:
+            cells = descriptor['sensor_configuration']['array_layout']['cells']
+            return {f'A{array}_{sensor}': (row, col) for array in descriptor['sampled_arrays']
+                    for row, values in enumerate(cells) for col, sensor in enumerate(values) if sensor}
         if hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode():
             return dict(self._get_array_sensor_grid_positions())
         return {
@@ -4034,8 +4154,11 @@ class PressureMapPanelMixin:
         channel_times = (timestamps_array.reshape(-1, 1) + time_offsets.reshape(1, -1)).reshape(-1)
 
         channel_data = self._convert_signal_integration_counts_to_voltage(channel_counts)
-        channel_data = self._remove_signal_integration_dc_bias(channel_data, channel_times)
-        channel_data = self._integrate_signal_integration_voltage_samples(channel_data)
+        from data_processing.acquisition_timing import gap_indices, peak_envelope
+        boundaries = np.unique(np.concatenate(([0], gap_indices(channel_times), [len(channel_data)]))).astype(int)
+        for start, end in zip(boundaries[:-1], boundaries[1:]):
+            segment = self._remove_signal_integration_dc_bias(channel_data[start:end], channel_times[start:end])
+            channel_data[start:end] = self._integrate_signal_integration_voltage_samples(segment)
         channel_data = self._apply_signal_integration_sensor_polarity(channel_data)
 
         if visible_start_time_sec is not None:
@@ -4045,15 +4168,13 @@ class PressureMapPanelMixin:
 
         latest_value = float(channel_data[-1]) if channel_data.size > 0 else None
 
-        if len(channel_data) > max_samples_per_series:
-            downsample_factor = max(1, len(channel_data) // max_samples_per_series)
-            channel_data = channel_data[::downsample_factor]
-            channel_times = channel_times[::downsample_factor]
+        channel_times, channel_data = peak_envelope(channel_times, channel_data, max_samples_per_series,
+            nominal=getattr(self, '_received_sweep_period_s', None))
 
         return channel_data, channel_times, latest_value
 
     def _convert_signal_integration_counts_to_voltage(self, adc_counts: np.ndarray) -> np.ndarray:
-        max_adc_value = float((2 ** IADC_RESOLUTION_BITS) - 1)
+        max_adc_value = float((2 ** adc_resolution_bits(self)) - 1)
         return (np.asarray(adc_counts, dtype=np.float64) / max_adc_value) * float(self.get_vref_voltage())
 
     def _apply_signal_integration_sensor_polarity(self, integrated_samples: np.ndarray) -> np.ndarray:
@@ -4200,7 +4321,7 @@ class PressureMapPanelMixin:
         curve = self._get_or_create_signal_integration_curve(curve_key, name, pen)
         curve.setVisible(True)
         curve.setPen(pen)
-        curve.setData(x=x_data, y=y_data)
+        curve.setData(x=x_data, y=y_data, connect='finite')
 
     def _plot_signal_integration_rosette_series(
         self,

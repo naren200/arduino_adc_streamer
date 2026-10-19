@@ -1,0 +1,16 @@
+Teensy Loader, Command Line, Version 2.2
+Read "C:\Code\arduino_adc_streamer\Arduino_Sketches\TestBoard_ADC124\.pio\build\teensy41_profile\firmware.hex": 51200 bytes, 0.6% usage
+Waiting for Teensy device...
+ (hint: press the reset button)
+Found HalfKay Bootloader
+Read "C:\Code\arduino_adc_streamer\Arduino_Sketches\TestBoard_ADC124\.pio\build\teensy41_profile\firmware.hex": 51200 bytes, 0.6% usage
+Programming...............................................
+Booting
+Teensy Loader, Command Line, Version 2.2
+Read "C:\Code\arduino_adc_streamer\Arduino_Sketches\TestBoard_ADC124\.pio\build\teensy41\firmware.hex": 46080 bytes, 0.6% usage
+Waiting for Teensy device...
+ (hint: press the reset button)
+Found HalfKay Bootloader
+Read "C:\Code\arduino_adc_streamer\Arduino_Sketches\TestBoard_ADC124\.pio\build\teensy41\firmware.hex": 46080 bytes, 0.6% usage
+Programming..........................................
+Booting

@@ -59,6 +59,12 @@ class ADCConnectionWorkflowTests(unittest.TestCase):
         self.assertEqual(session.disconnect_calls, 1)
         self.assertEqual(outcome.warnings, ["Serial thread shutdown timed out"])
 
+    def test_adc124_connects_using_its_registered_profile(self):
+        session = FakeSession(mcu_name='TestBoard_ADC124')
+        outcome = ADCConnectionWorkflow().connect(session, 'COM7', mcu_detection_timeout=1.5)
+        self.assertEqual(outcome.mcu_name, 'TestBoard_ADC124')
+        self.assertEqual(session.disconnect_calls, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

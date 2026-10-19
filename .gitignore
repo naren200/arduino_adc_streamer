@@ -45,6 +45,7 @@ tmp_pytest_runtime/
 
 # Local sandboxes
 /excel_tests.c
+/tmp/
 analysis/
 
 
@@ -56,5 +57,12 @@ Thumbs.db
 # *.csv
 # *.png
 # *_metadata.txt
+/Arduino_Sketches/*/benchmarks/results/
+
+# Local test captures and machine-readable results
+/docs/testing/datasets/
+/docs/testing/results/**/*.json
+/docs/testing/results/**/*.csv
 token_dont_read_ai
 .archived/
+*.npz

@@ -7,6 +7,7 @@ Owns ADC buffer snapshotting, baseline capture, and ADC curve rendering.
 from __future__ import annotations
 
 import numpy as np
+from config.boards.capture import adc_resolution_bits
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 
@@ -22,6 +23,7 @@ from constants.plotting import (
     ROSETTE_FIXED_Y_MIN_DEFAULT_OHMS,
 )
 from data_processing.circular_buffer import recent_window_slices, take_recent
+from data_processing.acquisition_timing import peak_envelope
 class ADCPlottingMixin:
     """ADC plot snapshotting and curve rendering helpers."""
 
@@ -48,6 +50,19 @@ class ADCPlottingMixin:
         active_data_buffer = self.get_active_data_buffer()
         if active_data_buffer is None or self.samples_per_sweep <= 0:
             return None
+
+        if getattr(self, '_acquisition_worker', None) is not None:
+            with self.buffer_lock:
+                slices = recent_window_slices(self.sweep_count, self.buffer_write_index,
+                                               self.MAX_SWEEPS_BUFFER, self.MAX_SWEEPS_BUFFER)
+                times = take_recent(self.sweep_timestamps_buffer, slices)
+                data = take_recent(active_data_buffer, slices)
+            if not len(times):
+                return None
+            if recent_window_sec is not None:
+                start = np.searchsorted(times, times[-1] - recent_window_sec)
+                data, times = data[start:], times[start:]
+            return data, times, getattr(self, '_cached_avg_sample_time_sec', 0.0)
 
         with self.buffer_lock:
             current_sweep_count = self.sweep_count
@@ -98,7 +113,7 @@ class ADCPlottingMixin:
         data_array, timestamps_array, avg_sample_time_sec = snapshot
         if hasattr(self, 'reconstruct_pzt_signal_for_baseline_capture'):
             data_array = self.reconstruct_pzt_signal_for_baseline_capture(data_array)
-        display_specs = self.get_display_channel_specs()
+        display_specs = getattr(self, "get_acquisition_channel_specs", self.get_display_channel_specs)()
         if not display_specs or len(timestamps_array) == 0:
             if log_message:
                 self.log_status("No visible channels available to zero signals")
@@ -132,6 +147,8 @@ class ADCPlottingMixin:
             self.plot_baselines[spec['key']] = baseline_value
 
             channel = self._extract_channel_from_spec_key(spec.get('key'))
+            if spec.get('array_number'):
+                channel = spec['key']
             if channel is not None:
                 self.channel_plot_baselines[channel] = baseline_value
 
@@ -284,6 +301,10 @@ class ADCPlottingMixin:
 
     def _extract_recent_buffer_window(self, active_data_buffer, actual_sweeps, current_write_index, window_sweeps):
         """Copy the requested trailing window from the circular sweep buffers."""
+        if getattr(self, '_acquisition_worker', None) is not None:
+            with self.buffer_lock:
+                slices = recent_window_slices(self.sweep_count, self.buffer_write_index, window_sweeps, self.MAX_SWEEPS_BUFFER)
+                return take_recent(active_data_buffer, slices), take_recent(self.sweep_timestamps_buffer, slices)
         slices = recent_window_slices(
             actual_sweeps, current_write_index, window_sweeps, self.MAX_SWEEPS_BUFFER
         )
@@ -341,6 +362,9 @@ class ADCPlottingMixin:
             return None
 
         window_sweeps = min(self.window_size_spin.value(), MAX_PLOT_SWEEPS, actual_sweeps)
+        time_window = getattr(self, 'live_time_window_spin', None)
+        if getattr(self, '_acquisition_worker', None) is not None and time_window is not None and time_window.value() > 0:
+            window_sweeps = actual_sweeps
         snapshot = self._extract_recent_buffer_window(
             active_data_buffer,
             actual_sweeps,
@@ -351,6 +375,9 @@ class ADCPlottingMixin:
             return None
 
         data_array, timestamps_array = snapshot
+        if getattr(self, '_acquisition_worker', None) is not None and time_window is not None and time_window.value() > 0:
+            start = np.searchsorted(timestamps_array, timestamps_array[-1] - time_window.value())
+            data_array, timestamps_array = data_array[start:], timestamps_array[start:]
         generation = int(getattr(self, '_live_filter_generation', 0))
         snapshot_key = (generation, int(current_write_index), int(window_sweeps))
         return data_array, timestamps_array, snapshot_key
@@ -411,7 +438,7 @@ class ADCPlottingMixin:
             and self.yaxis_units_combo.currentText() == "Voltage"
         ):
             vref = self.get_vref_voltage()
-            max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+            max_adc_value = (2 ** adc_resolution_bits(self)) - 1
             channel_data = (channel_data / max_adc_value) * vref
 
         if (
@@ -438,7 +465,7 @@ class ADCPlottingMixin:
                     # Baselines are captured from raw ADC counts; convert to volts
                     # before subtracting from voltage-domain display data.
                     vref = self.get_vref_voltage()
-                    max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+                    max_adc_value = (2 ** adc_resolution_bits(self)) - 1
                     baseline_value = (baseline_value / max_adc_value) * vref
                 channel_data = channel_data - baseline_value
 
@@ -446,10 +473,8 @@ class ADCPlottingMixin:
         if getattr(self, 'device_mode', 'adc') != '555':
             latest_value = float(channel_data[-1]) if len(channel_data) > 0 else None
 
-        if len(channel_data) > max_samples_per_series:
-            downsample_factor = max(1, len(channel_data) // max_samples_per_series)
-            channel_data = channel_data[::downsample_factor]
-            channel_times = channel_times[::downsample_factor]
+        channel_times, channel_data = peak_envelope(channel_times, channel_data, max_samples_per_series,
+            nominal=getattr(self, '_received_sweep_period_s', None))
 
         return channel_data, channel_times, latest_value
 
@@ -463,6 +488,9 @@ class ADCPlottingMixin:
         reverse_polarity = False
         if hasattr(self, 'is_active_sensor_reverse_polarity'):
             reverse_polarity = bool(self.is_active_sensor_reverse_polarity())
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
+        if descriptor:
+            reverse_polarity = bool(descriptor['sensor_configuration'].get('reverse_polarity', False))
         if not reverse_polarity:
             return samples
 
@@ -473,7 +501,7 @@ class ADCPlottingMixin:
                 midpoint = float(baseline_value)
                 if self.yaxis_units_combo.currentText() == "Voltage":
                     vref = self.get_vref_voltage()
-                    max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+                    max_adc_value = (2 ** adc_resolution_bits(self)) - 1
                     midpoint = (midpoint / max_adc_value) * vref
 
         if midpoint is None:
@@ -486,6 +514,7 @@ class ADCPlottingMixin:
         curve = self._adc_curves.get(curve_key)
         if curve is None:
             curve = self.plot_widget.plot([], pen=pen, name=name)
+            curve.setClipToView(True)
             self._adc_curves[curve_key] = curve
         return curve
 
@@ -503,8 +532,12 @@ class ADCPlottingMixin:
         """Apply visibility, style, and samples to a single ADC curve."""
         curve = self._get_or_create_adc_curve(curve_key, name, pen)
         curve.setVisible(True)
-        curve.setPen(pen)
-        curve.setData(x=x_data, y=y_data)
+        if getattr(self, '_acquisition_worker', None) is not None:
+            pen = pg.mkPen(pen)
+            pen.setWidthF(1.0)
+        if curve.opts.get('pen') != pen:
+            curve.setPen(pen)
+        curve.setData(x=x_data, y=y_data, connect='finite')
 
     def _set_rosette_curve_data(self, curve_key, name, pen, x_data, y_data):
         """Apply visibility, style, and samples to a single Rosette curve."""
@@ -515,6 +548,10 @@ class ADCPlottingMixin:
 
     def _update_plot_axis_labels(self):
         """Update plot axes labels for the active visualization mode."""
+        signature = (getattr(self, 'device_mode', 'adc'), self.yaxis_units_combo.currentText())
+        if getattr(self, '_plot_axis_label_signature', None) == signature:
+            return
+        self._plot_axis_label_signature = signature
         if getattr(self, 'device_mode', 'adc') == '555':
             self.plot_widget.setLabel('left', 'Resistance', units='Î©')
         elif self.yaxis_units_combo.currentText() == "Voltage":
@@ -527,6 +564,14 @@ class ADCPlottingMixin:
 
     def apply_y_axis_range(self):
         """Apply Y-axis range setting to the plot."""
+        mode = getattr(self, 'device_mode', 'adc')
+        range_text = self.yaxis_range_combo.currentText()
+        units_text = self.yaxis_units_combo.currentText()
+        span = (self.get_vref_voltage() if units_text == 'Voltage' else adc_resolution_bits(self)) if mode != '555' and range_text == 'Full-Scale' else None
+        signature = (mode, range_text, units_text, span)
+        if getattr(self, '_plot_y_range_signature', None) == signature:
+            return
+        self._plot_y_range_signature = signature
         if getattr(self, 'device_mode', 'adc') == '555':
             self.plot_widget.enableAutoRange(axis='y')
             return
@@ -541,7 +586,7 @@ class ADCPlottingMixin:
                 vref = self.get_vref_voltage()
                 self.plot_widget.setYRange(0, vref, padding=0.02)
             else:
-                max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+                max_adc_value = (2 ** adc_resolution_bits(self)) - 1
                 self.plot_widget.setYRange(0, max_adc_value, padding=0.02)
         else:
             self.plot_widget.enableAutoRange(axis='y')
@@ -776,7 +821,8 @@ class ADCPlottingMixin:
             desired_curve_keys = set()
             latest_channel_values = {}
             visible_series_count = max(1, len(selected_channels))
-            max_samples_per_series = max(500, MAX_TOTAL_POINTS_TO_DISPLAY // visible_series_count)
+            pixel_budget = max(4, int(self.plot_widget.width()) * 2)
+            max_samples_per_series = max(4, min(pixel_budget, MAX_TOTAL_POINTS_TO_DISPLAY // visible_series_count))
             avg_sample_time_sec = getattr(self, '_cached_avg_sample_time_sec', 0.0)
 
             for spec in display_specs:
