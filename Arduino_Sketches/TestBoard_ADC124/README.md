@@ -379,8 +379,9 @@ profile and triple-route adapter. It exposes sensor settling and independent
 VMID settling (including follow-sensor mode), alongside array, PZT, repeat,
 Vmid and SPI-clock controls. Scan order is selectable in the GUI as ADC (array
 sequential) or MUX (shared settling); change it while stopped and Configure again.
-Scan order, engine and framing default to `adc`, `blocking` and `burst` in the
-profile JSON. Restart after profile edits.
+Scan order, engine and framing default to `adc`, `lpspi` and `burst` in the
+profile JSON. Firmware also boots with LPSPI. Restart the GUI after profile edits
+so its cached configuration uses the updated defaults.
 The current GUI contract requires protocol 3 and verifies reported routes and
 settling before capture. See the [configuration and hardware checks](../../docs/guides/configuration/ARRAY_CONFIGURATION_GUIDE.md#testboard_adc124-external-mux-arrays).
 

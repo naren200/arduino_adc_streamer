@@ -18,7 +18,7 @@ uint8_t array_mask = 3, channel_repeat = 1;
 enum class ScanOrder { ADC, MUX };
 ScanOrder scan_order = ScanOrder::ADC;
 bool burst_frames = true;
-SpiEngine engine = SpiEngine::BLOCKING;
+SpiEngine engine = SpiEngine::LPSPI;
 uint32_t settle_us = kDefaultMuxSettleUs;
 uint32_t vmid_settle_us = kDefaultMuxSettleUs;
 bool vmid_settle_follows_sensor = true;

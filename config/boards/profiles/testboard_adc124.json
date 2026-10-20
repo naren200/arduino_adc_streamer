@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "profile_version": 4,
+  "profile_version": 5,
   "id": "testboard_adc124",
   "mcu_aliases": [
     "TestBoard_ADC124"
@@ -182,7 +182,7 @@
         },
         "spi_engine": {
           "type": "enum",
-          "default": "blocking",
+          "default": "lpspi",
           "label": "SPI engine:",
           "policy": "config_file_only",
           "section": "acquisition",
