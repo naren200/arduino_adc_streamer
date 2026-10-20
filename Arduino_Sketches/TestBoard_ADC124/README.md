@@ -99,16 +99,15 @@ address. The 200 ns turn-off and turn-on guards remain and overlap in shared
 phases. The cache uses 48,096 bytes on ARM to avoid mask assembly during scans.
 
 With VMID on, each phase switches its participating banks to address 7 before
-one corresponding wait, then takes a discarded four-word VMID batch per ADC
-(all four inputs, without a selector prime). Shared mode thus shares both sensor and
-VMID waits. With VMID off a bank may stay enabled at its last sensor address
+one corresponding VMID settling wait, without starting any ADC transfer.
+Shared mode thus shares both sensor and VMID waits. With VMID off a bank may stay enabled at its last sensor address
 between phases/sweeps; identical addresses skip redundant switching and waits.
 Stop always leaves both banks enabled on VMID, with both ADC CS lines high.
 
 TI SNAS283D pp.16-17 and 19 explicitly allow consecutive 16-clock conversions
-with CS held low. Each sensor/VMID burst stays at one fixed external address.
+with CS held low. Each sensor burst stays at one fixed external address.
 The last command of each batch selects the first ADC input of the next batch
-on that ADC, including VMID, sparse routes and sweep wraparound. No selector
+on that ADC, across wait-only VMID visits, sparse routes and sweep wraparound. No selector
 prime is discarded inside a sweep; only the last requested repeat is stored
 for each route. Blocking keeps one SPI
 transaction/CS frame per batch; DMA launches one 2N-byte transfer from persistent
@@ -121,22 +120,25 @@ CS setup and high allowances are paid once per burst; timeout/error paths
 release CS, restore SPI state and park safely. Interrupts remain enabled.
 
 For full arrays at repeat 1, both modes use 50 words/14 sensor batches with
-VMID off, and 106 words/28 sensor+VMID batches with VMID on. Pure configured
-CS-allowance savings versus single framing are `(50-14)*0.2 = 7.2 us` off and
-`(106-28)*0.2 = 15.6 us` on. These are calculations, not measured savings.
+VMID either off or on. Pure configured CS-allowance savings versus single
+framing are `(50-14)*0.2 = 7.2 us` in both cases. These are calculations,
+not measured savings. The prior lookahead revision used 106 words/28 batches
+with VMID on; removing its VMID ADC scans saves 56 conversion words and 14
+CS frames per full sweep. Nominal clock-only savings are 56 us at 16 MHz or
+112 us at 8 MHz; MUX switching guards and configured waits are unchanged.
 Four-channel groups use four conversions; address 6 uses one IN4 conversion.
 At nominal 16/8 MHz those batches occupy 4/8 us and 1/2 us of clocking,
-respectively, before peripheral/software overhead. Compared with the preceding
-firmware, lookahead removes 14/28 conversion words per full sweep (VMID off/on).
-The historical benchmark reports below retain their original primed timings.
+respectively, before peripheral/software overhead.
+Historical reports retain the word counts and timings of their captured revisions.
 ADC mode uses 14/28 settling waits; shared MUX uses 7/14. Actual GPIO change
 counts depend on routes, current cached state and VMID; analog delays are not
 shortened to compensate for CPU overhead.
 
-Current revision `adc124-selector-lookahead-v1` adds selector lookahead to the
-VMID settling and FIFO/GPIO optimizations. Status reports
+Current revision `adc124-vmid-wait-only-v1` changes VMID insertion to GPIO
+switching and settling only. Status reports `vmid_scan_policy=wait_only`,
 `adc_selector_policy=lookahead` and `adc_batch_prime_frames=0`; the ADC's
 one-conversion selector latency (`adc_pipeline_frames=1`) is unchanged.
+The previous `adc124-selector-lookahead-v1` scanned four ADC inputs at VMID.
 The preceding revision `adc124-vmid-settle-v1` retains the FIFO/GPIO optimization
 from `adc124-fifo-grouped-gpio-v2`; protocol remains 3.
 For full arrays, coordinated MUX guard allowance is 2.8 us off / 5.6 us on,
@@ -168,11 +170,26 @@ follows that value dynamically. `vmidsettle N*` sets a fixed VMID override in
 to resume following. Status reports effective `vmid_settle_us` and
 `vmid_settle_mode=follow_sensor|explicit`.
 
-The VMID delay applies to optional VMID conversions and configured VMID
+The VMID delay applies to optional wait-only VMID visits and configured VMID
 parking at run preparation/stop/failure. Zero omits the extra analog wait;
-the off/on guards, priming conversion and four discarded ADC input responses
-still run. MUX mode shares the VMID wait after both banks complete switching.
+the off/on guards remain, but there are no VMID ADC conversions during a sweep.
+MUX mode shares the VMID wait after both banks complete switching.
 Sensor settling and payload width stay unchanged. Startup uses inherited 5 us.
+
+The requested wait is an added delay, not an exact dwell-time guarantee:
+GPIO/loop overhead remains. At sweep boundaries, encoding/USB scheduling can
+extend the visit. In ADC scan order, a bank may remain parked while the other
+array is scanned. MUX order switches both participating banks together before
+the shared wait. This change removes ADC scan time; it does not alter that scheduling.
+
+For pressure/amplitude and ghosting checks, upload this production revision
+and verify `vmid_scan_policy=wait_only`. Compare VMID off with VMID on at
+0/1/5 us, keeping sensor delay, clock, scan order, repeat count, strip placement
+and plotting/filter settings fixed. Record the pressed sensor and unpressed
+routes together, retain absolute amplitudes as well as ghost/pressed amplitude
+ratios, and save status with each capture. Real pressure and channel stimulation
+are still needed to establish the analog effect; software checks do not show
+whether amplitude or ghosting improves.
 
 ```text
 muxsettle 5*
@@ -294,7 +311,7 @@ The prepared plan then keeps the GPIO address unchanged while receiving every
 requested conversion, advances inputs on the final repeat, and selects the
 next batch's first input in the last command. For a full scan, IN4 selects IN1
 except before address 6, where it selects IN4; the single IN4 read then selects
-IN1 for the next sweep. VMID batches similarly select the next sensor input.
+IN1 for the next sweep. Visiting VMID does not clock or change that selection.
 A selector mismatch inside acquisition stops the run without a hidden prime.
 ADC124S101 has no
 returned channel tag: software ordering can be tested, but electrical identity
@@ -303,9 +320,8 @@ still requires input stimulation or a logic analyzer.
 Mandatory GPIO parking runs at startup, before runs, and on stop/failure. It leaves the
 quads enabled at Vmid without requiring SPI traffic. Unselected arrays are
 disabled during a run. With `vmid true`, after each address group the active
-participating banks are parked and all four ADC inputs are converted once per
-bank; those four transfers are discarded. In shared
-MUX mode switching/settling precedes both VMID batches. With `vmid false`,
+participating banks are parked for the configured VMID settling delay, with
+no ADC scan. In shared MUX mode the banks share that wait. With `vmid false`,
 startup/stop/failure parking still runs. Repeat and Vmid settings never change payload width.
 
 ## Binary frame
@@ -361,8 +377,10 @@ The desktop GUI detects `TestBoard_ADC124` and uses its dedicated
 [`testboard_adc124.json`](../../config/boards/profiles/testboard_adc124.json)
 profile and triple-route adapter. It exposes sensor settling and independent
 VMID settling (including follow-sensor mode), alongside array, PZT, repeat,
-Vmid and SPI-clock controls. Scan order, engine and framing default to
-`adc`, `blocking` and `burst` in the profile JSON. Restart after profile edits.
+Vmid and SPI-clock controls. Scan order is selectable in the GUI as ADC (array
+sequential) or MUX (shared settling); change it while stopped and Configure again.
+Scan order, engine and framing default to `adc`, `blocking` and `burst` in the
+profile JSON. Restart after profile edits.
 The current GUI contract requires protocol 3 and verifies reported routes and
 settling before capture. See the [configuration and hardware checks](../../docs/guides/configuration/ARRAY_CONFIGURATION_GUIDE.md#testboard_adc124-external-mux-arrays).
 

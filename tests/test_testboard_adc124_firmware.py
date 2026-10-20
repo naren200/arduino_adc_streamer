@@ -40,6 +40,7 @@ def test_production_adc_driver_pipeline_gpio_and_error_recovery(tmp_path, profil
     assert '216 independent VMID settling cases passed' in tested.stdout
     assert '90 sparse independent VMID settling cases passed' in tested.stdout
     assert '48 no-prime lookahead clock/engine cases passed' in tested.stdout
+    assert 'VMID wait-only acquisition: no conversions at address 7' in tested.stdout
     if profiling:
         from Arduino_Sketches.TestBoard_ADC124.benchmarks.testboard_adc124_benchmark import parse_status
         from Arduino_Sketches.TestBoard_ADC124.benchmarks.firmware_profile import decode_profile

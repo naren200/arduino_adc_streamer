@@ -27,7 +27,6 @@ uint32_t run_started_ms = 0, duration_ms = 0, sweep_count = 0;
 struct PreparedGroup {
   uint8_t array, input, destination;
   Adc124s101::PreparedBatch batch;
-  Adc124s101::PreparedBatch vmid_batch;
 };
 PreparedGroup groups[kMaxRoutes];
 uint8_t group_count = 0;
@@ -116,8 +115,8 @@ bool prepareAcquisition() {
     while (groups[next].array != groups[i].array) next = (next + 1) % group_count;
     auto &group = groups[i];
     const uint8_t next_input = groups[next].batch.first_input;
-    group.batch.commands[group.batch.count - 1] = uint16_t(vmid ? 0 : next_input) << 11;
-    Adc124s101::prepareVmid(next_input, group.vmid_batch);
+    // VMID is a GPIO-only visit: it must not change the ADC selector.
+    group.batch.commands[group.batch.count - 1] = uint16_t(next_input) << 11;
   }
   return group_count != 0;
 }
@@ -169,7 +168,8 @@ void printRoute(const SensorRoute &r) {
 void status() {
   Serial.println("# board=TestBoard_ADC124");
   Serial.println("# protocol_version=3");
-  Serial.println("# firmware_revision=adc124-selector-lookahead-v1");
+  Serial.println("# firmware_revision=adc124-vmid-wait-only-v1");
+  Serial.println("# vmid_scan_policy=wait_only");
   Serial.println("# adc_selector_policy=lookahead");
   Serial.println("# adc_batch_prime_frames=0");
   Serial.println("# lpspi_burst_policy=fifo_bounded");
@@ -238,6 +238,7 @@ bool command(const String &name, const String &args) {
     Serial.println("# spiengine blocking|dma|lpspi; spiclock 8000000..16000000; channelrepeat 1..3");
     Serial.println("# muxsettle 0..1000 (us); vmid true|false|7; ref 3.3 (fixed); mode PZT");
     Serial.println("# vmidsettle default|0..1000 (us); default follows muxsettle; zero retains switching guards");
+    Serial.println("# vmid true visits VMID with GPIO switching/settling only; no VMID ADC scan");
     Serial.println("# run [1..3600000 ms]; stop; status; mcu; help; commands end with '*'");
     Serial.println("# profile on|off (diagnostic build, stopped only); USB policy: discard_if_busy");
     return !args.length();
@@ -374,11 +375,6 @@ bool capture() {
             : Adc124s101::switchTogether(adcs[groups[phase.first].array - 1],
                 adcs[groups[phase.first + 1].array - 1], kVmidAddress);
         if (changed && vmid_settle_us) delayMicroseconds(vmid_settle_us);
-      }
-      {
-        TB_PROFILE_SCOPE(vmid_transfer_profile, Transfer);
-        for (uint8_t i = phase.first; i < phase.first + phase.count; ++i)
-          if (!adcs[groups[i].array - 1]->readPrepared(groups[i].vmid_batch, engine, nullptr, burst_frames)) return false;
       }
     }
   }

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "profile_version": 3,
+  "profile_version": 4,
   "id": "testboard_adc124",
   "mcu_aliases": [
     "TestBoard_ADC124"
@@ -83,7 +83,7 @@
           "section": "acquisition",
           "legacy_key": "use_ground",
           "command": "vmid",
-          "tooltip": "Discard VMID conversions between address groups; startup/stop parking always runs"
+          "tooltip": "Visit VMID between sensor groups. Wait-only firmware applies the VMID settling delay without ADC conversions; startup/stop parking always runs"
         },
         "samples_per_channel": {
           "type": "integer",
@@ -162,7 +162,8 @@
           "type": "enum",
           "default": "adc",
           "label": "Scan order:",
-          "policy": "config_file_only",
+          "policy": "editable",
+          "tooltip": "ADC scans each array in turn; MUX shares address settling across arrays. Configure again after changing this setting.",
           "section": "acquisition",
           "legacy_key": "testboard_scan_order",
           "choices": [

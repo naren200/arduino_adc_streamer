@@ -358,7 +358,7 @@ RESULT_FIELDS = ("test_id", "repetition", "result", "reason", "array", "scanorde
                  "firmware_sweeps", "received_frames")
 RESULT_FIELDS += ("sampling_sweeps", "usb_frames_sent", "usb_frames_discarded", "usb_discard_percent",
                   "usb_stream_policy", "sampling_period_max_us", "sampling_period_over_1ms", "usb_write_errors", "spi_frame", "protocol_version", "scan_semantics",
-                  "vmid_settle_us", "vmid_settle_effective_us", "vmid_settle_mode")
+                  "vmid_settle_us", "vmid_settle_effective_us", "vmid_settle_mode", "vmid_scan_policy")
 
 
 def write_csv(path, fields, rows):
@@ -511,7 +511,8 @@ def capture(protocol, config, routes, args, directory):
         **errors, **accounting, "received_frames": received_frames, "protocol_version": after["protocol_version"],
         "scan_semantics": after.get("scan_semantics", "legacy_array_sequential_address_grouped"),
         "vmid_settle_effective_us": after.get('vmid_settle_us',str(config.mux_settle_us)),
-        "vmid_settle_mode": after.get('vmid_settle_mode','follow_sensor')}
+        "vmid_settle_mode": after.get('vmid_settle_mode','follow_sensor'),
+        "vmid_scan_policy": after.get('vmid_scan_policy','adc_scan')}
     return result, channel_rows
 
 

@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "TestBoard_ADC124",
+			"path": "../TestBoard_ADC124"
+		}
+	],
+	"settings": {}
+}

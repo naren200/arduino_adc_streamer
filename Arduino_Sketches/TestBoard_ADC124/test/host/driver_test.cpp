@@ -13,6 +13,7 @@ IMXRT_LPSPI_t IMXRT_LPSPI4_S, IMXRT_LPSPI3_S;
 SPIClass SPI(&IMXRT_LPSPI4_S), SPI1(&IMXRT_LPSPI3_S);
 uint8_t selected_input[2] = {3, 2};
 bool bad_bits = false;
+bool capture_in_progress = false;
 unsigned conversions = 0;
 uint64_t last_enable[2] = {}, last_cs = 0;
 
@@ -41,6 +42,9 @@ uint16_t emulate_conversion(IMXRT_LPSPI_t *bus, uint16_t command_word) {
   int adc = -1;
   for (int i = 0; i < 2; ++i) if (pin_values[kCsPins[i]] == LOW) { assert(adc == -1); adc = i; }
   assert(adc != -1 && pin_values[kMuxEnablePins[adc]] == kMuxEnableActiveHigh[adc]);
+  // Startup may initialize selectors while parked. Acquisition must never
+  // clock a conversion from VMID, including zero-delay visits.
+  if (capture_in_progress) assert(address(adc) != kVmidAddress);
   // Fresh selector latency persists across CS edges, ADC switches and bursts.
   assert(!(command_word & ~0x1800));
   uint16_t value = (adc + 1) * 1000 + selected_input[adc] * 100 + address(adc);
@@ -80,7 +84,9 @@ void verifyGuards() {
 void verifyCapture(const char *order, bool burst, bool full, unsigned sweep) {
   Serial.bytes.clear(); gpio_events.clear(); delay_events.clear();
   unsigned words_before = conversions, begins = SPI.begins, lookups = fake_gpio_lookups;
+  capture_in_progress = true;
   assert(capture());
+  capture_in_progress = false;
   assert(Serial.bytes.size() == 14 + plan_count * 2 && le16(2) == plan_count);
   std::vector<SensorRoute> expected;
   for (int i = 0; i < route_count; ++i) if (selected(routes[i].array)) expected.push_back(routes[i]);
@@ -94,17 +100,17 @@ void verifyCapture(const char *order, bool burst, bool full, unsigned sweep) {
   }
   unsigned words = 0;
   for (int i = 0; i < group_count; ++i) {
-    words += groups[i].batch.count + (vmid ? 4 : 0);
+    words += groups[i].batch.count;
     assert(groups[i].batch.count <= 12);
   }
-  assert(words == unsigned(plan_count * channel_repeat + (vmid ? 4 * group_count : 0)));
+  assert(words == unsigned(plan_count * channel_repeat));
   assert(conversions - words_before == words);
   unsigned cs_low = 0, en_writes = 0;
   for (const auto &e : gpio_events) {
     if ((e.pin == 9 || e.pin == 24) && e.value == LOW) ++cs_low;
     if (e.pin == 0 || e.pin == 32) ++en_writes;
   }
-  assert(cs_low == (burst ? unsigned(group_count * (vmid ? 2 : 1)) : words));
+  assert(cs_low == (burst ? unsigned(group_count) : words));
   if (engine == SpiEngine::LPSPI) assert(SPI.begins - begins == 1);
   assert(fake_gpio_lookups == lookups && SPI.begins == SPI.ends);
   assert(sampling_sweeps == sweep + 1 && usb_frames_sent == sampling_sweeps);
@@ -169,8 +175,8 @@ int main() {
         for (uint8_t i = 0; i < group_count; ++i) {
           const auto &g = groups[i];
           assert(g.batch.count == (g.input == 6 ? 1 : 4));
-          if (g.input == 5) assert((vmid ? g.vmid_batch.commands[3] : g.batch.commands[3]) == (3 << 11));
-          if (g.input == 6) assert((vmid ? g.vmid_batch.commands[3] : g.batch.commands[0]) == 0);
+          if (g.input == 5) assert(g.batch.commands[3] == (3 << 11));
+          if (g.input == 6) assert(g.batch.commands[0] == 0);
         }
         for (unsigned sweep = 0; sweep < 3; ++sweep) verifyCapture(order, burst_frames, true, sweep);
         stop(); checkParked(); ++lookahead_cases;
@@ -300,6 +306,7 @@ int main() {
   Serial.connected = false; assert(capture()); Serial.connected = true; Serial.write_capacity = 2048; assert(capture());
   assert(sampling_sweeps == 4 && usb_frames_sent == 2 && usb_frames_discarded == 2);
   stop(); checkParked(); Serial.text.clear(); status();
+  assert(Serial.text.find("# vmid_scan_policy=wait_only") != std::string::npos);
   std::cout << "PROFILE_STATUS_BEGIN\n" << Serial.text << "PROFILE_STATUS_END\n";
   String line; Serial.input = std::string(600, 'x') + "run*status*";
   assert(usb.readCommand(line) && line == "invalid_overlength_command"); assert(usb.readCommand(line) && line == "status");
@@ -324,4 +331,5 @@ int main() {
   assert(conversions == before_mismatch && adc1.transferErrors() == 1);
   assert(!command("run", "")); checkParked();
   std::cout << cases << " ADC124 digital acquisition cases and USB/failure checks passed\n";
+  std::cout << "VMID wait-only acquisition: no conversions at address 7\n";
 }
