@@ -125,7 +125,7 @@ class PztController {
   ArraySelection array_selection_ = ARRAY_BOTH;
   ScanOrder scan_order_ = SCAN_INTERLEAVED;
   AdcSequence adc_sequence_ = ADC_SEQUENCE_MANUAL;
-  SpiEngine spi_engine_ = SPI_ENGINE_BLOCKING;
+  SpiEngine spi_engine_ = SPI_ENGINE_LPSPI;
   uint32_t spi_clock_hz_ = testboard_config::kDefaultSpiClockHz;
   uint8_t channel_repeat_ = testboard_config::kDefaultChannelRepeat;
   bool vmid_between_channels_ = testboard_config::kDefaultVmidBetweenChannels;

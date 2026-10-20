@@ -46,7 +46,7 @@ void PztController::begin() {
   array_selection_ = ARRAY_BOTH;
   scan_order_ = SCAN_INTERLEAVED;
   adc_sequence_ = ADC_SEQUENCE_MANUAL;
-  spi_engine_ = SPI_ENGINE_BLOCKING;
+  spi_engine_ = SPI_ENGINE_LPSPI;
   spi_clock_hz_ = testboard_config::kDefaultSpiClockHz;
   channel_repeat_ = testboard_config::kDefaultChannelRepeat;
   vmid_between_channels_ = testboard_config::kDefaultVmidBetweenChannels;

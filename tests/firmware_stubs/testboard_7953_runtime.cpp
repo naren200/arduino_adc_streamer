@@ -95,7 +95,13 @@ int main() {
   Ads7953Adc *adcs[] = {&a1, &a2, &a3, &a4};
   UsbSerialController usb;
   PztController pzt(adcs, 4, usb);
+  Serial.text.clear();
+  pzt.printStatus();
+  assert(Serial.text.find("# spiengine=lpspi\n") != std::string::npos);
   bus1.begin(); bus2.begin(); pzt.begin();
+  Serial.text.clear();
+  pzt.printStatus();
+  assert(Serial.text.find("# spiengine=lpspi\n") != std::string::npos);
   // Startup must not derive a new command from asynchronous TCR readback.
   IMXRT_LPSPI4_S.TCR.unstable_read = true;
   assert(bus1.beginLpspiSession());

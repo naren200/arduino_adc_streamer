@@ -104,6 +104,11 @@ Only PZT acquisition is available. Choose **Physical Arrays** (1, 2, or both)
 and enter one PZT-number list, such as `6,1`. Both arrays receive that same list.
 No channel-number or PZR selection is shown.
 
+The firmware defaults to the `lpspi` SPI engine. The GUI sends no `spiengine`
+command, so configuration preserves the firmware selection and records the
+engine reported by status. An explicit `spiengine blocking*` or `spiengine dma*`
+command while stopped overrides it until another engine command or board restart.
+
 ADC Configuration offers **Voltage Reference** (2.5 V or 5 V input span) and
 **SPI CLK** in MHz (0.1-30, default 20). Clocks above 20 MHz are experimental;
 the recorded clock is requested Hz, not a measured SCLK. Gain and OSR are hidden.

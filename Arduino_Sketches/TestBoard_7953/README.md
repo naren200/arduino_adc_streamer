@@ -33,6 +33,18 @@ arrive late. See [live USB behavior and the reduced COM3 test](../../docs/archit
 See [USB repair validation](../../docs/reports/firmware/TESTBOARD_7953_USB_STREAM_DIAGNOSIS.md#implemented-repair)
 for offline checks and the focused on-board benchmark.
 
+## Default SPI engine
+
+The default SPI engine is `lpspi` in both build environments. The GUI leaves
+the engine unchanged and reads `spiengine` from firmware status. To override
+the engine while stopped, send `spiengine blocking*` or `spiengine dma*`;
+`spiengine lpspi*` restores LPSPI. A board restart restores the firmware default.
+
+After flashing, verify `status*` reports `spiengine=lpspi` before and after
+GUI configuration, then start/stop a capture. To check override preservation,
+select another engine while stopped, configure through the GUI, and confirm
+status still reports that engine. These steps require a physical board.
+
 ## Optional phase profiling
 
 The default `teensy41` build excludes profiling probes and storage. To build

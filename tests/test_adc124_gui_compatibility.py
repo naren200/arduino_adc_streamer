@@ -28,6 +28,12 @@ def layout():
     return default_sensor_layout(context().profile)
 
 
+def test_adc124_spi_default_ignores_stale_saved_engine():
+    mode = context().mode
+    assert mode.defaults()['spi_engine'] == 'lpspi'
+    assert mode.resolve_settings({'spi_engine': 'blocking'}).requested['spi_engine'] == 'lpspi'
+
+
 def context_with_defaults(**defaults):
     ctx = context()
     definition = thaw(ctx.mode.definition)
@@ -158,7 +164,7 @@ def test_configure_bare_acks_and_status_verification(gui, vmid_delay):
     assert result.success, result.messages
     assert f'vmidsettle {"default" if vmid_delay is None else vmid_delay}' in commands
     assert 'muxsettle 10' in commands and 'ref 3.3' in commands
-    assert 'spiframe burst' in commands and 'spiengine blocking' in commands and 'vmid true' in commands
+    assert 'spiframe burst' in commands and 'spiengine lpspi' in commands and 'vmid true' in commands
     assert not any(cmd.split()[0] in ('adcseq', 'repeat', 'buffer', 'osr', 'gain') for cmd in commands)
     assert len(commands) == len(set(commands))
     bad = status_for(request)

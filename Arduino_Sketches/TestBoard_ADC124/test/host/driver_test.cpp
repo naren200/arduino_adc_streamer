@@ -135,6 +135,7 @@ void verifyCapture(const char *order, bool burst, bool full, unsigned sweep) {
 
 int main() {
   setup(); checkParked();
+  assert(engine == SpiEngine::LPSPI);
   assert(vmid_settle_follows_sensor && vmid_settle_us == settle_us);
   assert(command("muxsettle", "10") && vmid_settle_us == 10);
   assert(command("vmidsettle", "0") && !vmid_settle_follows_sensor && vmid_settle_us == 0);
