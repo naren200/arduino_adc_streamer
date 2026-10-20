@@ -17,13 +17,16 @@ def acquisition_phases(routes, mode):
     return phases
 
 
-def operation_counts(routes, mode, repeat=1, vmid=False, spi_frame="burst", coordinated=False, lookahead=False):
+def operation_counts(routes, mode, repeat=1, vmid=False, spi_frame="burst", coordinated=False, lookahead=False,
+                     vmid_wait_only=False):
     phases = acquisition_phases(routes, mode)
     batches = sum(len(p) for p in phases)
     # Historical captures use one prime per batch. Lookahead primes only
     # during run preparation, outside the steady-state sweep budget.
-    words = len(routes) * repeat + (0 if lookahead else batches) + ((4 if lookahead else 5) * batches if vmid else 0)
-    cs_frames = batches * (2 if vmid else 1) if spi_frame == "burst" else words
+    vmid_batches = batches if vmid and not vmid_wait_only else 0
+    vmid_words = (4 if lookahead else 5) * vmid_batches
+    words = len(routes) * repeat + (0 if lookahead else batches) + vmid_words
+    cs_frames = batches + vmid_batches if spi_frame == "burst" else words
     addresses = {r.array: 7 for r in routes}
     # Replay once to establish end-of-sweep state, then count steady-state work.
     for _ in range(2):
@@ -53,6 +56,7 @@ def operation_counts(routes, mode, repeat=1, vmid=False, spi_frame="burst", coor
                 else: sensor_windows += changed
                 if coordinated: grouped_writes += len(register_masks)
     return dict(sensor_batches=batches, phases=len(phases), spi_words=words, cs_frames=cs_frames,
+                vmid_adc_batches=vmid_batches, vmid_adc_words=vmid_words,
                 bank_switches=switches, settling_waits=waits, enable_writes=2 * switches,
                 sensor_settling_windows=sensor_windows, vmid_settling_windows=vmid_windows,
                 changed_address_bit_writes=address_writes, cs_allowance_us=.2 * cs_frames,

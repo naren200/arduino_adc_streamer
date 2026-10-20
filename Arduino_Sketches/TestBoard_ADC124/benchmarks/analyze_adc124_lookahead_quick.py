@@ -45,7 +45,8 @@ def main(argv=None):
             x = canonical_samples(frames,status)[measured]
             median = np.median(x,axis=0); sd = x.std(axis=0,ddof=1)
             model = operation_counts(routes,run['scanorder'],repeat=run['channelrepeat'],vmid=run['vmid'],
-                coordinated=True,lookahead=status.get('adc_selector_policy') == 'lookahead')
+                coordinated=True,lookahead=status.get('adc_selector_policy') == 'lookahead',
+                vmid_wait_only=status.get('vmid_scan_policy') == 'wait_only')
             row = dict(stage=stage,name=run['name'],mode=run['scanorder'],engine=run['spiengine'],
                 clock_hz=run['spi_clock_hz'],vmid=run['vmid'],vmid_settle_us=run.get('vmid_settle_us'),
                 sweeps_s=1e6/period,period_us=period,acquisition_us=float(acquisition[measured].mean()),

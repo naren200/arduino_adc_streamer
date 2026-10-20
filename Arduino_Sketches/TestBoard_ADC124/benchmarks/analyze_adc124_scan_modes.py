@@ -58,6 +58,7 @@ def process(source, run, session, output, allow_insufficient_quiet=False):
         vmid_settle_us=config.vmid_settle_us,
         vmid_settle_effective_us=int(status.get('vmid_settle_us',config.mux_settle_us)),
         vmid_settle_mode=status.get('vmid_settle_mode','follow_sensor'),
+        vmid_scan_policy=status.get('vmid_scan_policy','adc_scan'),
         frames=len(frames), measured_frames=int(measured.sum()), mean_period_us=mean_period,
         delivered_sweeps_s=1e6 / mean_period, useful_values_s=50e6 / mean_period,
         mean_acquisition_us=float(acquisition[measured].mean()), mean_gap_us=float(gaps.mean()),
@@ -72,7 +73,8 @@ def process(source, run, session, output, allow_insufficient_quiet=False):
     c = operation_counts(bench.load_manifest(bench.DEFAULT_MANIFEST)["both_full"], config.scanorder,
                          config.channelrepeat, config.vmid, config.spi_frame,
                          coordinated=status.get('mux_switch_guards') == 'coordinated',
-                         lookahead=status.get('adc_selector_policy') == 'lookahead')
+                         lookahead=status.get('adc_selector_policy') == 'lookahead',
+                         vmid_wait_only=status.get('vmid_scan_policy') == 'wait_only')
     rows.update({"estimated_" + k:v for k,v in c.items() if k != "basis"})
     rows["estimated_settle_budget_us"] = (c['sensor_settling_windows'] * config.mux_settle_us +
         c['vmid_settling_windows'] * rows['vmid_settle_effective_us'])

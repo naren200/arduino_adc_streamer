@@ -1,5 +1,20 @@
 # TestBoard ADC124 benchmarks
 
+Current production `adc124-vmid-wait-only-v1` uses `vmid on` as a GPIO-only
+VMID visit and settling wait. No ADC conversions run at VMID during acquisition,
+including at `--vmid-settle-us 0`. Full repeat-1 sweeps contain 50 ADC words
+with VMID either off or on; sensor payloads/routes are unchanged. Captures and
+`results.csv` record `vmid_scan_policy`; analysis uses it to distinguish new
+wait-only captures from historical VMID scans.
+
+Use the general runner for the current revision; specialized historical
+comparison/upload runners may require their original firmware identities.
+For example, after uploading the current production build:
+
+```powershell
+uv run python Arduino_Sketches/TestBoard_ADC124/benchmarks/testboard_adc124_benchmark.py --port COM4 --arrays both --scan-order mux --spi-engine lpspi --spi-clock-hz 16000000 --channel-repeat 1 --mux-settle-us 5 --vmid on --vmid-settle-us 0 1 5 --repetitions 1 --window-ms 5000
+```
+
 All ADC124 capture, benchmark, analysis and report tools live in this folder,
 alongside the route manifest and shared helpers, matching TestBoard_7953.
 `tmp/` is reserved for temporary inspection files and scratch artifacts.
@@ -104,7 +119,8 @@ CS as a comparison control. Historical firmware used one discarded pipeline prim
 per ADC/address batch. Current `adc_selector_policy=lookahead` firmware uses
 four conversions for a four-channel group and one for address 6 at repeat 1,
 without acquisition primes. Startup may initialize each ADC once while parked.
-VMID batches use four discarded conversions and select the next sensor input.
+That historical revision used four discarded VMID conversions. Current wait-only
+firmware selects the next sensor input before the GPIO-only VMID visit.
 Analysis detects the status policy; historical captures keep their old word
 budgets. Include both frame values to compare matched frame settings.
 

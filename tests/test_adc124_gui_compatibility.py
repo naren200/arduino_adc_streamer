@@ -41,9 +41,8 @@ def context_with_defaults(**defaults):
 @pytest.mark.parametrize('order', ['adc', 'mux'])
 @pytest.mark.parametrize('sensors', [['PZT7'], ['PZT6', 'PZT1'], ['PZT1', 'PZT3', 'PZT5', 'PZT6', 'PZT7']])
 def test_exact_wire_order_and_sensor_identity(selection, order, sensors):
-    # A config-file-only parameter is read from its definition, as on restart.
-    ctx = context_with_defaults(scan_order=order)
-    desc = build_descriptor('TestBoard_ADC124', dict(array_selection=selection, selected_array_sensors=sensors), layout(), context=ctx)
+    desc = build_descriptor('TestBoard_ADC124', dict(array_selection=selection, scan_order=order,
+                            selected_array_sensors=sensors), layout())
     manifest = json.loads(Path('Arduino_Sketches/TestBoard_ADC124/benchmarks/testboard_adc124_routes.json').read_text())
     all_routes = [tuple(map(int, r.split(':'))) for r in manifest['route_sets']['both_full']]
     expected_inputs = {'PZT1': [(1, i) for i in range(5)], 'PZT3': [(2, i) for i in range(5)],
@@ -302,15 +301,42 @@ def test_sensor_save_keeps_numbered_channels_and_electrical_routes(gui):
 @pytest.mark.parametrize('order', ['adc', 'mux'])
 @pytest.mark.parametrize('engine', ['blocking', 'dma', 'lpspi'])
 @pytest.mark.parametrize('frame', ['burst', 'single'])
-def test_profile_only_scan_engine_and_framing_configure(gui, order, engine, frame):
+def test_gui_scan_order_and_profile_engine_framing_configure(gui, order, engine, frame):
     from config.adc_configuration_service import ADCConfigurationService
+    gui.array_scan_order_combo.setCurrentIndex(gui.array_scan_order_combo.findData(order))
     request = gui._build_adc_configuration_request()
-    request.board_context = context_with_defaults(scan_order=order, spi_engine=engine, spi_frame=frame)
+    request.board_context = context_with_defaults(spi_engine=engine, spi_frame=frame)
     commands = []
     service = ADCConfigurationService(lambda cmd, _: (commands.append(cmd) or True, None), lambda: status_for(request))
     result = service.send_config_with_verification(request)
     assert result.success, result.messages
     assert f'scanorder {order}' in commands and f'spiengine {engine}' in commands and f'spiframe {frame}' in commands
+
+
+@pytest.mark.parametrize('order', ['mux', 'adc'])
+def test_scan_order_selector_invalidates_configuration_and_freezes_selected_order(gui, order):
+    combo = gui.array_scan_order_combo
+    assert not combo.isHidden() and combo.isEnabled()
+    assert [combo.itemData(i) for i in range(combo.count())] == ['adc', 'mux']
+    combo.setCurrentIndex(combo.findData('mux' if order == 'adc' else 'adc'))
+    gui.config_is_valid = True
+    combo.setCurrentIndex(combo.findData(order))
+    assert not gui.config_is_valid
+    request = gui._build_adc_configuration_request()
+    assert request.parameters['scan_order'] == request.testboard_scan_order == order
+    gui.freeze_array_capture_descriptor()
+    captured = copy.deepcopy(gui.array_capture_descriptor)
+    assert captured['scan_order'] == order
+    assert captured['board_context']['requested']['scan_order'] == order
+    assert captured['ordered_routes'] == [list(route) for route in gui_order(request)]
+    gui.is_capturing = True
+    gui.set_controls_enabled(False)
+    assert not combo.isEnabled()
+    gui.is_capturing = False
+    gui.set_controls_enabled(True)
+    assert combo.isEnabled()
+    combo.setCurrentIndex(combo.findData('mux' if order == 'adc' else 'adc'))
+    assert gui.array_capture_descriptor == captured
 
 
 @pytest.mark.parametrize('wire_routes', ['', '1:1:7', '1:3:6', '1:5:0', '3:1:0', '1:1:0,1:1:0', '1:0', '1:1:-1'])

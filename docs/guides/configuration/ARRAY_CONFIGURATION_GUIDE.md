@@ -155,12 +155,16 @@ to 5 us and accept 0..1000 us; zero retains the firmware switching guards.
 settling and disables the independent delay field. Vmid parking at startup/stop/failure is
 mandatory even when optional Vmid sampling is off.
 
+Select **Scan order** in the GUI: **ADC (array sequential)** or **MUX (shared
+settling)**. Changing it requires Configure again before capture; the control
+locks during capture and the recording retains its selected order.
+
 All parameter defaults, bounds, labels and policies live in
-`config/boards/profiles/testboard_adc124.json`. Edit `scan_order.default` to
-`adc` (array sequential) or `mux` (shared address settling), `spi_engine.default`
-to `blocking`, `dma` or `lpspi`, and `spi_frame.default` to `burst` or `single`.
-These three parameters are config-file-only, like the 7953 scan order. Restart
-after editing JSON. Requested SPI clock is limited to 8–16 MHz; voltage scaling
+`config/boards/profiles/testboard_adc124.json`; `scan_order.default` selects the
+initial GUI choice (`adc`). SPI engine and framing remain config-file-only:
+edit `spi_engine.default` to `blocking`, `dma` or `lpspi`, and `spi_frame.default`
+to `burst` or `single`. Restart after editing JSON.
+Requested SPI clock is limited to 8–16 MHz; voltage scaling
 is fixed at 3.3 V / 12 bits. Reconnect restores profile defaults.
 
 Each array contains PZT1, PZT3, PZT5, PZT6 and PZT7 (25 channels per array).
@@ -188,7 +192,7 @@ Hardware validation for this GUI integration remains pending:
 1. Connect, Configure each array and both arrays, and compare status for sensor
    delay 5 us with VMID following, then explicit VMID delays 0/1/5 us. Change
    sensor delay and confirm follow mode tracks it while explicit mode stays fixed.
-2. Restart with each JSON scan order and engine. Test full and sparse PZT7 routes
+2. Select each GUI scan order and restart with each JSON engine. Test full and sparse PZT7 routes
    and repeats 1/3. Apply distinct known voltages to verify channel identity and
    fixed 3.3 V scaling; measure actual SCLK when checking frequency.
 3. Capture while switching Display Array. Stop, disconnect, export and reload;
