@@ -167,6 +167,119 @@
       }
     },
     {
+      "name": "Array_V2.6",
+      "channel_sensor_map": [
+        "B",
+        "L",
+        "C",
+        "R",
+        "T"
+      ],
+      "type": "array_layout",
+      "reverse_polarity": true,
+      "array_layout": {
+        "cells": [
+          [
+            null,
+            "PZT7",
+            null
+          ],
+          [
+            "PZT1",
+            "PZT6",
+            "PZT5"
+          ],
+          [
+            "PZR2",
+            "PZT3",
+            "PZR4"
+          ]
+        ]
+      },
+      "mux_mapping": {
+        "PZR2": {
+          "mux": 2,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "rs_channels": []
+        },
+        "PZR4": {
+          "mux": 2,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "rs_channels": []
+        },
+        "PZT1": {
+          "mux": 1,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "rs_channels": []
+        },
+        "PZT3": {
+          "mux": 1,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "rs_channels": []
+        },
+        "PZT5": {
+          "mux": 2,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "rs_channels": []
+        },
+        "PZT6": {
+          "mux": 1,
+          "channels": [
+            10,
+            11,
+            12,
+            13,
+            14
+          ],
+          "rs_channels": []
+        },
+        "PZT7": {
+          "mux": 2,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "rs_channels": []
+        }
+      },
+      "channel_layout": {
+        "channels_per_sensor": 5
+      }
+    },
+    {
       "name": "Single_PZT_New_grey_wire",
       "channel_sensor_map": [
         "T",

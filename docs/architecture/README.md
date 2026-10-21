@@ -9,7 +9,10 @@ How the current system is built. Test evidence lives in [`../testing/`](../testi
 
 ## firmware/
 
-TestBoard_7953 firmware designs and implementation notes:
+Test-board firmware designs, implementation notes and timing reports:
+
+- [TestBoard_7953 capture timing](firmware/TESTBOARD_7953_CAPTURE_TIMING_REPORT.md) ([PDF](firmware/TESTBOARD_7953_CAPTURE_TIMING_REPORT.pdf)) - capture steps, sensor connection, ADC sampling and disconnected intervals; 21 October 2026.
+- [TestBoard_ADC124 capture timing](firmware/TESTBOARD_ADC124_CAPTURE_TIMING_REPORT.md) ([PDF](firmware/TESTBOARD_ADC124_CAPTURE_TIMING_REPORT.pdf)) - external MUX timing, per-channel sampling offsets, measured budgets and calibration gaps; 21 October 2026.
 
 - `firmware/TESTBOARD_7953_FIRMWARE_OPTIMIZATION.md` — firmware optimization candidate.
 - `firmware/TESTBOARD_7953_PHASE_PROFILING.md` — phase profiling instrumentation and procedure.
