@@ -1,0 +1,723 @@
+{
+ "name": "TestBoard_ADC124 PZT front end",
+ "description": "7 PZT sensors (SM311) -> TMUX1308A 8:1 mux -> OPA365 buffer -> AIN_B4, with a VMID channel on S7. Charge-source sensor model, mux leakage / charge injection / capacitances, behavioral op-amp.",
+ "config": "config.json",
+ "adapter": "simulator_adapter.py",
+ "components": [
+  {
+   "group": "PZT sensor (all 7, SM311 / PZT-5H class)",
+   "items": [
+    {
+     "path": "sensor_defaults.width_mm",
+     "label": "Width",
+     "unit": "mm",
+     "type": "float",
+     "tip": "Electrode width. Cp = eps0*eps33*W*L/t."
+    },
+    {
+     "path": "sensor_defaults.length_mm",
+     "label": "Length",
+     "unit": "mm",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "sensor_defaults.thickness_mm",
+     "label": "Thickness",
+     "unit": "mm",
+     "type": "float",
+     "tip": "Element thickness (0.25 mm confirmed)."
+    },
+    {
+     "path": "sensor_defaults.eps33_r",
+     "label": "Relative permittivity eps33T/eps0",
+     "unit": "",
+     "type": "float",
+     "tip": "Steminc SM311: 3500 at 1 kHz."
+    },
+    {
+     "path": "sensor_defaults.d33_pC_per_N",
+     "label": "d33 charge constant",
+     "unit": "pC/N",
+     "type": "float",
+     "tip": "Steminc SM311: 600 pC/N."
+    },
+    {
+     "path": "sensor_defaults.force_gain",
+     "label": "Force gain",
+     "unit": "",
+     "type": "float",
+     "tip": "Scales the applied force (sensitivity scatter, force coupling)."
+    },
+    {
+     "path": "sensor_defaults.r_insulation_ohm",
+     "label": "Insulation resistance",
+     "unit": "ohm",
+     "type": "float",
+     "tip": "DC leakage of the element (placeholder 10 Gohm)."
+    },
+    {
+     "path": "sensor_defaults.loss_model",
+     "label": "Dielectric loss model",
+     "unit": "",
+     "type": "choice",
+     "tip": "none = ideal Cp. parallel_r = tan delta as a parallel resistor; it creates a DC leak that dominates ms-long baselines.",
+     "choices": [
+      "none",
+      "parallel_r"
+     ]
+    },
+    {
+     "path": "sensor_defaults.tan_delta",
+     "label": "tan delta",
+     "unit": "",
+     "type": "float",
+     "tip": "2.5 % at 1 kHz (used when the loss model is parallel_r)."
+    },
+    {
+     "path": "sensor_defaults.tan_delta_ref_hz",
+     "label": "tan delta reference frequency",
+     "unit": "Hz",
+     "type": "float",
+     "tip": ""
+    }
+   ]
+  },
+  {
+   "group": "Bias network and supply (schematic)",
+   "items": [
+    {
+     "path": "circuit.vdd_v",
+     "label": "Supply VDD",
+     "unit": "V",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "circuit.vmid_v",
+     "label": "VMID reference",
+     "unit": "V",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "circuit.r_bias_ohm",
+     "label": "R13 bias resistor",
+     "unit": "ohm",
+     "type": "float",
+     "tip": "Op-amp + input to VMID. Sets how fast a sensor is pulled back to VMID."
+    },
+    {
+     "path": "circuit.r_vmid_series_ohm",
+     "label": "R5 (VMID channel series)",
+     "unit": "ohm",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "circuit.c_vmid_s7_pF",
+     "label": "C5 (VMID channel)",
+     "unit": "pF",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "circuit.r_out_ohm",
+     "label": "R21 (buffer output)",
+     "unit": "ohm",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "circuit.c_out_pF",
+     "label": "C29 (AIN capacitor)",
+     "unit": "pF",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "circuit.initial_sensor_node_v",
+     "label": "Initial sensor node voltage",
+     "unit": "V",
+     "type": "float",
+     "tip": "Start condition of every sensor node."
+    }
+   ]
+  },
+  {
+   "group": "Parasitics (placeholders)",
+   "items": [
+    {
+     "path": "parasitics.sensor_trace_r_ohm",
+     "label": "Sensor trace resistance",
+     "unit": "ohm",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "parasitics.sensor_trace_c_pF",
+     "label": "Sensor trace capacitance",
+     "unit": "pF",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "parasitics.c_coupling_adjacent_pF",
+     "label": "Adjacent-pin coupling",
+     "unit": "pF",
+     "type": "float",
+     "tip": "Source of channel-to-channel crosstalk."
+    },
+    {
+     "path": "parasitics.muxd_trace_c_pF",
+     "label": "MUX D trace capacitance",
+     "unit": "pF",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "parasitics.r_bias_par_c_pF",
+     "label": "Stray C across R13",
+     "unit": "pF",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "parasitics.ain_stray_c_pF",
+     "label": "AIN stray capacitance",
+     "unit": "pF",
+     "type": "float",
+     "tip": ""
+    }
+   ]
+  },
+  {
+   "group": "MUX TMUX1308A (datasheet SCDS477A, 3.3 V, typical)",
+   "items": [
+    {
+     "path": "mux.ron_ohm",
+     "label": "On resistance",
+     "unit": "ohm",
+     "type": "float",
+     "tip": "Datasheet typ 120 ohm (max 330)."
+    },
+    {
+     "path": "mux.ron_vdep_per_V2",
+     "label": "Ron signal dependence",
+     "unit": "1/V^2",
+     "type": "float",
+     "tip": "Ron *= 1 + k*(V-Vmid)^2"
+    },
+    {
+     "path": "mux.roff_ohm",
+     "label": "Off resistance",
+     "unit": "ohm",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "mux.cs_off_pF",
+     "label": "Source off capacitance",
+     "unit": "pF",
+     "type": "float",
+     "tip": "typ 2 pF."
+    },
+    {
+     "path": "mux.cd_off_pF",
+     "label": "Drain off capacitance",
+     "unit": "pF",
+     "type": "float",
+     "tip": "typ 7 pF."
+    },
+    {
+     "path": "mux.c_on_pF",
+     "label": "On capacitance (lumped)",
+     "unit": "pF",
+     "type": "float",
+     "tip": "typ 11 pF; the extra on-capacitance is c_on - cs_off - cd_off."
+    },
+    {
+     "path": "mux.c_feedthrough_pF",
+     "label": "S-D feedthrough capacitance",
+     "unit": "pF",
+     "type": "float",
+     "tip": "Derived from off isolation (-90 dB at 1 MHz)."
+    },
+    {
+     "path": "mux.qinj_pC",
+     "label": "Charge injection",
+     "unit": "pC",
+     "type": "float",
+     "tip": "typ -0.8 pC at 3.3 V (charge delivered to D when a channel turns off)."
+    },
+    {
+     "path": "mux.qinj_src_fraction",
+     "label": "Injection share to source side",
+     "unit": "",
+     "type": "float",
+     "tip": "0 = all to D."
+    },
+    {
+     "path": "mux.ileak_s_off_nA",
+     "label": "Off-state S->D leakage per channel",
+     "unit": "nA",
+     "type": "float",
+     "tip": "typ +/-1 nA at 25 C; 25 nA max at 85 C. Applied with the same sign on every channel."
+    },
+    {
+     "path": "mux.ileak_d_nA",
+     "label": "Drain leakage",
+     "unit": "nA",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "mux.leak_scale",
+     "label": "Leakage multiplier",
+     "unit": "",
+     "type": "float",
+     "tip": "Scales both leakage currents (temperature, spread)."
+    },
+    {
+     "path": "mux.switch_on_ns",
+     "label": "Switch-on delay",
+     "unit": "ns",
+     "type": "float",
+     "tip": "tTRAN typ 23 ns."
+    },
+    {
+     "path": "mux.switch_off_ns",
+     "label": "Switch-off delay",
+     "unit": "ns",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "mux.control_edge_ns",
+     "label": "Control edge time",
+     "unit": "ns",
+     "type": "float",
+     "tip": "Break-before-make needs on >= off + edge."
+    }
+   ]
+  },
+  {
+   "group": "Buffer OPA365 (datasheet SBOS365G, typical)",
+   "items": [
+    {
+     "path": "opamp.gbw_hz",
+     "label": "Gain-bandwidth",
+     "unit": "Hz",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.aol",
+     "label": "DC open-loop gain",
+     "unit": "V/V",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.slew_v_per_us",
+     "label": "Slew rate",
+     "unit": "V/us",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.vos_uV",
+     "label": "Input offset",
+     "unit": "uV",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.ib_pA",
+     "label": "Input bias current",
+     "unit": "pA",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.cdiff_pF",
+     "label": "Differential input capacitance",
+     "unit": "pF",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.ccm_pF",
+     "label": "Common-mode input capacitance",
+     "unit": "pF",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.ro_ohm",
+     "label": "Open-loop output resistance",
+     "unit": "ohm",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.rail_margin_mV",
+     "label": "Output headroom from rails",
+     "unit": "mV",
+     "type": "float",
+     "tip": ""
+    }
+   ]
+  }
+ ],
+ "system": [
+  {
+   "group": "Scan",
+   "items": [
+    {
+     "path": "timing.scan_order",
+     "label": "Scan order (MUX addresses)",
+     "unit": "",
+     "type": "intlist",
+     "tip": "Comma separated addresses 0..6 (S0..S6). Each address once."
+    },
+    {
+     "path": "timing.vmid_visit_after_each",
+     "label": "VMID visit after every sensor",
+     "unit": "",
+     "type": "bool",
+     "tip": ""
+    },
+    {
+     "path": "timing.t_start_us",
+     "label": "Start delay",
+     "unit": "us",
+     "type": "float",
+     "tip": "Time before the first address command."
+    }
+   ]
+  },
+  {
+   "group": "Per-sensor timing (measured from the address command)",
+   "items": [
+    {
+     "path": "timing.t_sensor_settle_us",
+     "label": "Sensor settle time",
+     "unit": "us",
+     "type": "float",
+     "tip": "Wait before the ADC starts tracking."
+    },
+    {
+     "path": "timing.adc_acquisition_ns",
+     "label": "ADC acquisition (track) window",
+     "unit": "ns",
+     "type": "float",
+     "tip": "Hold = sample instant at settle + acquisition (ADC124S101: 3 SCLK)."
+    },
+    {
+     "path": "timing.t_conversion_us",
+     "label": "ADC word / conversion time",
+     "unit": "us",
+     "type": "float",
+     "tip": "Sensor stays connected."
+    },
+    {
+     "path": "timing.t_after_conversion_us",
+     "label": "After-conversion time",
+     "unit": "us",
+     "type": "float",
+     "tip": "Other muxes of the group are read; this sensor stays connected."
+    },
+    {
+     "path": "timing.t_vmid_settle_us",
+     "label": "VMID settle time",
+     "unit": "us",
+     "type": "float",
+     "tip": "Separate from the sensor settle time."
+    },
+    {
+     "path": "timing.t_vmid_park_us",
+     "label": "VMID park time",
+     "unit": "us",
+     "type": "float",
+     "tip": "Parked on VMID while other mux groups are sampled (placeholder). Ignored when a sampling rate is set."
+    }
+   ]
+  },
+  {
+   "group": "Sampling rate",
+   "items": [
+    {
+     "path": "timing.sampling_rate_hz",
+     "label": "Per-sensor sampling rate",
+     "unit": "Hz",
+     "type": "float",
+     "tip": "Optional. Leave empty to use the park time. When set, the VMID park time is derived so each sensor is revisited at this rate.",
+     "nullable": true
+    }
+   ]
+  }
+ ],
+ "simulation": [
+  {
+   "group": "Measurement time",
+   "items": [
+    {
+     "path": "timing.run_duration_s",
+     "label": "Run duration",
+     "unit": "s",
+     "type": "float",
+     "tip": "Optional. Empty = use the number of scan cycles below. 60 ms at 5 ns takes ~4 minutes.",
+     "nullable": true
+    },
+    {
+     "path": "timing.num_cycles",
+     "label": "Scan cycles",
+     "unit": "",
+     "type": "int",
+     "tip": "Used when no run duration is set."
+    },
+    {
+     "path": "timing.tail_us",
+     "label": "Tail after the last cycle",
+     "unit": "us",
+     "type": "float",
+     "tip": ""
+    }
+   ]
+  },
+  {
+   "group": "Solver",
+   "items": [
+    {
+     "path": "simulation.max_step_ns",
+     "label": "Maximum time step",
+     "unit": "ns",
+     "type": "float",
+     "tip": "5 ns resolves the 2 ns charge-injection edges. Coarser steps are faster but give noisy baselines."
+    },
+    {
+     "path": "simulation.periodic_min_cycles",
+     "label": "Periodic control from N cycles",
+     "unit": "",
+     "type": "int",
+     "tip": "Runs with at least this many cycles use compact periodic control sources."
+    }
+   ]
+  }
+ ],
+ "tables": [
+  {
+   "path": "forces",
+   "title": "Input profile: force pulses",
+   "tip": "One row per trapezoidal force pulse on a sensor. Rows on the same address add up. Amplitudes above ~0.17 N exceed the supply for a 0.7 mm sensor.",
+   "columns": [
+    {
+     "key": "address",
+     "label": "Sensor address",
+     "type": "int",
+     "min": 0,
+     "max": 6
+    },
+    {
+     "key": "t_start_us",
+     "label": "Start [us]",
+     "type": "float"
+    },
+    {
+     "key": "rise_us",
+     "label": "Rise [us]",
+     "type": "float"
+    },
+    {
+     "key": "width_us",
+     "label": "Hold [us]",
+     "type": "float"
+    },
+    {
+     "key": "fall_us",
+     "label": "Fall [us]",
+     "type": "float"
+    },
+    {
+     "key": "amp_N",
+     "label": "Amplitude [N]",
+     "type": "float"
+    }
+   ],
+   "new_row": {
+    "address": 2,
+    "t_start_us": 30.0,
+    "rise_us": 40.0,
+    "width_us": 250.0,
+    "fall_us": 40.0,
+    "amp_N": 0.1
+   }
+  }
+ ],
+ "plot_groups": [
+  {
+   "id": "adc",
+   "title": "ADC input [V]"
+  },
+  {
+   "id": "pins",
+   "title": "Mux / sensor pins [V]"
+  },
+  {
+   "id": "force",
+   "title": "Applied force [N]"
+  },
+  {
+   "id": "enable",
+   "title": "Mux enable [0..1]"
+  },
+  {
+   "id": "other",
+   "title": "Other nodes [V]"
+  }
+ ],
+ "nodes": [
+  {
+   "name": "ain",
+   "label": "AIN_B4 (ADC input)",
+   "group": "adc",
+   "default": true
+  },
+  {
+   "name": "muxd",
+   "label": "MUX D / buffer input",
+   "group": "adc",
+   "default": true
+  },
+  {
+   "name": "bufo",
+   "label": "Buffer output",
+   "group": "adc"
+  },
+  {
+   "name": "vmid",
+   "label": "VMID",
+   "group": "adc"
+  },
+  {
+   "name": "s0",
+   "label": "S0 pin (O6_P1B)",
+   "group": "pins"
+  },
+  {
+   "name": "s1",
+   "label": "S1 pin (O6_P2B)",
+   "group": "pins"
+  },
+  {
+   "name": "s2",
+   "label": "S2 pin (O6_P3B)",
+   "group": "pins"
+  },
+  {
+   "name": "s3",
+   "label": "S3 pin (O6_P4B)",
+   "group": "pins"
+  },
+  {
+   "name": "s4",
+   "label": "S4 pin (O6_P5B)",
+   "group": "pins"
+  },
+  {
+   "name": "s5",
+   "label": "S5 pin (O7_P4B)",
+   "group": "pins"
+  },
+  {
+   "name": "s6",
+   "label": "S6 pin (O7_P5B)",
+   "group": "pins"
+  },
+  {
+   "name": "s7",
+   "label": "S7 pin (VMID)",
+   "group": "pins"
+  },
+  {
+   "name": "f0",
+   "label": "Force on sensor 0",
+   "group": "force"
+  },
+  {
+   "name": "f1",
+   "label": "Force on sensor 1",
+   "group": "force"
+  },
+  {
+   "name": "f2",
+   "label": "Force on sensor 2",
+   "group": "force"
+  },
+  {
+   "name": "f3",
+   "label": "Force on sensor 3",
+   "group": "force"
+  },
+  {
+   "name": "f4",
+   "label": "Force on sensor 4",
+   "group": "force"
+  },
+  {
+   "name": "f5",
+   "label": "Force on sensor 5",
+   "group": "force"
+  },
+  {
+   "name": "f6",
+   "label": "Force on sensor 6",
+   "group": "force"
+  },
+  {
+   "name": "c0",
+   "label": "Enable S0",
+   "group": "enable"
+  },
+  {
+   "name": "c1",
+   "label": "Enable S1",
+   "group": "enable"
+  },
+  {
+   "name": "c2",
+   "label": "Enable S2",
+   "group": "enable"
+  },
+  {
+   "name": "c3",
+   "label": "Enable S3",
+   "group": "enable"
+  },
+  {
+   "name": "c4",
+   "label": "Enable S4",
+   "group": "enable"
+  },
+  {
+   "name": "c5",
+   "label": "Enable S5",
+   "group": "enable"
+  },
+  {
+   "name": "c6",
+   "label": "Enable S6",
+   "group": "enable"
+  },
+  {
+   "name": "c7",
+   "label": "Enable S7",
+   "group": "enable"
+  }
+ ],
+ "sample_marker": {
+  "node": "ain",
+  "label": "ADC hold samples"
+ }
+}
