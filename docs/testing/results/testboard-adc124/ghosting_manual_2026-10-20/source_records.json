@@ -1,0 +1,2145 @@
+{
+  "path": "docs\\testing\\benchmarks\\testboard-adc124\\Ghosting Tests TestBoard_ADC124.docx",
+  "sha256": "f276dee2195b207055b791ef43da23ab801acb40bd500c70a9526ec810dfd9d9",
+  "blocks": [
+    {
+      "kind": "paragraph",
+      "text": "Ghosting Tests – TestBoard_ADC124:"
+    },
+    {
+      "kind": "paragraph",
+      "text": "Manual ghosting test: "
+    },
+    {
+      "kind": "paragraph",
+      "text": "Method: Press each TOP sensor and look for ghosting on the adjacent sensor in Octo-7, which is spread across 4 MUXs. (only 1 full octo per MUX + partial octo-7)"
+    },
+    {
+      "kind": "table",
+      "table": 0,
+      "rows": [
+        [
+          "Array",
+          "MUX (resistor value)",
+          "Channel pressed",
+          "Channel tested"
+        ],
+        [
+          "1",
+          "1 470K)",
+          "PZT1_T (ch4)",
+          "PZT7_B (ch5)"
+        ],
+        [
+          "1",
+          "2 (1M)",
+          "PZT3_T (ch4)",
+          "PZT7_ L (ch5)"
+        ],
+        [
+          "1",
+          "3 (470K)",
+          "PZT5_T (ch4)",
+          "PZT7_C (ch5)"
+        ],
+        [
+          "1",
+          "4 (1M)",
+          "PZT6_T (ch4)",
+          "PZT7_R (ch5), T(ch6)"
+        ],
+        [
+          "2",
+          "1 (1M)",
+          "PZT1_T (ch4)",
+          "PZT7_B (ch5)"
+        ],
+        [
+          "2",
+          "2 (470K)",
+          "PZT3_T (ch4)",
+          "PZT7_ L (ch5)"
+        ],
+        [
+          "2",
+          "3 (1M)",
+          "PZT5_T (ch4)",
+          "PZT7_C (ch5)"
+        ],
+        [
+          "2",
+          "4 (470K)",
+          "PZT6_T (ch4)",
+          "PZT7_R (ch5), T(ch6)"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "Ghosting on the same sensor channels is harder to test – hard to distinguish between ghosting and physical coupling with a manual press."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Tested with SPI = 16Mhz."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Tested on different sensor settling time and vmid settling time (when vmid = on)"
+    },
+    {
+      "kind": "paragraph",
+      "text": "With vmid ON, tested with ADC scan after switching to vmid, and without ADC scan."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Measured relative ghosting and peak-to-peak amplitude of the major signals. Pressure was applied manually (not a systematically accurate method) and by observation, not an accurate measurement."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Results with Vmid OFF:"
+    },
+    {
+      "kind": "paragraph",
+      "text": "Sensor settling time = 5us. ADC scan."
+    },
+    {
+      "kind": "table",
+      "table": 1,
+      "rows": [
+        [
+          "Array",
+          "MUX",
+          "Pressed",
+          "Tested",
+          "Results",
+          "Sig p-p"
+        ],
+        [
+          "1",
+          "1 470K)",
+          "PZT1_T (ch4)",
+          "PZT7_B (ch5)",
+          "Very strong ghost (90%)",
+          "30mv"
+        ],
+        [
+          "1",
+          "2 (1M)",
+          "PZT3_T (ch4)",
+          "PZT7_ L (ch5)",
+          "Very strong ghost (90%)",
+          "80mv"
+        ],
+        [
+          "1",
+          "3 (470K)",
+          "PZT5_T (ch4)",
+          "PZT7_C (ch5)",
+          "Very strong ghost (90%)",
+          "60mV"
+        ],
+        [
+          "1",
+          "4 (1M)",
+          "PZT6_T (ch4)",
+          "PZT7_R (ch5), T(ch6)",
+          "Very strong ghost (90%). Ghost on second channel.",
+          "80mv"
+        ],
+        [
+          "2",
+          "1 (1M)",
+          "PZT1_T (ch4)",
+          "PZT7_B (ch5)",
+          "Strong ghost (50%)",
+          "180mv"
+        ],
+        [
+          "2",
+          "2 (470K)",
+          "PZT3_T (ch4)",
+          "PZT7_ L (ch5)",
+          "Ghost (30%)",
+          "150mv"
+        ],
+        [
+          "2",
+          "3 (1M)",
+          "PZT5_T (ch4)",
+          "PZT7_C (ch5)",
+          "Ghost (30%)",
+          "250mv"
+        ],
+        [
+          "2",
+          "4 (470K)",
+          "PZT6_T (ch4)",
+          "PZT7_R (ch5), T(ch6)",
+          "Ghost (30%). Hardly any ghost on second channel.",
+          "100mv"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "Results with Vmid ON:"
+    },
+    {
+      "kind": "paragraph",
+      "text": "Sensor settling time = 5us. ADC scan."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Vmid settling time = 0 (+ ADC scan time after vmid switching).)."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Sample interval 5us. SPS 4140Hz"
+    },
+    {
+      "kind": "table",
+      "table": 2,
+      "rows": [
+        [
+          "Array",
+          "MUX",
+          "Pressed",
+          "Tested",
+          "Results",
+          "Sig p-p"
+        ],
+        [
+          "1",
+          "1 (470K)",
+          "PZT1_T (ch4)",
+          "PZT7_B (ch5)",
+          "No ghost",
+          "30mv"
+        ],
+        [
+          "1",
+          "2 (1M)",
+          "PZT3_T (ch4)",
+          "PZT7_ L (ch5)",
+          "No ghost",
+          "60mv"
+        ],
+        [
+          "1",
+          "3 (470K)",
+          "PZT5_T (ch4)",
+          "PZT7_C (ch5)",
+          "No ghost",
+          "40mV"
+        ],
+        [
+          "1",
+          "4 (1M)",
+          "PZT6_T (ch4)",
+          "PZT7_R (ch5), T(ch6)",
+          "No ghost",
+          "40mv"
+        ],
+        [
+          "2",
+          "1 (1M)",
+          "PZT1_T (ch4)",
+          "PZT7_B (ch5)",
+          "No ghost",
+          "180mv"
+        ],
+        [
+          "2",
+          "2 (470K)",
+          "PZT3_T (ch4)",
+          "PZT7_ L (ch5)",
+          "No ghost",
+          "150mv"
+        ],
+        [
+          "2",
+          "3 (1M)",
+          "PZT5_T (ch4)",
+          "PZT7_C (ch5)",
+          "Very small ghost (<5%)",
+          "250mv"
+        ],
+        [
+          "2",
+          "4 (470K)",
+          "PZT6_T (ch4)",
+          "PZT7_R (ch5), T(ch6)",
+          "No ghost",
+          "100mv"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "Sensor settling time = 5us. MUX scan."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Vmid settling time = 0 (+ ADC scan time after vmid switching).)."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Sample interval 4us. SPS 5000Hz"
+    },
+    {
+      "kind": "table",
+      "table": 3,
+      "rows": [
+        [
+          "Array",
+          "MUX",
+          "Pressed",
+          "Tested",
+          "Results",
+          "Sig p-p"
+        ],
+        [
+          "1",
+          "1 (470K)",
+          "PZT1_T (ch4)",
+          "PZT7_B (ch5)",
+          "No ghost",
+          "30mv"
+        ],
+        [
+          "1",
+          "2 (1M)",
+          "PZT3_T (ch4)",
+          "PZT7_ L (ch5)",
+          "No ghost",
+          "30mv"
+        ],
+        [
+          "1",
+          "3 (470K)",
+          "PZT5_T (ch4)",
+          "PZT7_C (ch5)",
+          "Almost no ghost (<1%, noise pattern changes)",
+          "30mV"
+        ],
+        [
+          "1",
+          "4 (1M)",
+          "PZT6_T (ch4)",
+          "PZT7_R (ch5), T(ch6)",
+          "No ghost",
+          "35mv"
+        ],
+        [
+          "2",
+          "1 (1M)",
+          "PZT1_T (ch4)",
+          "PZT7_B (ch5)",
+          "No ghost",
+          "150mv"
+        ],
+        [
+          "2",
+          "2 (470K)",
+          "PZT3_T (ch4)",
+          "PZT7_ L (ch5)",
+          "No ghost",
+          "60mv"
+        ],
+        [
+          "2",
+          "3 (1M)",
+          "PZT5_T (ch4)",
+          "PZT7_C (ch5)",
+          "Very small ghost (<5%)",
+          "80mv"
+        ],
+        [
+          "2",
+          "4 (470K)",
+          "PZT6_T (ch4)",
+          "PZT7_R (ch5), T(ch6)",
+          "No ghost",
+          "50mv"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "Sensor settling time = 1us. ADC scan."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Vmid settling time = 0 (+ ADC scan time after vmid switching)."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Sample interval 4us. SPS 5375Hz"
+    },
+    {
+      "kind": "table",
+      "table": 4,
+      "rows": [
+        [
+          "Array",
+          "MUX",
+          "Pressed",
+          "Tested",
+          "Results",
+          "Sig p-p"
+        ],
+        [
+          "1",
+          "1 (470K)",
+          "PZT1_T (ch4)",
+          "PZT7_B (ch5)",
+          "No ghost",
+          "60mv"
+        ],
+        [
+          "1",
+          "2 (1M)",
+          "PZT3_T (ch4)",
+          "PZT7_ L (ch5)",
+          "No ghost",
+          "60mv"
+        ],
+        [
+          "1",
+          "3 (470K)",
+          "PZT5_T (ch4)",
+          "PZT7_C (ch5)",
+          "No ghost",
+          "40mV"
+        ],
+        [
+          "1",
+          "4 (1M)",
+          "PZT6_T (ch4)",
+          "PZT7_R (ch5), T(ch6)",
+          "No ghost",
+          "60mv"
+        ],
+        [
+          "2",
+          "1 (1M)",
+          "PZT1_T (ch4)",
+          "PZT7_B (ch5)",
+          "No ghost",
+          "200mv"
+        ],
+        [
+          "2",
+          "2 (470K)",
+          "PZT3_T (ch4)",
+          "PZT7_ L (ch5)",
+          "No ghost",
+          "150mv"
+        ],
+        [
+          "2",
+          "3 (1M)",
+          "PZT5_T (ch4)",
+          "PZT7_C (ch5)",
+          "Very small ghost (<1%)",
+          "250mv"
+        ],
+        [
+          "2",
+          "4 (470K)",
+          "PZT6_T (ch4)",
+          "PZT7_R (ch5), T(ch6)",
+          "Almost no ghost (<1%, noise pattern changes)",
+          "200mv"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "Sensor settling time = 1us. ADC scan."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Vmid settling time = 0 (NO ADC scan after vmid switching)."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Sample interval 2us. SPS 9320Hz"
+    },
+    {
+      "kind": "table",
+      "table": 5,
+      "rows": [
+        [
+          "Array",
+          "MUX",
+          "Pressed",
+          "Tested",
+          "Results",
+          "Sig p-p"
+        ],
+        [
+          "1",
+          "1 (470K)",
+          "PZT1_T (ch4)",
+          "PZT7_B (ch5)",
+          "No ghost",
+          "40mv"
+        ],
+        [
+          "1",
+          "2 (1M)",
+          "PZT3_T (ch4)",
+          "PZT7_ L (ch5)",
+          "No ghost",
+          "40mv"
+        ],
+        [
+          "1",
+          "3 (470K)",
+          "PZT5_T (ch4)",
+          "PZT7_C (ch5)",
+          "No ghost",
+          "40mV"
+        ],
+        [
+          "1",
+          "4 (1M)",
+          "PZT6_T (ch4)",
+          "PZT7_R (ch5), T(ch6)",
+          "No ghost",
+          "50mv"
+        ],
+        [
+          "2",
+          "1 (1M)",
+          "PZT1_T (ch4)",
+          "PZT7_B (ch5)",
+          "Very small ghost (<2%)",
+          "100mv"
+        ],
+        [
+          "2",
+          "2 (470K)",
+          "PZT3_T (ch4)",
+          "PZT7_ L (ch5)",
+          "Very small ghost (<1%)",
+          "40mv"
+        ],
+        [
+          "2",
+          "3 (1M)",
+          "PZT5_T (ch4)",
+          "PZT7_C (ch5)",
+          "Very small ghost (<1%)",
+          "50mv"
+        ],
+        [
+          "2",
+          "4 (470K)",
+          "PZT6_T (ch4)",
+          "PZT7_R (ch5), T(ch6)",
+          "Almost no ghost (<1%, noise pattern changes)",
+          "40mv"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "text": "Sensor settling time = 1us. ADC scan."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Vmid settling time = 5 (NO ADC scan after vmid switching)."
+    },
+    {
+      "kind": "paragraph",
+      "text": "Sample interval 4us. SPS 5620Hz"
+    },
+    {
+      "kind": "table",
+      "table": 6,
+      "rows": [
+        [
+          "Array",
+          "MUX",
+          "Pressed",
+          "Tested",
+          "Results",
+          "Sig p-p"
+        ],
+        [
+          "1",
+          "1 (470K)",
+          "PZT1_T (ch4)",
+          "PZT7_B (ch5)",
+          "No ghost",
+          "50mv"
+        ],
+        [
+          "1",
+          "2 (1M)",
+          "PZT3_T (ch4)",
+          "PZT7_ L (ch5)",
+          "No ghost",
+          "50mv"
+        ],
+        [
+          "1",
+          "3 (470K)",
+          "PZT5_T (ch4)",
+          "PZT7_C (ch5)",
+          "No ghost",
+          "40mV"
+        ],
+        [
+          "1",
+          "4 (1M)",
+          "PZT6_T (ch4)",
+          "PZT7_R (ch5), T(ch6)",
+          "No ghost",
+          "70mv"
+        ],
+        [
+          "2",
+          "1 (1M)",
+          "PZT1_T (ch4)",
+          "PZT7_B (ch5)",
+          "No ghost",
+          "200mv"
+        ],
+        [
+          "2",
+          "2 (470K)",
+          "PZT3_T (ch4)",
+          "PZT7_ L (ch5)",
+          "No ghost",
+          "150mv"
+        ],
+        [
+          "2",
+          "3 (1M)",
+          "PZT5_T (ch4)",
+          "PZT7_C (ch5)",
+          "Very small ghost (<1%)",
+          "250mv"
+        ],
+        [
+          "2",
+          "4 (470K)",
+          "PZT6_T (ch4)",
+          "PZT7_R (ch5), T(ch6)",
+          "Almost no ghost (<1%, noise pattern changes)",
+          "200mv"
+        ]
+      ]
+    }
+  ],
+  "tables": [
+    [
+      [
+        "Array",
+        "MUX (resistor value)",
+        "Channel pressed",
+        "Channel tested"
+      ],
+      [
+        "1",
+        "1 470K)",
+        "PZT1_T (ch4)",
+        "PZT7_B (ch5)"
+      ],
+      [
+        "1",
+        "2 (1M)",
+        "PZT3_T (ch4)",
+        "PZT7_ L (ch5)"
+      ],
+      [
+        "1",
+        "3 (470K)",
+        "PZT5_T (ch4)",
+        "PZT7_C (ch5)"
+      ],
+      [
+        "1",
+        "4 (1M)",
+        "PZT6_T (ch4)",
+        "PZT7_R (ch5), T(ch6)"
+      ],
+      [
+        "2",
+        "1 (1M)",
+        "PZT1_T (ch4)",
+        "PZT7_B (ch5)"
+      ],
+      [
+        "2",
+        "2 (470K)",
+        "PZT3_T (ch4)",
+        "PZT7_ L (ch5)"
+      ],
+      [
+        "2",
+        "3 (1M)",
+        "PZT5_T (ch4)",
+        "PZT7_C (ch5)"
+      ],
+      [
+        "2",
+        "4 (470K)",
+        "PZT6_T (ch4)",
+        "PZT7_R (ch5), T(ch6)"
+      ]
+    ],
+    [
+      [
+        "Array",
+        "MUX",
+        "Pressed",
+        "Tested",
+        "Results",
+        "Sig p-p"
+      ],
+      [
+        "1",
+        "1 470K)",
+        "PZT1_T (ch4)",
+        "PZT7_B (ch5)",
+        "Very strong ghost (90%)",
+        "30mv"
+      ],
+      [
+        "1",
+        "2 (1M)",
+        "PZT3_T (ch4)",
+        "PZT7_ L (ch5)",
+        "Very strong ghost (90%)",
+        "80mv"
+      ],
+      [
+        "1",
+        "3 (470K)",
+        "PZT5_T (ch4)",
+        "PZT7_C (ch5)",
+        "Very strong ghost (90%)",
+        "60mV"
+      ],
+      [
+        "1",
+        "4 (1M)",
+        "PZT6_T (ch4)",
+        "PZT7_R (ch5), T(ch6)",
+        "Very strong ghost (90%). Ghost on second channel.",
+        "80mv"
+      ],
+      [
+        "2",
+        "1 (1M)",
+        "PZT1_T (ch4)",
+        "PZT7_B (ch5)",
+        "Strong ghost (50%)",
+        "180mv"
+      ],
+      [
+        "2",
+        "2 (470K)",
+        "PZT3_T (ch4)",
+        "PZT7_ L (ch5)",
+        "Ghost (30%)",
+        "150mv"
+      ],
+      [
+        "2",
+        "3 (1M)",
+        "PZT5_T (ch4)",
+        "PZT7_C (ch5)",
+        "Ghost (30%)",
+        "250mv"
+      ],
+      [
+        "2",
+        "4 (470K)",
+        "PZT6_T (ch4)",
+        "PZT7_R (ch5), T(ch6)",
+        "Ghost (30%). Hardly any ghost on second channel.",
+        "100mv"
+      ]
+    ],
+    [
+      [
+        "Array",
+        "MUX",
+        "Pressed",
+        "Tested",
+        "Results",
+        "Sig p-p"
+      ],
+      [
+        "1",
+        "1 (470K)",
+        "PZT1_T (ch4)",
+        "PZT7_B (ch5)",
+        "No ghost",
+        "30mv"
+      ],
+      [
+        "1",
+        "2 (1M)",
+        "PZT3_T (ch4)",
+        "PZT7_ L (ch5)",
+        "No ghost",
+        "60mv"
+      ],
+      [
+        "1",
+        "3 (470K)",
+        "PZT5_T (ch4)",
+        "PZT7_C (ch5)",
+        "No ghost",
+        "40mV"
+      ],
+      [
+        "1",
+        "4 (1M)",
+        "PZT6_T (ch4)",
+        "PZT7_R (ch5), T(ch6)",
+        "No ghost",
+        "40mv"
+      ],
+      [
+        "2",
+        "1 (1M)",
+        "PZT1_T (ch4)",
+        "PZT7_B (ch5)",
+        "No ghost",
+        "180mv"
+      ],
+      [
+        "2",
+        "2 (470K)",
+        "PZT3_T (ch4)",
+        "PZT7_ L (ch5)",
+        "No ghost",
+        "150mv"
+      ],
+      [
+        "2",
+        "3 (1M)",
+        "PZT5_T (ch4)",
+        "PZT7_C (ch5)",
+        "Very small ghost (<5%)",
+        "250mv"
+      ],
+      [
+        "2",
+        "4 (470K)",
+        "PZT6_T (ch4)",
+        "PZT7_R (ch5), T(ch6)",
+        "No ghost",
+        "100mv"
+      ]
+    ],
+    [
+      [
+        "Array",
+        "MUX",
+        "Pressed",
+        "Tested",
+        "Results",
+        "Sig p-p"
+      ],
+      [
+        "1",
+        "1 (470K)",
+        "PZT1_T (ch4)",
+        "PZT7_B (ch5)",
+        "No ghost",
+        "30mv"
+      ],
+      [
+        "1",
+        "2 (1M)",
+        "PZT3_T (ch4)",
+        "PZT7_ L (ch5)",
+        "No ghost",
+        "30mv"
+      ],
+      [
+        "1",
+        "3 (470K)",
+        "PZT5_T (ch4)",
+        "PZT7_C (ch5)",
+        "Almost no ghost (<1%, noise pattern changes)",
+        "30mV"
+      ],
+      [
+        "1",
+        "4 (1M)",
+        "PZT6_T (ch4)",
+        "PZT7_R (ch5), T(ch6)",
+        "No ghost",
+        "35mv"
+      ],
+      [
+        "2",
+        "1 (1M)",
+        "PZT1_T (ch4)",
+        "PZT7_B (ch5)",
+        "No ghost",
+        "150mv"
+      ],
+      [
+        "2",
+        "2 (470K)",
+        "PZT3_T (ch4)",
+        "PZT7_ L (ch5)",
+        "No ghost",
+        "60mv"
+      ],
+      [
+        "2",
+        "3 (1M)",
+        "PZT5_T (ch4)",
+        "PZT7_C (ch5)",
+        "Very small ghost (<5%)",
+        "80mv"
+      ],
+      [
+        "2",
+        "4 (470K)",
+        "PZT6_T (ch4)",
+        "PZT7_R (ch5), T(ch6)",
+        "No ghost",
+        "50mv"
+      ]
+    ],
+    [
+      [
+        "Array",
+        "MUX",
+        "Pressed",
+        "Tested",
+        "Results",
+        "Sig p-p"
+      ],
+      [
+        "1",
+        "1 (470K)",
+        "PZT1_T (ch4)",
+        "PZT7_B (ch5)",
+        "No ghost",
+        "60mv"
+      ],
+      [
+        "1",
+        "2 (1M)",
+        "PZT3_T (ch4)",
+        "PZT7_ L (ch5)",
+        "No ghost",
+        "60mv"
+      ],
+      [
+        "1",
+        "3 (470K)",
+        "PZT5_T (ch4)",
+        "PZT7_C (ch5)",
+        "No ghost",
+        "40mV"
+      ],
+      [
+        "1",
+        "4 (1M)",
+        "PZT6_T (ch4)",
+        "PZT7_R (ch5), T(ch6)",
+        "No ghost",
+        "60mv"
+      ],
+      [
+        "2",
+        "1 (1M)",
+        "PZT1_T (ch4)",
+        "PZT7_B (ch5)",
+        "No ghost",
+        "200mv"
+      ],
+      [
+        "2",
+        "2 (470K)",
+        "PZT3_T (ch4)",
+        "PZT7_ L (ch5)",
+        "No ghost",
+        "150mv"
+      ],
+      [
+        "2",
+        "3 (1M)",
+        "PZT5_T (ch4)",
+        "PZT7_C (ch5)",
+        "Very small ghost (<1%)",
+        "250mv"
+      ],
+      [
+        "2",
+        "4 (470K)",
+        "PZT6_T (ch4)",
+        "PZT7_R (ch5), T(ch6)",
+        "Almost no ghost (<1%, noise pattern changes)",
+        "200mv"
+      ]
+    ],
+    [
+      [
+        "Array",
+        "MUX",
+        "Pressed",
+        "Tested",
+        "Results",
+        "Sig p-p"
+      ],
+      [
+        "1",
+        "1 (470K)",
+        "PZT1_T (ch4)",
+        "PZT7_B (ch5)",
+        "No ghost",
+        "40mv"
+      ],
+      [
+        "1",
+        "2 (1M)",
+        "PZT3_T (ch4)",
+        "PZT7_ L (ch5)",
+        "No ghost",
+        "40mv"
+      ],
+      [
+        "1",
+        "3 (470K)",
+        "PZT5_T (ch4)",
+        "PZT7_C (ch5)",
+        "No ghost",
+        "40mV"
+      ],
+      [
+        "1",
+        "4 (1M)",
+        "PZT6_T (ch4)",
+        "PZT7_R (ch5), T(ch6)",
+        "No ghost",
+        "50mv"
+      ],
+      [
+        "2",
+        "1 (1M)",
+        "PZT1_T (ch4)",
+        "PZT7_B (ch5)",
+        "Very small ghost (<2%)",
+        "100mv"
+      ],
+      [
+        "2",
+        "2 (470K)",
+        "PZT3_T (ch4)",
+        "PZT7_ L (ch5)",
+        "Very small ghost (<1%)",
+        "40mv"
+      ],
+      [
+        "2",
+        "3 (1M)",
+        "PZT5_T (ch4)",
+        "PZT7_C (ch5)",
+        "Very small ghost (<1%)",
+        "50mv"
+      ],
+      [
+        "2",
+        "4 (470K)",
+        "PZT6_T (ch4)",
+        "PZT7_R (ch5), T(ch6)",
+        "Almost no ghost (<1%, noise pattern changes)",
+        "40mv"
+      ]
+    ],
+    [
+      [
+        "Array",
+        "MUX",
+        "Pressed",
+        "Tested",
+        "Results",
+        "Sig p-p"
+      ],
+      [
+        "1",
+        "1 (470K)",
+        "PZT1_T (ch4)",
+        "PZT7_B (ch5)",
+        "No ghost",
+        "50mv"
+      ],
+      [
+        "1",
+        "2 (1M)",
+        "PZT3_T (ch4)",
+        "PZT7_ L (ch5)",
+        "No ghost",
+        "50mv"
+      ],
+      [
+        "1",
+        "3 (470K)",
+        "PZT5_T (ch4)",
+        "PZT7_C (ch5)",
+        "No ghost",
+        "40mV"
+      ],
+      [
+        "1",
+        "4 (1M)",
+        "PZT6_T (ch4)",
+        "PZT7_R (ch5), T(ch6)",
+        "No ghost",
+        "70mv"
+      ],
+      [
+        "2",
+        "1 (1M)",
+        "PZT1_T (ch4)",
+        "PZT7_B (ch5)",
+        "No ghost",
+        "200mv"
+      ],
+      [
+        "2",
+        "2 (470K)",
+        "PZT3_T (ch4)",
+        "PZT7_ L (ch5)",
+        "No ghost",
+        "150mv"
+      ],
+      [
+        "2",
+        "3 (1M)",
+        "PZT5_T (ch4)",
+        "PZT7_C (ch5)",
+        "Very small ghost (<1%)",
+        "250mv"
+      ],
+      [
+        "2",
+        "4 (470K)",
+        "PZT6_T (ch4)",
+        "PZT7_R (ch5), T(ch6)",
+        "Almost no ghost (<1%, noise pattern changes)",
+        "200mv"
+      ]
+    ]
+  ],
+  "comments_parts": [],
+  "tracked_insertions": 0,
+  "tracked_deletions": 0,
+  "conditions": [
+    {
+      "id": "G0",
+      "vmid": false,
+      "sensor_us": 5,
+      "order": "ADC",
+      "vmid_us": null,
+      "vmid_adc": false,
+      "sps": null,
+      "gui_interval_us": null
+    },
+    {
+      "id": "G1",
+      "vmid": true,
+      "sensor_us": 5,
+      "order": "ADC",
+      "vmid_us": 0,
+      "vmid_adc": true,
+      "sps": 4140,
+      "gui_interval_us": 5
+    },
+    {
+      "id": "G2",
+      "vmid": true,
+      "sensor_us": 5,
+      "order": "MUX",
+      "vmid_us": 0,
+      "vmid_adc": true,
+      "sps": 5000,
+      "gui_interval_us": 4
+    },
+    {
+      "id": "G3",
+      "vmid": true,
+      "sensor_us": 1,
+      "order": "ADC",
+      "vmid_us": 0,
+      "vmid_adc": true,
+      "sps": 5375,
+      "gui_interval_us": 4
+    },
+    {
+      "id": "G4",
+      "vmid": true,
+      "sensor_us": 1,
+      "order": "ADC",
+      "vmid_us": 0,
+      "vmid_adc": false,
+      "sps": 9320,
+      "gui_interval_us": 2
+    },
+    {
+      "id": "G5",
+      "vmid": true,
+      "sensor_us": 1,
+      "order": "ADC",
+      "vmid_us": 5,
+      "vmid_adc": false,
+      "sps": 5620,
+      "gui_interval_us": 4
+    }
+  ],
+  "records": [
+    {
+      "condition": "G0",
+      "array": 1,
+      "mux": 1,
+      "bias_ohms": 470000,
+      "pressed": "PZT1_T (ch4)",
+      "tested": "PZT7_B (ch5)",
+      "observation": "Very strong ghost (90%)",
+      "ghost_kind": "visual_approximation",
+      "ghost_percent": 90.0,
+      "ghost_short": "~90%",
+      "main_pp_mV": 30.0,
+      "main_pp_volts": 0.03,
+      "main_pp_counts_nominal": 37.236363636363635,
+      "illustrative_ghost_mV": 27.0,
+      "illustrative_ghost_counts": 33.512727272727275
+    },
+    {
+      "condition": "G0",
+      "array": 1,
+      "mux": 2,
+      "bias_ohms": 1000000,
+      "pressed": "PZT3_T (ch4)",
+      "tested": "PZT7_ L (ch5)",
+      "observation": "Very strong ghost (90%)",
+      "ghost_kind": "visual_approximation",
+      "ghost_percent": 90.0,
+      "ghost_short": "~90%",
+      "main_pp_mV": 80.0,
+      "main_pp_volts": 0.08,
+      "main_pp_counts_nominal": 99.2969696969697,
+      "illustrative_ghost_mV": 72.0,
+      "illustrative_ghost_counts": 89.36727272727273
+    },
+    {
+      "condition": "G0",
+      "array": 1,
+      "mux": 3,
+      "bias_ohms": 470000,
+      "pressed": "PZT5_T (ch4)",
+      "tested": "PZT7_C (ch5)",
+      "observation": "Very strong ghost (90%)",
+      "ghost_kind": "visual_approximation",
+      "ghost_percent": 90.0,
+      "ghost_short": "~90%",
+      "main_pp_mV": 60.0,
+      "main_pp_volts": 0.06,
+      "main_pp_counts_nominal": 74.47272727272727,
+      "illustrative_ghost_mV": 54.0,
+      "illustrative_ghost_counts": 67.02545454545455
+    },
+    {
+      "condition": "G0",
+      "array": 1,
+      "mux": 4,
+      "bias_ohms": 1000000,
+      "pressed": "PZT6_T (ch4)",
+      "tested": "PZT7_R (ch5), T(ch6)",
+      "observation": "Very strong ghost (90%). Ghost on second channel.",
+      "ghost_kind": "visual_approximation",
+      "ghost_percent": 90.0,
+      "ghost_short": "~90%",
+      "main_pp_mV": 80.0,
+      "main_pp_volts": 0.08,
+      "main_pp_counts_nominal": 99.2969696969697,
+      "illustrative_ghost_mV": 72.0,
+      "illustrative_ghost_counts": 89.36727272727273
+    },
+    {
+      "condition": "G0",
+      "array": 2,
+      "mux": 1,
+      "bias_ohms": 1000000,
+      "pressed": "PZT1_T (ch4)",
+      "tested": "PZT7_B (ch5)",
+      "observation": "Strong ghost (50%)",
+      "ghost_kind": "visual_approximation",
+      "ghost_percent": 50.0,
+      "ghost_short": "~50%",
+      "main_pp_mV": 180.0,
+      "main_pp_volts": 0.18,
+      "main_pp_counts_nominal": 223.4181818181818,
+      "illustrative_ghost_mV": 90.0,
+      "illustrative_ghost_counts": 111.7090909090909
+    },
+    {
+      "condition": "G0",
+      "array": 2,
+      "mux": 2,
+      "bias_ohms": 470000,
+      "pressed": "PZT3_T (ch4)",
+      "tested": "PZT7_ L (ch5)",
+      "observation": "Ghost (30%)",
+      "ghost_kind": "visual_approximation",
+      "ghost_percent": 30.0,
+      "ghost_short": "~30%",
+      "main_pp_mV": 150.0,
+      "main_pp_volts": 0.15,
+      "main_pp_counts_nominal": 186.1818181818182,
+      "illustrative_ghost_mV": 45.0,
+      "illustrative_ghost_counts": 55.85454545454545
+    },
+    {
+      "condition": "G0",
+      "array": 2,
+      "mux": 3,
+      "bias_ohms": 1000000,
+      "pressed": "PZT5_T (ch4)",
+      "tested": "PZT7_C (ch5)",
+      "observation": "Ghost (30%)",
+      "ghost_kind": "visual_approximation",
+      "ghost_percent": 30.0,
+      "ghost_short": "~30%",
+      "main_pp_mV": 250.0,
+      "main_pp_volts": 0.25,
+      "main_pp_counts_nominal": 310.3030303030303,
+      "illustrative_ghost_mV": 75.0,
+      "illustrative_ghost_counts": 93.0909090909091
+    },
+    {
+      "condition": "G0",
+      "array": 2,
+      "mux": 4,
+      "bias_ohms": 470000,
+      "pressed": "PZT6_T (ch4)",
+      "tested": "PZT7_R (ch5), T(ch6)",
+      "observation": "Ghost (30%). Hardly any ghost on second channel.",
+      "ghost_kind": "visual_approximation",
+      "ghost_percent": 30.0,
+      "ghost_short": "~30%",
+      "main_pp_mV": 100.0,
+      "main_pp_volts": 0.1,
+      "main_pp_counts_nominal": 124.12121212121212,
+      "illustrative_ghost_mV": 30.0,
+      "illustrative_ghost_counts": 37.236363636363635
+    },
+    {
+      "condition": "G1",
+      "array": 1,
+      "mux": 1,
+      "bias_ohms": 470000,
+      "pressed": "PZT1_T (ch4)",
+      "tested": "PZT7_B (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 30.0,
+      "main_pp_volts": 0.03,
+      "main_pp_counts_nominal": 37.236363636363635,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G1",
+      "array": 1,
+      "mux": 2,
+      "bias_ohms": 1000000,
+      "pressed": "PZT3_T (ch4)",
+      "tested": "PZT7_ L (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 60.0,
+      "main_pp_volts": 0.06,
+      "main_pp_counts_nominal": 74.47272727272727,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G1",
+      "array": 1,
+      "mux": 3,
+      "bias_ohms": 470000,
+      "pressed": "PZT5_T (ch4)",
+      "tested": "PZT7_C (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 40.0,
+      "main_pp_volts": 0.04,
+      "main_pp_counts_nominal": 49.64848484848485,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G1",
+      "array": 1,
+      "mux": 4,
+      "bias_ohms": 1000000,
+      "pressed": "PZT6_T (ch4)",
+      "tested": "PZT7_R (ch5), T(ch6)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 40.0,
+      "main_pp_volts": 0.04,
+      "main_pp_counts_nominal": 49.64848484848485,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G1",
+      "array": 2,
+      "mux": 1,
+      "bias_ohms": 1000000,
+      "pressed": "PZT1_T (ch4)",
+      "tested": "PZT7_B (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 180.0,
+      "main_pp_volts": 0.18,
+      "main_pp_counts_nominal": 223.4181818181818,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G1",
+      "array": 2,
+      "mux": 2,
+      "bias_ohms": 470000,
+      "pressed": "PZT3_T (ch4)",
+      "tested": "PZT7_ L (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 150.0,
+      "main_pp_volts": 0.15,
+      "main_pp_counts_nominal": 186.1818181818182,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G1",
+      "array": 2,
+      "mux": 3,
+      "bias_ohms": 1000000,
+      "pressed": "PZT5_T (ch4)",
+      "tested": "PZT7_C (ch5)",
+      "observation": "Very small ghost (<5%)",
+      "ghost_kind": "visual_upper_estimate",
+      "ghost_percent": 5.0,
+      "ghost_short": "<5%",
+      "main_pp_mV": 250.0,
+      "main_pp_volts": 0.25,
+      "main_pp_counts_nominal": 310.3030303030303,
+      "illustrative_ghost_mV": 12.5,
+      "illustrative_ghost_counts": 15.515151515151516
+    },
+    {
+      "condition": "G1",
+      "array": 2,
+      "mux": 4,
+      "bias_ohms": 470000,
+      "pressed": "PZT6_T (ch4)",
+      "tested": "PZT7_R (ch5), T(ch6)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 100.0,
+      "main_pp_volts": 0.1,
+      "main_pp_counts_nominal": 124.12121212121212,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G2",
+      "array": 1,
+      "mux": 1,
+      "bias_ohms": 470000,
+      "pressed": "PZT1_T (ch4)",
+      "tested": "PZT7_B (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 30.0,
+      "main_pp_volts": 0.03,
+      "main_pp_counts_nominal": 37.236363636363635,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G2",
+      "array": 1,
+      "mux": 2,
+      "bias_ohms": 1000000,
+      "pressed": "PZT3_T (ch4)",
+      "tested": "PZT7_ L (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 30.0,
+      "main_pp_volts": 0.03,
+      "main_pp_counts_nominal": 37.236363636363635,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G2",
+      "array": 1,
+      "mux": 3,
+      "bias_ohms": 470000,
+      "pressed": "PZT5_T (ch4)",
+      "tested": "PZT7_C (ch5)",
+      "observation": "Almost no ghost (<1%, noise pattern changes)",
+      "ghost_kind": "visual_upper_estimate",
+      "ghost_percent": 1.0,
+      "ghost_short": "<1% N",
+      "main_pp_mV": 30.0,
+      "main_pp_volts": 0.03,
+      "main_pp_counts_nominal": 37.236363636363635,
+      "illustrative_ghost_mV": 0.3,
+      "illustrative_ghost_counts": 0.37236363636363634
+    },
+    {
+      "condition": "G2",
+      "array": 1,
+      "mux": 4,
+      "bias_ohms": 1000000,
+      "pressed": "PZT6_T (ch4)",
+      "tested": "PZT7_R (ch5), T(ch6)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 35.0,
+      "main_pp_volts": 0.035,
+      "main_pp_counts_nominal": 43.442424242424245,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G2",
+      "array": 2,
+      "mux": 1,
+      "bias_ohms": 1000000,
+      "pressed": "PZT1_T (ch4)",
+      "tested": "PZT7_B (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 150.0,
+      "main_pp_volts": 0.15,
+      "main_pp_counts_nominal": 186.1818181818182,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G2",
+      "array": 2,
+      "mux": 2,
+      "bias_ohms": 470000,
+      "pressed": "PZT3_T (ch4)",
+      "tested": "PZT7_ L (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 60.0,
+      "main_pp_volts": 0.06,
+      "main_pp_counts_nominal": 74.47272727272727,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G2",
+      "array": 2,
+      "mux": 3,
+      "bias_ohms": 1000000,
+      "pressed": "PZT5_T (ch4)",
+      "tested": "PZT7_C (ch5)",
+      "observation": "Very small ghost (<5%)",
+      "ghost_kind": "visual_upper_estimate",
+      "ghost_percent": 5.0,
+      "ghost_short": "<5%",
+      "main_pp_mV": 80.0,
+      "main_pp_volts": 0.08,
+      "main_pp_counts_nominal": 99.2969696969697,
+      "illustrative_ghost_mV": 4.0,
+      "illustrative_ghost_counts": 4.964848484848485
+    },
+    {
+      "condition": "G2",
+      "array": 2,
+      "mux": 4,
+      "bias_ohms": 470000,
+      "pressed": "PZT6_T (ch4)",
+      "tested": "PZT7_R (ch5), T(ch6)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 50.0,
+      "main_pp_volts": 0.05,
+      "main_pp_counts_nominal": 62.06060606060606,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G3",
+      "array": 1,
+      "mux": 1,
+      "bias_ohms": 470000,
+      "pressed": "PZT1_T (ch4)",
+      "tested": "PZT7_B (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 60.0,
+      "main_pp_volts": 0.06,
+      "main_pp_counts_nominal": 74.47272727272727,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G3",
+      "array": 1,
+      "mux": 2,
+      "bias_ohms": 1000000,
+      "pressed": "PZT3_T (ch4)",
+      "tested": "PZT7_ L (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 60.0,
+      "main_pp_volts": 0.06,
+      "main_pp_counts_nominal": 74.47272727272727,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G3",
+      "array": 1,
+      "mux": 3,
+      "bias_ohms": 470000,
+      "pressed": "PZT5_T (ch4)",
+      "tested": "PZT7_C (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 40.0,
+      "main_pp_volts": 0.04,
+      "main_pp_counts_nominal": 49.64848484848485,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G3",
+      "array": 1,
+      "mux": 4,
+      "bias_ohms": 1000000,
+      "pressed": "PZT6_T (ch4)",
+      "tested": "PZT7_R (ch5), T(ch6)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 60.0,
+      "main_pp_volts": 0.06,
+      "main_pp_counts_nominal": 74.47272727272727,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G3",
+      "array": 2,
+      "mux": 1,
+      "bias_ohms": 1000000,
+      "pressed": "PZT1_T (ch4)",
+      "tested": "PZT7_B (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 200.0,
+      "main_pp_volts": 0.2,
+      "main_pp_counts_nominal": 248.24242424242425,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G3",
+      "array": 2,
+      "mux": 2,
+      "bias_ohms": 470000,
+      "pressed": "PZT3_T (ch4)",
+      "tested": "PZT7_ L (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 150.0,
+      "main_pp_volts": 0.15,
+      "main_pp_counts_nominal": 186.1818181818182,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G3",
+      "array": 2,
+      "mux": 3,
+      "bias_ohms": 1000000,
+      "pressed": "PZT5_T (ch4)",
+      "tested": "PZT7_C (ch5)",
+      "observation": "Very small ghost (<1%)",
+      "ghost_kind": "visual_upper_estimate",
+      "ghost_percent": 1.0,
+      "ghost_short": "<1%",
+      "main_pp_mV": 250.0,
+      "main_pp_volts": 0.25,
+      "main_pp_counts_nominal": 310.3030303030303,
+      "illustrative_ghost_mV": 2.5,
+      "illustrative_ghost_counts": 3.103030303030303
+    },
+    {
+      "condition": "G3",
+      "array": 2,
+      "mux": 4,
+      "bias_ohms": 470000,
+      "pressed": "PZT6_T (ch4)",
+      "tested": "PZT7_R (ch5), T(ch6)",
+      "observation": "Almost no ghost (<1%, noise pattern changes)",
+      "ghost_kind": "visual_upper_estimate",
+      "ghost_percent": 1.0,
+      "ghost_short": "<1% N",
+      "main_pp_mV": 200.0,
+      "main_pp_volts": 0.2,
+      "main_pp_counts_nominal": 248.24242424242425,
+      "illustrative_ghost_mV": 2.0,
+      "illustrative_ghost_counts": 2.4824242424242424
+    },
+    {
+      "condition": "G4",
+      "array": 1,
+      "mux": 1,
+      "bias_ohms": 470000,
+      "pressed": "PZT1_T (ch4)",
+      "tested": "PZT7_B (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 40.0,
+      "main_pp_volts": 0.04,
+      "main_pp_counts_nominal": 49.64848484848485,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G4",
+      "array": 1,
+      "mux": 2,
+      "bias_ohms": 1000000,
+      "pressed": "PZT3_T (ch4)",
+      "tested": "PZT7_ L (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 40.0,
+      "main_pp_volts": 0.04,
+      "main_pp_counts_nominal": 49.64848484848485,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G4",
+      "array": 1,
+      "mux": 3,
+      "bias_ohms": 470000,
+      "pressed": "PZT5_T (ch4)",
+      "tested": "PZT7_C (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 40.0,
+      "main_pp_volts": 0.04,
+      "main_pp_counts_nominal": 49.64848484848485,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G4",
+      "array": 1,
+      "mux": 4,
+      "bias_ohms": 1000000,
+      "pressed": "PZT6_T (ch4)",
+      "tested": "PZT7_R (ch5), T(ch6)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 50.0,
+      "main_pp_volts": 0.05,
+      "main_pp_counts_nominal": 62.06060606060606,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G4",
+      "array": 2,
+      "mux": 1,
+      "bias_ohms": 1000000,
+      "pressed": "PZT1_T (ch4)",
+      "tested": "PZT7_B (ch5)",
+      "observation": "Very small ghost (<2%)",
+      "ghost_kind": "visual_upper_estimate",
+      "ghost_percent": 2.0,
+      "ghost_short": "<2%",
+      "main_pp_mV": 100.0,
+      "main_pp_volts": 0.1,
+      "main_pp_counts_nominal": 124.12121212121212,
+      "illustrative_ghost_mV": 2.0,
+      "illustrative_ghost_counts": 2.4824242424242424
+    },
+    {
+      "condition": "G4",
+      "array": 2,
+      "mux": 2,
+      "bias_ohms": 470000,
+      "pressed": "PZT3_T (ch4)",
+      "tested": "PZT7_ L (ch5)",
+      "observation": "Very small ghost (<1%)",
+      "ghost_kind": "visual_upper_estimate",
+      "ghost_percent": 1.0,
+      "ghost_short": "<1%",
+      "main_pp_mV": 40.0,
+      "main_pp_volts": 0.04,
+      "main_pp_counts_nominal": 49.64848484848485,
+      "illustrative_ghost_mV": 0.4,
+      "illustrative_ghost_counts": 0.49648484848484853
+    },
+    {
+      "condition": "G4",
+      "array": 2,
+      "mux": 3,
+      "bias_ohms": 1000000,
+      "pressed": "PZT5_T (ch4)",
+      "tested": "PZT7_C (ch5)",
+      "observation": "Very small ghost (<1%)",
+      "ghost_kind": "visual_upper_estimate",
+      "ghost_percent": 1.0,
+      "ghost_short": "<1%",
+      "main_pp_mV": 50.0,
+      "main_pp_volts": 0.05,
+      "main_pp_counts_nominal": 62.06060606060606,
+      "illustrative_ghost_mV": 0.5,
+      "illustrative_ghost_counts": 0.6206060606060606
+    },
+    {
+      "condition": "G4",
+      "array": 2,
+      "mux": 4,
+      "bias_ohms": 470000,
+      "pressed": "PZT6_T (ch4)",
+      "tested": "PZT7_R (ch5), T(ch6)",
+      "observation": "Almost no ghost (<1%, noise pattern changes)",
+      "ghost_kind": "visual_upper_estimate",
+      "ghost_percent": 1.0,
+      "ghost_short": "<1% N",
+      "main_pp_mV": 40.0,
+      "main_pp_volts": 0.04,
+      "main_pp_counts_nominal": 49.64848484848485,
+      "illustrative_ghost_mV": 0.4,
+      "illustrative_ghost_counts": 0.49648484848484853
+    },
+    {
+      "condition": "G5",
+      "array": 1,
+      "mux": 1,
+      "bias_ohms": 470000,
+      "pressed": "PZT1_T (ch4)",
+      "tested": "PZT7_B (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 50.0,
+      "main_pp_volts": 0.05,
+      "main_pp_counts_nominal": 62.06060606060606,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G5",
+      "array": 1,
+      "mux": 2,
+      "bias_ohms": 1000000,
+      "pressed": "PZT3_T (ch4)",
+      "tested": "PZT7_ L (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 50.0,
+      "main_pp_volts": 0.05,
+      "main_pp_counts_nominal": 62.06060606060606,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G5",
+      "array": 1,
+      "mux": 3,
+      "bias_ohms": 470000,
+      "pressed": "PZT5_T (ch4)",
+      "tested": "PZT7_C (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 40.0,
+      "main_pp_volts": 0.04,
+      "main_pp_counts_nominal": 49.64848484848485,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G5",
+      "array": 1,
+      "mux": 4,
+      "bias_ohms": 1000000,
+      "pressed": "PZT6_T (ch4)",
+      "tested": "PZT7_R (ch5), T(ch6)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 70.0,
+      "main_pp_volts": 0.07,
+      "main_pp_counts_nominal": 86.88484848484849,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G5",
+      "array": 2,
+      "mux": 1,
+      "bias_ohms": 1000000,
+      "pressed": "PZT1_T (ch4)",
+      "tested": "PZT7_B (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 200.0,
+      "main_pp_volts": 0.2,
+      "main_pp_counts_nominal": 248.24242424242425,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G5",
+      "array": 2,
+      "mux": 2,
+      "bias_ohms": 470000,
+      "pressed": "PZT3_T (ch4)",
+      "tested": "PZT7_ L (ch5)",
+      "observation": "No ghost",
+      "ghost_kind": "not_observed",
+      "ghost_percent": null,
+      "ghost_short": "ND",
+      "main_pp_mV": 150.0,
+      "main_pp_volts": 0.15,
+      "main_pp_counts_nominal": 186.1818181818182,
+      "illustrative_ghost_mV": null,
+      "illustrative_ghost_counts": null
+    },
+    {
+      "condition": "G5",
+      "array": 2,
+      "mux": 3,
+      "bias_ohms": 1000000,
+      "pressed": "PZT5_T (ch4)",
+      "tested": "PZT7_C (ch5)",
+      "observation": "Very small ghost (<1%)",
+      "ghost_kind": "visual_upper_estimate",
+      "ghost_percent": 1.0,
+      "ghost_short": "<1%",
+      "main_pp_mV": 250.0,
+      "main_pp_volts": 0.25,
+      "main_pp_counts_nominal": 310.3030303030303,
+      "illustrative_ghost_mV": 2.5,
+      "illustrative_ghost_counts": 3.103030303030303
+    },
+    {
+      "condition": "G5",
+      "array": 2,
+      "mux": 4,
+      "bias_ohms": 470000,
+      "pressed": "PZT6_T (ch4)",
+      "tested": "PZT7_R (ch5), T(ch6)",
+      "observation": "Almost no ghost (<1%, noise pattern changes)",
+      "ghost_kind": "visual_upper_estimate",
+      "ghost_percent": 1.0,
+      "ghost_short": "<1% N",
+      "main_pp_mV": 200.0,
+      "main_pp_volts": 0.2,
+      "main_pp_counts_nominal": 248.24242424242425,
+      "illustrative_ghost_mV": 2.0,
+      "illustrative_ghost_counts": 2.4824242424242424
+    }
+  ],
+  "user_clarifications": [
+    "SPS and sample interval copied from GUI Sampling Rate panel; SPS is per-channel rate.",
+    "User confirms original DOCX tests used blocking SPI and supplies three LPSPI rerun rates in a chat image on 20 October 2026.",
+    "Ghosting reported unchanged for the LPSPI reruns; no new per-route amplitudes or detailed ghosting table supplied.",
+    "User uses the same sensor strip on both arrays, moving it between arrays for each test."
+  ],
+  "engine_default": "lpspi",
+  "original_test_engine": "blocking",
+  "engine_historical_runtime": "Engines confirmed by user; no saved hardware status log",
+  "strip_assignment": "Same sensor strip moved between arrays for each test, confirmed by user",
+  "lpspi_rerun_source": "User-supplied chat image and confirmation, 20 October 2026; original DOCX unchanged",
+  "engine_comparison": [
+    {
+      "condition": "G0",
+      "order": "ADC",
+      "sensor_us": 5,
+      "vmid": false,
+      "vmid_us": null,
+      "vmid_adc": false,
+      "blocking_sps": null,
+      "blocking_gui_interval_us": null,
+      "lpspi_sps": 6736,
+      "lpspi_gui_interval_us": 3,
+      "blocking_period_us": null,
+      "lpspi_period_us": 148.45605700712588,
+      "rate_increase_percent": null,
+      "period_saved_us": null,
+      "lpspi_ghosting": "User reports unchanged",
+      "lpspi_main_amplitude": "Not provided"
+    },
+    {
+      "condition": "G1",
+      "order": "ADC",
+      "sensor_us": 5,
+      "vmid": true,
+      "vmid_us": 0,
+      "vmid_adc": true,
+      "blocking_sps": 4140,
+      "blocking_gui_interval_us": 5,
+      "lpspi_sps": null,
+      "lpspi_gui_interval_us": null,
+      "blocking_period_us": 241.54589371980677,
+      "lpspi_period_us": null,
+      "rate_increase_percent": null,
+      "period_saved_us": null,
+      "lpspi_ghosting": "Not rerun / not reported",
+      "lpspi_main_amplitude": "Not provided"
+    },
+    {
+      "condition": "G2",
+      "order": "MUX",
+      "sensor_us": 5,
+      "vmid": true,
+      "vmid_us": 0,
+      "vmid_adc": true,
+      "blocking_sps": 5000,
+      "blocking_gui_interval_us": 4,
+      "lpspi_sps": null,
+      "lpspi_gui_interval_us": null,
+      "blocking_period_us": 200.0,
+      "lpspi_period_us": null,
+      "rate_increase_percent": null,
+      "period_saved_us": null,
+      "lpspi_ghosting": "Not rerun / not reported",
+      "lpspi_main_amplitude": "Not provided"
+    },
+    {
+      "condition": "G3",
+      "order": "ADC",
+      "sensor_us": 1,
+      "vmid": true,
+      "vmid_us": 0,
+      "vmid_adc": true,
+      "blocking_sps": 5375,
+      "blocking_gui_interval_us": 4,
+      "lpspi_sps": null,
+      "lpspi_gui_interval_us": null,
+      "blocking_period_us": 186.04651162790697,
+      "lpspi_period_us": null,
+      "rate_increase_percent": null,
+      "period_saved_us": null,
+      "lpspi_ghosting": "Not rerun / not reported",
+      "lpspi_main_amplitude": "Not provided"
+    },
+    {
+      "condition": "G4",
+      "order": "ADC",
+      "sensor_us": 1,
+      "vmid": true,
+      "vmid_us": 0,
+      "vmid_adc": false,
+      "blocking_sps": 9320,
+      "blocking_gui_interval_us": 2,
+      "lpspi_sps": 10000,
+      "lpspi_gui_interval_us": 2,
+      "blocking_period_us": 107.29613733905579,
+      "lpspi_period_us": 100.0,
+      "rate_increase_percent": 7.296137339055786,
+      "period_saved_us": 7.2961373390557895,
+      "lpspi_ghosting": "User reports unchanged",
+      "lpspi_main_amplitude": "Not provided"
+    },
+    {
+      "condition": "G5",
+      "order": "ADC",
+      "sensor_us": 1,
+      "vmid": true,
+      "vmid_us": 5,
+      "vmid_adc": false,
+      "blocking_sps": 5620,
+      "blocking_gui_interval_us": 4,
+      "lpspi_sps": 5880,
+      "lpspi_gui_interval_us": 3,
+      "blocking_period_us": 177.93594306049823,
+      "lpspi_period_us": 170.06802721088437,
+      "rate_increase_percent": 4.62633451957295,
+      "period_saved_us": 7.8679158496138655,
+      "lpspi_ghosting": "User reports unchanged",
+      "lpspi_main_amplitude": "Not provided"
+    }
+  ],
+  "test_date": "Not stated in source; report updated 20 October 2026"
+}

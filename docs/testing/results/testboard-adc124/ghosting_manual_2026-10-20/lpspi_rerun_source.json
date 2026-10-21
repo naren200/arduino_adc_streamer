@@ -1,0 +1,21 @@
+{
+  "source": "User-supplied chat image and confirmation, 20 October 2026; original DOCX unchanged",
+  "results": {
+    "G0": {
+      "sps": 6736,
+      "gui_interval_us": 3
+    },
+    "G4": {
+      "sps": 10000,
+      "gui_interval_us": 2
+    },
+    "G5": {
+      "sps": 5880,
+      "gui_interval_us": 3
+    }
+  },
+  "ghosting": "User reports unchanged for the three rerun conditions",
+  "main_amplitudes": "Not supplied",
+  "original_engine": "blocking",
+  "current_default_engine": "lpspi"
+}

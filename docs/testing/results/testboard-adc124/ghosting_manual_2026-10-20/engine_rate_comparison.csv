@@ -1,0 +1,7 @@
+﻿condition,order,sensor_us,vmid,vmid_us,vmid_adc,blocking_sps,blocking_gui_interval_us,lpspi_sps,lpspi_gui_interval_us,blocking_period_us,lpspi_period_us,rate_increase_percent,period_saved_us,lpspi_ghosting,lpspi_main_amplitude
+G0,ADC,5,False,,False,,,6736,3,,148.45605700712588,,,User reports unchanged,Not provided
+G1,ADC,5,True,0,True,4140,5,,,241.54589371980677,,,,Not rerun / not reported,Not provided
+G2,MUX,5,True,0,True,5000,4,,,200.0,,,,Not rerun / not reported,Not provided
+G3,ADC,1,True,0,True,5375,4,,,186.04651162790697,,,,Not rerun / not reported,Not provided
+G4,ADC,1,True,0,False,9320,2,10000,2,107.29613733905579,100.0,7.296137339055786,7.2961373390557895,User reports unchanged,Not provided
+G5,ADC,1,True,5,False,5620,4,5880,3,177.93594306049823,170.06802721088437,4.62633451957295,7.8679158496138655,User reports unchanged,Not provided

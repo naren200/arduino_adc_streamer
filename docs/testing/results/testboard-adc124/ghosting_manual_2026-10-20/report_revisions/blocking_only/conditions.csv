@@ -1,0 +1,7 @@
+﻿id,vmid,sensor_us,order,vmid_us,vmid_adc,sps,gui_interval_us
+G0,False,5,ADC,,False,,
+G1,True,5,ADC,0,True,4140,5
+G2,True,5,MUX,0,True,5000,4
+G3,True,1,ADC,0,True,5375,4
+G4,True,1,ADC,0,False,9320,2
+G5,True,1,ADC,5,False,5620,4

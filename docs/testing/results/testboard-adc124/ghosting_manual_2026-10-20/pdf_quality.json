@@ -1,0 +1,89 @@
+{
+  "sha256": "71f86980a20f55f6377eb6144c2327ed8f6803df0417001171e3a7a03919ef27",
+  "pages": 16,
+  "blank_pages": [],
+  "text_out_of_bounds": [],
+  "renderer": "Poppler 26.09.0 at 115 dpi",
+  "page_headings": [
+    {
+      "page": 1,
+      "title": "TestBoard ADC124 manual ghosting comparison",
+      "characters": 2064
+    },
+    {
+      "page": 2,
+      "title": "Test method and physical channel mapping",
+      "characters": 1689
+    },
+    {
+      "page": 3,
+      "title": "Original blocking test conditions and timing",
+      "characters": 998
+    },
+    {
+      "page": 4,
+      "title": "Blocking and LPSPI sampling comparison",
+      "characters": 1102
+    },
+    {
+      "page": 5,
+      "title": "Original blocking ghosting observations",
+      "characters": 1779
+    },
+    {
+      "page": 6,
+      "title": "Original blocking main signal amplitudes",
+      "characters": 897
+    },
+    {
+      "page": 7,
+      "title": "Effects of settling within the blocking tests",
+      "characters": 2293
+    },
+    {
+      "page": 8,
+      "title": "Electrical interpretation of the array differences",
+      "characters": 2290
+    },
+    {
+      "page": 9,
+      "title": "Configuration choices and required confirmation",
+      "characters": 2269
+    },
+    {
+      "page": 10,
+      "title": "Measurement limits units and references",
+      "characters": 2804
+    },
+    {
+      "page": 11,
+      "title": "Appendix G0 complete manual observations",
+      "characters": 1503
+    },
+    {
+      "page": 12,
+      "title": "Appendix G1 complete manual observations",
+      "characters": 1309
+    },
+    {
+      "page": 13,
+      "title": "Appendix G2 complete manual observations",
+      "characters": 1326
+    },
+    {
+      "page": 14,
+      "title": "Appendix G3 complete manual observations",
+      "characters": 1334
+    },
+    {
+      "page": 15,
+      "title": "Appendix G4 complete manual observations",
+      "characters": 1569
+    },
+    {
+      "page": 16,
+      "title": "Appendix G5 complete manual observations",
+      "characters": 1546
+    }
+  ]
+}
