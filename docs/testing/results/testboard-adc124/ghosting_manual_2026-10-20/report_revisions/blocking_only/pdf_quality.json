@@ -1,0 +1,84 @@
+{
+  "sha256": "86e85ee0d6f7de6c117e8c97c02611ecd5fd05d3aa0d18c6b902edbb8bbfab98",
+  "pages": 15,
+  "blank_pages": [],
+  "text_out_of_bounds": [],
+  "renderer": "Poppler 26.09.0 at 115 dpi",
+  "page_headings": [
+    {
+      "page": 1,
+      "title": "TestBoard ADC124 manual ghosting comparison",
+      "characters": 1980
+    },
+    {
+      "page": 2,
+      "title": "Test method and physical channel mapping",
+      "characters": 1610
+    },
+    {
+      "page": 3,
+      "title": "Test conditions and timing",
+      "characters": 975
+    },
+    {
+      "page": 4,
+      "title": "Ghosting observations across all conditions",
+      "characters": 1592
+    },
+    {
+      "page": 5,
+      "title": "Main signal amplitudes and the fastest setting",
+      "characters": 863
+    },
+    {
+      "page": 6,
+      "title": "Effects of scan order settling and VMID conversions",
+      "characters": 1965
+    },
+    {
+      "page": 7,
+      "title": "Electrical interpretation of the array differences",
+      "characters": 2232
+    },
+    {
+      "page": 8,
+      "title": "Configuration choices and required confirmation",
+      "characters": 2099
+    },
+    {
+      "page": 9,
+      "title": "Measurement limits units and references",
+      "characters": 2370
+    },
+    {
+      "page": 10,
+      "title": "Appendix G0 complete manual observations",
+      "characters": 1296
+    },
+    {
+      "page": 11,
+      "title": "Appendix G1 complete manual observations",
+      "characters": 1282
+    },
+    {
+      "page": 12,
+      "title": "Appendix G2 complete manual observations",
+      "characters": 1299
+    },
+    {
+      "page": 13,
+      "title": "Appendix G3 complete manual observations",
+      "characters": 1307
+    },
+    {
+      "page": 14,
+      "title": "Appendix G4 complete manual observations",
+      "characters": 1361
+    },
+    {
+      "page": 15,
+      "title": "Appendix G5 complete manual observations",
+      "characters": 1339
+    }
+  ]
+}
