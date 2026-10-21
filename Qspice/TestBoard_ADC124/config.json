@@ -1,0 +1,119 @@
+{
+  "_notes": [
+    "All values are configurable. Entries marked PLACEHOLDER are typical/assumed numbers that were NOT verified against a datasheet or measured on the board: replace them before drawing hardware conclusions.",
+    "Sensors are addressed by MUX address 0..6 (S0..S6 = O6_P1B..O7_P5B on the TestBoard_ADC124 B bank). Address 7 (S7) is the VMID reference channel."
+  ],
+
+  "circuit": {
+    "vdd_v": 3.3,
+    "vmid_v": 1.65,
+    "r_vmid_series_ohm": 100.0,
+    "c_vmid_s7_pF": 150.0,
+    "r_bias_ohm": 470000.0,
+    "r_out_ohm": 33.0,
+    "c_out_pF": 470.0,
+    "initial_sensor_node_v": 1.65
+  },
+
+  "sensor_defaults": {
+    "_note": "SM311 = PZT-5H class (Steminc material table: d33 600 pC/N, d31 -270 pC/N, eps33T/eps0 3500 and tan delta 2.5 % at 1 kHz). thickness_mm is an ASSUMPTION: 0.25 mm taken from the SMD22T25311S disc page; replace with the real element thickness or measure Cp.",
+    "width_mm": 0.7,
+    "length_mm": 0.7,
+    "thickness_mm": 0.25,
+    "eps33_r": 3500.0,
+    "d33_pC_per_N": 600.0,
+    "loss_model": "none",
+    "tan_delta": 0.025,
+    "tan_delta_ref_hz": 1000.0,
+    "r_insulation_ohm": 1e10,
+    "force_gain": 1.0
+  },
+  "sensor_overrides": {
+    "_note": "Per-address overrides, e.g. \"3\": {\"thickness_mm\": 0.5, \"force_gain\": 0.9}",
+    "3": {}
+  },
+
+  "forces": [
+    {"address": 2, "t_start_us": 30.0,  "rise_us": 40.0, "width_us": 250.0, "fall_us": 40.0, "amp_N": 0.10},
+    {"address": 4, "t_start_us": 150.0, "rise_us": 40.0, "width_us": 260.0, "fall_us": 40.0, "amp_N": 0.15}
+  ],
+
+  "parasitics": {
+    "_note": "PLACEHOLDER layout parasitics.",
+    "sensor_trace_r_ohm": 1.0,
+    "sensor_trace_c_pF": 3.0,
+    "c_coupling_adjacent_pF": 0.2,
+    "muxd_trace_c_pF": 2.0,
+    "r_bias_par_c_pF": 0.1,
+    "ain_stray_c_pF": 1.0
+  },
+
+  "mux": {
+    "_note": "TMUX1308A at VDD = 3.3 V, 25 C, typical column of datasheet SCDS477A (rev A, June 2025). Source of each value is listed in README.md. roff_ohm and the single-sign leakage are modelling choices, not datasheet numbers.",
+    "ron_ohm": 120.0,
+    "ron_vdep_per_V2": 0.0,
+    "roff_ohm": 1e12,
+    "cs_off_pF": 2.0,
+    "cd_off_pF": 7.0,
+    "c_on_pF": 11.0,
+    "c_feedthrough_pF": 0.1,
+    "qinj_pC": -0.8,
+    "qinj_src_fraction": 0.0,
+    "ileak_s_off_nA": 1.0,
+    "ileak_d_nA": 1.0,
+    "leak_scale": 1.0,
+    "switch_on_ns": 25.0,
+    "switch_off_ns": 1.0,
+    "control_edge_ns": 2.0
+  },
+
+  "opamp": {
+    "_note": "OPA365 behavioral model from datasheet SBOS365G (typ, 25 C; GBW/SR are specified at VS = 5 V, used unchanged at 3.3 V).",
+    "gbw_hz": 50e6,
+    "aol": 1e6,
+    "slew_v_per_us": 25.0,
+    "vos_uV": 100.0,
+    "ib_pA": 0.2,
+    "cdiff_pF": 6.0,
+    "ccm_pF": 2.0,
+    "ro_ohm": 30.0,
+    "rail_margin_mV": 10.0
+  },
+
+  "timing": {
+    "_note": "Per sensor, from the MUX address command: t_sensor_settle, then the ADC word of t_conversion (tracking for adc_acquisition_ns, hold = sample instant, then conversion), then t_after_conversion (other MUXes are sampled and data is sent; this sensor stays connected), then a VMID visit of t_vmid_settle (no conversion) and t_vmid_park (parked on VMID while the other mux groups are sampled; PLACEHOLDER value), then the next sensor. Sensor connected dwell = settle + conversion + after_conversion. ADC defaults are the ADC124S101 16 MHz word from the capture-timing report.",
+    "scan_order": [0, 1, 2, 3, 4, 5, 6],
+    "vmid_visit_after_each": true,
+    "t_start_us": 20.0,
+    "t_sensor_settle_us": 1.0,
+    "adc_acquisition_ns": 187.5,
+    "t_conversion_us": 1.0,
+    "t_after_conversion_us": 5.0,
+    "t_vmid_settle_us": 5.0,
+    "t_vmid_park_us": 7.0,
+    "sampling_rate_hz": null,
+    "num_cycles": 4,
+    "tail_us": 20.0,
+    "run_duration_s": null
+  },
+
+  "simulation": {
+    "max_step_ns": 5.0,
+    "periodic_min_cycles": 200
+  },
+
+  "scenarios": {
+    "two_pulses": {
+      "description": "Force pulses on sensors 2 and 4 with soft (40 us) edges, short run, with a zero-force baseline run for the delta.",
+      "overrides": {}
+    },
+    "baseline": {
+      "description": "No force. 60 ms (450 scan cycles) at the full 5 ns resolution: the baseline of every channel converges within about 5 ms (time constant ~0.5 ms), so the value is the steady state a 3 s run would also show. A brute-force 3 s run at this resolution is ~6e8 time points (~10 GB); with a coarse step the sample is dominated by solver noise (+-5 mV), see README.",
+      "overrides": {"forces": [], "timing.run_duration_s": 0.06}
+    },
+    "baseline_vmid1ms": {
+      "description": "Same as baseline but with a 1 ms VMID settle (t_vmid_settle_us = 1000), 100 ms run (~14 scan cycles of ~7.1 ms), full 5 ns resolution. Each sensor is connected only 7 us per ~7.1 ms, so the bias network refreshes it far less often.",
+      "overrides": {"forces": [], "timing.run_duration_s": 0.1, "timing.t_vmid_settle_us": 1000.0, "simulation.periodic_min_cycles": 1}
+    }
+  }
+}
