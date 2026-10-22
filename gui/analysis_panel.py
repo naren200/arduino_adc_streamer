@@ -95,7 +95,8 @@ ANALYSIS_PLOT_SPECS = (
     ("rolling", "analysis_rolling_plot", 150),
     ("gate", "analysis_gate_plot", 130),
 )
-ANALYSIS_WINDOW_HOVER_RGBA = (255, 255, 255, 110)
+ANALYSIS_WINDOW_HOVER_RGB = (0, 150, 170)  # not a class color, and visible on the white plot
+ANALYSIS_WINDOW_HOVER_ALPHA = 120
 ANALYSIS_FORCE_TRACES_ALWAYS_UNCHECKED = frozenset({"Force X [N]", "Force Z [N]"})
 
 
@@ -2348,8 +2349,10 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
             for start_s, end_s in stretches:
                 region = pg.LinearRegionItem(
                     values=(self._analysis_label_seconds_to_x(start_s), self._analysis_label_seconds_to_x(end_s)),
-                    brush=pg.mkBrush(*ANALYSIS_WINDOW_HOVER_RGBA), pen=pg.mkPen(None), movable=False,
+                    brush=pg.mkBrush(*ANALYSIS_WINDOW_HOVER_RGB, ANALYSIS_WINDOW_HOVER_ALPHA), movable=False,
                 )
+                for edge in region.lines:
+                    edge.setPen(pg.mkPen(*ANALYSIS_WINDOW_HOVER_RGB, width=2))
                 region.setZValue(-5)
                 plot.addItem(region)
                 self._analysis_hover_items.append((plot, region))
