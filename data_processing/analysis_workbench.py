@@ -9,8 +9,6 @@ live acquisition buffers or filter runtime.
 
 from __future__ import annotations
 
-import csv
-import json
 from dataclasses import dataclass, field
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
@@ -65,6 +63,9 @@ class AnalysisSourceSnapshot:
     force_z_n: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
     source_id: str = ""
     sample_rate_hz: float = 0.0
+    span_s: tuple[float, float] | None = None  # full source time span (absolute source time)
+    view_range_s: tuple[float, float] | None = None  # range to display (<= one view window)
+    resident_range_s: tuple[float, float] | None = None  # loaded range: view +- buffer, clamped to span
 
     @property
     def sweep_count(self) -> int:
@@ -83,7 +84,11 @@ class AnalysisSourceSnapshot:
             self.samples_per_sweep,
             float(self.timestamps_s[0]) if self.timestamps_s.size else 0.0,
             float(self.timestamps_s[-1]) if self.timestamps_s.size else 0.0,
+            self.resident_range_s,
         )
+
+    def window_key(self) -> tuple:
+        return (self.source_id, self.resident_range_s)
 
 
 @dataclass(slots=True)
@@ -261,43 +266,41 @@ def load_exported_csv_snapshot(
     blip_filter_enabled: bool = PZT_BLIP_FILTER_DEFAULT_ENABLED,
     blip_filter_window_samples: int = PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES,
 ) -> AnalysisSourceSnapshot:
-    """Load an app-exported CSV plus its JSON metadata sidecar."""
-    csv_path = Path(csv_path)
-    metadata_path = Path(metadata_path)
-    if not csv_path.exists():
-        raise ValueError(f"CSV file does not exist: {csv_path}")
-    if not metadata_path.exists():
-        raise ValueError(f"Metadata JSON does not exist: {metadata_path}")
+    """Load a whole app-exported CSV plus its JSON metadata sidecar.
 
-    try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise ValueError(f"Could not read metadata JSON: {exc}") from exc
+    The Analysis tab itself never calls this: it pages ``CsvWindowSource`` windows.
+    """
+    # Deferred: analysis_window_source builds on this module's snapshot and row helpers.
+    from data_processing.analysis_window_source import CsvWindowSource
 
-    config = metadata.get("configuration")
-    if not isinstance(config, dict):
-        raise ValueError("Metadata JSON is missing the app export 'configuration' block.")
+    return CsvWindowSource.open(
+        csv_path,
+        metadata_path,
+        blip_filter_enabled=blip_filter_enabled,
+        blip_filter_window_samples=blip_filter_window_samples,
+    ).full_snapshot()
 
-    rows: list[dict[str, str]] = []
-    with csv_path.open("r", encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(line for line in handle if not line.lstrip().startswith("#"))
-        if not reader.fieldnames:
-            raise ValueError("CSV file is missing a header row.")
-        fieldnames = [str(name) for name in reader.fieldnames]
-        for row in reader:
-            rows.append(row)
 
-    if not rows:
-        raise ValueError("CSV file contains no data rows.")
-
-    raw_data_columns = [
-        name for name in fieldnames
-        if _column_key(name) not in ANALYSIS_TIMESTAMP_COLUMNS | ANALYSIS_FORCE_COLUMNS | ANALYSIS_TIMING_COLUMNS
-    ]
+def csv_signal_columns(fieldnames: list[str]) -> list[str]:
+    """Signal columns of an app-exported CSV header (no timestamp, force, timing or legacy ``ColN``)."""
+    non_signal = ANALYSIS_TIMESTAMP_COLUMNS | ANALYSIS_FORCE_COLUMNS | ANALYSIS_TIMING_COLUMNS
+    raw_data_columns = [name for name in fieldnames if _column_key(name) not in non_signal]
     data_columns = _analysis_signal_columns_from_csv(raw_data_columns)
     if not data_columns:
         raise ValueError("CSV file has no signal columns after timestamp and force columns.")
+    return data_columns
 
+
+def snapshot_from_csv_rows(
+    rows: list[dict[str, str]],
+    *,
+    data_columns: list[str],
+    timestamps: np.ndarray,
+    metadata: dict,
+    source_id: str,
+    sample_rate_hz: float,
+) -> AnalysisSourceSnapshot:
+    """Unfiltered snapshot of already-parsed CSV rows; ``timestamps`` holds one entry per row."""
     try:
         data = np.asarray(
             [[float(row.get(column, "nan")) for column in data_columns] for row in rows],
@@ -309,59 +312,41 @@ def load_exported_csv_snapshot(
     if np.isnan(data).any():
         raise ValueError("CSV signal columns contain missing or non-numeric values.")
 
-    timestamps = _timestamps_from_export_rows(rows, metadata)
     force_x = _force_column_newtons(rows, axis="x")
     force_z = _force_column_newtons(rows, axis="z")
-    channels = config.get("channels", [])
-    repeat = int(config.get("repeat_count", config.get("repeat", 1)) or 1)
-    expected_columns = int(config.get("buffer_total_samples", 0) or 0)
-    if expected_columns <= 0:
-        expected_columns = len(channels) * max(1, repeat)
-    if expected_columns > 0 and expected_columns != data.shape[1]:
-        warnings = metadata.setdefault("analysis_warnings", [])
-        if not isinstance(warnings, list):
-            warnings = [str(warnings)]
-            metadata["analysis_warnings"] = warnings
-        warnings.append(
-            f"CSV/metadata schema mismatch: metadata expects {expected_columns} signal columns, "
-            f"CSV has {data.shape[1]}."
-        )
-
-    snapshot = AnalysisSourceSnapshot(
+    has_force = bool(force_x.size or force_z.size)
+    return AnalysisSourceSnapshot(
         data=data,
         timestamps_s=timestamps,
         channel_labels=list(data_columns),
         channel_indices=list(range(len(data_columns))),
         metadata=metadata,
-        force_timestamps_s=timestamps.copy() if (force_x.size or force_z.size) else np.empty(0, dtype=np.float64),
+        force_timestamps_s=timestamps.copy() if has_force else np.empty(0, dtype=np.float64),
         force_x_n=force_x,
         force_z_n=force_z,
-        source_id=f"csv:{csv_path.resolve()}|json:{metadata_path.resolve()}",
-        sample_rate_hz=_metadata_sample_rate_hz(metadata, data, timestamps),
+        source_id=source_id,
+        sample_rate_hz=sample_rate_hz,
     )
-    applied_median_window: list[int] = []
 
-    def _blip_filter(values: np.ndarray) -> np.ndarray:
-        if not blip_filter_enabled:
-            return values
-        try:
-            window = normalize_pzt_blip_filter_window(blip_filter_window_samples)
-            filtered = _apply_pzt_blip_filter(snapshot, values, window)
-            applied_median_window[:] = [window]
-            return filtered
-        except Exception as exc:
-            warnings = snapshot.metadata.setdefault("analysis_warnings", [])
-            if not isinstance(warnings, list):
-                warnings = [str(warnings)]
-                snapshot.metadata["analysis_warnings"] = warnings
-            warnings.append(f"PZT blip filter skipped: {exc}")
-            return values
 
-    snapshot.data = _blip_filter(snapshot.data)
-    snapshot.metadata[INPUT_CONDITIONING_METADATA_KEY] = conditioning_record(
-        applied_median_window[0] if applied_median_window else None,
+def note_csv_schema_mismatch(metadata: dict, column_count: int) -> None:
+    """Warn (in ``metadata['analysis_warnings']``) when metadata and CSV disagree on the signal width."""
+    config = metadata.get("configuration", {})
+    channels = config.get("channels", [])
+    repeat = int(config.get("repeat_count", config.get("repeat", 1)) or 1)
+    expected_columns = int(config.get("buffer_total_samples", 0) or 0)
+    if expected_columns <= 0:
+        expected_columns = len(channels) * max(1, repeat)
+    if expected_columns <= 0 or expected_columns == column_count:
+        return
+    warnings = metadata.setdefault("analysis_warnings", [])
+    if not isinstance(warnings, list):
+        warnings = [str(warnings)]
+        metadata["analysis_warnings"] = warnings
+    warnings.append(
+        f"CSV/metadata schema mismatch: metadata expects {expected_columns} signal columns, "
+        f"CSV has {column_count}."
     )
-    return snapshot
 
 
 def prepare_analysis_data(
@@ -1053,18 +1038,6 @@ def _sample_offsets_s(snapshot: AnalysisSourceSnapshot) -> np.ndarray:
     if fs > 0.0:
         return np.arange(samples, dtype=np.float64) / fs
     return np.zeros(samples, dtype=np.float64)
-
-
-def _timestamps_from_export_rows(rows: list[dict[str, str]], metadata: dict) -> np.ndarray:
-    if rows and "Timestamp_s" in rows[0]:
-        values = _optional_numeric_column(rows, "Timestamp_s")
-        if values.size == len(rows):
-            return values
-
-    duration = metadata.get("capture_duration_seconds")
-    if isinstance(duration, (int, float)) and len(rows) > 1:
-        return np.linspace(0.0, float(duration), len(rows), dtype=np.float64)
-    return np.arange(len(rows), dtype=np.float64)
 
 
 def _optional_numeric_column(rows: list[dict[str, str]], column_name: str) -> np.ndarray:

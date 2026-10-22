@@ -59,6 +59,11 @@ from constants.pzt_force import (
 from constants.ui import AnalysisLoadState
 from data_processing.analysis_compute_worker import AnalysisComputeWorker
 from data_processing.analysis_source_load_worker import AnalysisSourceLoadWorker
+from data_processing.analysis_window_source import (
+    WINDOW_STEP_S,
+    WINDOW_VIEW_S,
+    ArraySnapshotWindowSource,
+)
 from data_processing.analysis_labels import (
     abbreviate_class_names,
     assign_segment,
@@ -85,6 +90,7 @@ from gui.window_overlay import window_id_at
 
 ANALYSIS_CHECKBOX_MIN_COLUMN_WIDTH = 130
 ANALYSIS_LABEL_UNDO_DEPTH = 20
+ANALYSIS_BASELINES_NOTE = "baselines restart per window"
 # (key, plot attribute, minimum height) in splitter order, top to bottom.
 ANALYSIS_PLOT_SPECS = (
     ("signal", "analysis_signal_plot", 250),
@@ -127,6 +133,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
         }
         self._analysis_settings_loading = False
         self.analysis_snapshot: AnalysisSourceSnapshot | None = None
+        self.analysis_window_source = None
         self.analysis_prepared: AnalysisPreparedData | None = None
         self._analysis_load_state = AnalysisLoadState.IDLE
         self._analysis_generation = 0
@@ -315,6 +322,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
         self.analysis_reset_view_btn.clicked.connect(self.reset_analysis_view)
         self.analysis_reset_view_btn.setMaximumWidth(110)
         controls_layout.addWidget(self.analysis_reset_view_btn, 0, 7, alignment=Qt.AlignmentFlag.AlignLeft)
+        controls_layout.addWidget(self._build_analysis_window_controls(), 0, 8)
         controls_layout.setColumnStretch(3, 1)
 
         self.analysis_filter_check = QCheckBox("Spectrum filter")
@@ -1089,6 +1097,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
                 # in _on_analysis_source_load_result/_error, not here.
                 self._analysis_source_load_generation += 1
                 self._analysis_source_loading = True
+                self._update_analysis_window_controls()
                 self._set_analysis_status_text(f"Analysis: loading {Path(csv_path).name}...")
                 self.analysis_source_load_worker.submit({
                     "generation": self._analysis_source_load_generation,
@@ -1111,9 +1120,11 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
                 and getattr(self, '_archive_path', None)
             )
             if buffer_overflowed:
-                self.analysis_snapshot = build_snapshot_from_archive(self)
+                full_snapshot = build_snapshot_from_archive(self)
             else:
-                self.analysis_snapshot = build_in_memory_snapshot(self)
+                full_snapshot = build_in_memory_snapshot(self)
+            self.analysis_window_source = ArraySnapshotWindowSource(full_snapshot)
+            self.analysis_snapshot = self.analysis_window_source.snapshot_for(0.0)
             self._finish_analysis_source_loaded()
         except Exception as exc:
             self._set_analysis_status_text(f"Analysis load failed: {exc}")
@@ -1125,9 +1136,14 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
         if int(payload.get("generation", -1)) != self._analysis_source_load_generation:
             return  # superseded by a newer load request -- drop this one.
         self._analysis_source_loading = False
+        is_view_move = payload["window_source"] is self.analysis_window_source
+        self.analysis_window_source = payload["window_source"]
         self.analysis_snapshot = payload["snapshot"]
         try:
-            self._finish_analysis_source_loaded()
+            if is_view_move:
+                self._finish_analysis_window_moved()
+            else:
+                self._finish_analysis_source_loaded()
         except Exception as exc:
             self._set_analysis_status_text(f"Analysis load failed: {exc}")
             if hasattr(self, "log_status"):
@@ -1138,6 +1154,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
         if int(generation) != self._analysis_source_load_generation:
             return
         self._analysis_source_loading = False
+        self._update_analysis_window_controls()
         self._set_analysis_status_text(f"Analysis load failed: {message}")
         if hasattr(self, "log_status"):
             self.log_status(f"Analysis load failed: {message}")
@@ -1147,23 +1164,105 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
         """Shared post-load steps for both the synchronous in-memory/archive
         path and AnalysisSourceLoadWorker's background CSV-load result."""
         self._rebuild_analysis_channel_checks()
-        if hasattr(self, 'touchid_load_last_inference_btn'):
-            # New snapshot object -- any cached replay predictions no
-            # longer belong to what's loaded (see
-            # on_touchid_load_last_inference_clicked's identity check).
-            self.touchid_load_last_inference_btn.setEnabled(
-                self.analysis_snapshot is self._touchid_last_inference_snapshot
-            )
         self._load_labels_for_current_source()
         self._analysis_pending_auto_range = True
-        self._analysis_loaded_status = (
-            f"Analysis loaded: {self.analysis_snapshot.sweep_count} sweeps, "
-            f"{self.analysis_snapshot.samples_per_sweep} signal columns"
-        )
+        self._install_analysis_window_status()
         self.refresh_analysis_plot()
         if hasattr(self, "log_status"):
             self.log_status(self._analysis_loaded_status)
         self.save_last_analysis_settings()
+
+    def _finish_analysis_window_moved(self):
+        """Post-move steps: same source, so channels and labels stay as they are."""
+        self._analysis_pending_auto_range = True
+        self._install_analysis_window_status()
+        self.refresh_analysis_plot()
+        if hasattr(self, "log_status"):
+            self.log_status(self._analysis_loaded_status)
+
+    def _install_analysis_window_status(self):
+        snapshot = self.analysis_snapshot
+        view_start_s, view_end_s = snapshot.view_range_s or (0.0, snapshot.span_s)
+        self._analysis_loaded_status = (
+            f"Analysis loaded: view {view_start_s:.0f}-{view_end_s:.0f} s of {snapshot.span_s:.0f} s "
+            f"({snapshot.sweep_count} sweeps resident, {ANALYSIS_BASELINES_NOTE})"
+        )
+        self._update_analysis_window_controls()
+        if hasattr(self, "touchid_on_analysis_window_changed"):
+            self.touchid_on_analysis_window_changed()
+
+    def _build_analysis_window_controls(self) -> QWidget:
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.analysis_view_left_btn = QPushButton(f"\u25c0 {WINDOW_STEP_S:.0f} s")
+        self.analysis_view_right_btn = QPushButton(f"{WINDOW_STEP_S:.0f} s \u25b6")
+        self.analysis_view_left_btn.clicked.connect(lambda: self.on_analysis_move_view(-1))
+        self.analysis_view_right_btn.clicked.connect(lambda: self.on_analysis_move_view(1))
+        self.analysis_view_range_label = QLabel("")
+        for widget in (self.analysis_view_left_btn, self.analysis_view_right_btn, self.analysis_view_range_label):
+            layout.addWidget(widget)
+        self._update_analysis_window_controls()
+        return container
+
+    def _analysis_view_start_s(self) -> float:
+        view_range = self.analysis_snapshot.view_range_s if self.analysis_snapshot is not None else None
+        return float(view_range[0]) if view_range else 0.0
+
+    def _analysis_moved_view_start_s(self, direction: int) -> float | None:
+        """Clamped view start after a move, or None when moving is not possible."""
+        source = self.analysis_window_source
+        if source is None or self._analysis_source_loading or source.span_s <= WINDOW_VIEW_S:
+            return None
+        current = self._analysis_view_start_s()
+        target = float(source.clamp_view_start(current + direction * WINDOW_STEP_S))
+        return target if target != current else None
+
+    def _update_analysis_window_controls(self):
+        if not hasattr(self, "analysis_view_left_btn"):
+            return
+        self.analysis_view_left_btn.setEnabled(self._analysis_moved_view_start_s(-1) is not None)
+        self.analysis_view_right_btn.setEnabled(self._analysis_moved_view_start_s(1) is not None)
+        snapshot = self.analysis_snapshot
+        view_range = snapshot.view_range_s if snapshot is not None else None
+        text = ""
+        if view_range:
+            text = f"View {view_range[0]:.1f}-{view_range[1]:.1f} s of {snapshot.span_s:.1f} s"
+        self.analysis_view_range_label.setText(text)
+
+    def on_analysis_move_view(self, direction: int):
+        new_start_s = self._analysis_moved_view_start_s(direction)
+        if new_start_s is None:
+            return
+        self._analysis_source_load_generation += 1
+        self._analysis_source_loading = True
+        self._update_analysis_window_controls()
+        self._set_analysis_status_text(f"Analysis: loading view at {new_start_s:.1f} s...")
+        self.analysis_source_load_worker.submit({
+            "generation": self._analysis_source_load_generation,
+            "window_source": self.analysis_window_source,
+            "view_start_s": new_start_s,
+        })
+
+    def _apply_analysis_window_limits(self, force_view_range: bool):
+        """Confine pan/zoom to the resident data and the 60 s view cap (time axis only;
+        the sample-index axis is window-local and left unrestricted)."""
+        snapshot = self.analysis_snapshot
+        prepared = self.analysis_prepared
+        if snapshot is None or prepared is None or prepared.x_units != "s":
+            return
+        if snapshot.resident_range_s is None or snapshot.view_range_s is None:
+            return
+        resident_start, resident_end = snapshot.resident_range_s
+        for plot in (
+            self.analysis_signal_plot,
+            self.analysis_integration_plot,
+            self.analysis_derived_plot,
+            self.analysis_force_plot,
+        ):
+            plot.setLimits(xMin=resident_start, xMax=resident_end, maxXRange=WINDOW_VIEW_S)
+        if force_view_range:
+            self.analysis_signal_plot.setXRange(*snapshot.view_range_s, padding=0)
 
     def _rebuild_analysis_channel_checks(self):
         for check in self.analysis_channel_checks.values():
@@ -1496,12 +1595,21 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
     def _analysis_startup_exclude_threshold_x(self, prepared: AnalysisPreparedData) -> float:
         """X value marking the end of the startup window (shear needs a warm-up baseline)."""
         if prepared.x_units == "s":
-            return self.ANALYSIS_STARTUP_EXCLUDE_SECONDS
+            return self._analysis_startup_exclude_threshold_s()
         snapshot = self.analysis_snapshot
         sample_rate_hz = float(snapshot.sample_rate_hz) if snapshot is not None else 0.0
         if sample_rate_hz > 0:
             return self.ANALYSIS_STARTUP_EXCLUDE_SECONDS * sample_rate_hz
         return 0.0
+
+    def _analysis_startup_exclude_threshold_s(self) -> float:
+        """Startup warm-up only exists at the file start; later windows use all resident data."""
+        snapshot = self.analysis_snapshot
+        resident_range = snapshot.resident_range_s if snapshot is not None else None
+        resident_start = float(resident_range[0]) if resident_range else 0.0
+        if resident_start < self.ANALYSIS_STARTUP_EXCLUDE_SECONDS:
+            return self.ANALYSIS_STARTUP_EXCLUDE_SECONDS
+        return resident_start
 
     @staticmethod
     def _analysis_y_bounds_excluding_startup(traces, threshold_x: float) -> tuple[float, float] | None:
@@ -1662,6 +1770,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
                     x_range, y_range = self._analysis_saved_view_ranges[key]
                     plot.setXRange(*x_range, padding=0)
                     plot.setYRange(*y_range, padding=0)
+        self._apply_analysis_window_limits(force_view_range=auto_range)
         self.analysis_marker_vline.setVisible(bool(self.analysis_marker_check.isChecked()))
         self._render_label_regions()
         source = self.analysis_snapshot.source_id if self.analysis_snapshot else "-"
@@ -1796,9 +1905,11 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
             )
             with metadata_path.open("w", encoding="utf-8") as handle:
                 json.dump(metadata, handle, indent=2)
-            self._set_analysis_status_text(f"Analysis CSV and metadata exported: {path}, {metadata_path}")
+            self._set_analysis_status_text(
+                f"Analysis CSV and metadata exported (resident window only): {path}, {metadata_path}"
+            )
             if hasattr(self, "log_status"):
-                self.log_status(f"Analysis CSV exported: {path}")
+                self.log_status(f"Analysis CSV exported (resident window only): {path}")
                 self.log_status(f"Analysis metadata exported: {metadata_path}")
         except Exception as exc:
             QMessageBox.warning(self, "Analysis Export Failed", str(exc))
@@ -1918,14 +2029,9 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
         return seconds * self._analysis_x_units_per_second()
 
     def _analysis_label_trace_duration_s(self) -> float:
-        prepared = self.analysis_prepared
-        if prepared is None:
+        if self.analysis_prepared is None or self.analysis_snapshot is None:
             return 0.0
-        max_x = 0.0
-        for trace in prepared.traces:
-            if trace.x.size:
-                max_x = max(max_x, float(np.max(trace.x)))
-        return self._analysis_label_x_to_seconds(max_x)
+        return float(self.analysis_snapshot.span_s)
 
     def _analysis_label_csv_path(self) -> str:
         return str(self.analysis_state.get("csv_path", "")).strip()

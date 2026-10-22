@@ -1,6 +1,7 @@
 """Analysis-tab gate preview: a read-only replica of the TouchID tab's replay, with banners instead of dialogs."""
 
 import os
+from unittest.mock import patch
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -129,7 +130,7 @@ def test_load_last_inference_restores_the_setup_with_the_predictions_and_the_ban
     host.touchid_idle_baseline = make_baseline()
     enable_preview(host)
     host._touchid_show_predicted_labels_exclusively = lambda: None
-    host._touchid_last_inference_snapshot = host.analysis_snapshot
+    host._touchid_last_inference_window_key = host.analysis_snapshot.window_key()
     host._touchid_last_inference_predictions = [{"start_s": 0.0, "end_s": 0.1}]
     host._touchid_last_inference_setup = host._touchid_replay_setup_for(host.analysis_snapshot).with_detached_baseline()
     host.touchid_config.hop_size_s = 0.1  # settings moved on since that replay
@@ -148,3 +149,37 @@ def test_a_touchid_replay_records_the_setup_it_runs_under(host):
     host._touchid_replay_timer.stop()
 
     assert host._touchid_replay_setup_used == host._touchid_replay_setup_for(host.analysis_snapshot)
+
+
+def test_load_last_inference_is_refused_for_a_different_window(host):
+    load(host, fake_model("v1"))
+    host._touchid_last_inference_window_key = host.analysis_snapshot.window_key()
+    host._touchid_last_inference_predictions = [{"start_s": 0.0, "end_s": 0.1}]
+    host.analysis_snapshot = make_snapshot(start_s=100.0)
+
+    with patch("gui.inference_panel.QMessageBox.warning") as warning:
+        host.on_touchid_load_last_inference_clicked()
+
+    warning.assert_called_once()
+    assert host.analysis_predicted_labels == []
+
+
+def test_a_changed_window_clears_predictions_and_disables_reload(host):
+    load(host, fake_model("v1"))
+    host.touchid_load_last_inference_btn.setEnabled(True)
+    host._touchid_last_inference_window_key = host.analysis_snapshot.window_key()
+    host._touchid_last_inference_predictions = [{"start_s": 0.0, "end_s": 0.1}]
+    host.analysis_predicted_labels = host._touchid_last_inference_predictions
+
+    host.touchid_on_analysis_window_changed()
+    assert host.analysis_predicted_labels and host.touchid_load_last_inference_btn.isEnabled()
+
+    host.analysis_snapshot = make_snapshot(start_s=100.0)
+    host.touchid_on_analysis_window_changed()
+    assert host.analysis_predicted_labels == [] and not host.touchid_load_last_inference_btn.isEnabled()
+
+
+def test_gate_label_overlap_is_clipped_to_the_replayed_window(host):
+    host.analysis_label_segments = [{"class": "wood", "start_s": 90.0, "end_s": 100.5}]
+    assert host._gating_label_spans(100.0, 101.0) == [(100.0, 100.5)]
+    assert host._gating_label_spans(200.0, 201.0) == []

@@ -49,7 +49,7 @@ def make_baseline(**overrides) -> IdleBaseline:
     return IdleBaseline(**{**fields, **overrides})
 
 
-def make_snapshot(seed: int = 0) -> SimpleNamespace:
+def make_snapshot(seed: int = 0, start_s: float = 0.0) -> SimpleNamespace:
     """Quiet noise with strong common-mode oscillation bursts (what normal_jerk measures): the strength
     gate emits several windows per burst."""
     rng = np.random.default_rng(seed)
@@ -60,9 +60,12 @@ def make_snapshot(seed: int = 0) -> SimpleNamespace:
         start = burst * period + GAP_SAMPLES
         phase = 2 * np.pi * BURST_FREQUENCY_HZ * np.arange(BURST_SAMPLES) / FS
         data[start:start + BURST_SAMPLES] += (BURST_AMPLITUDE * np.sin(phase))[:, None]
+    timestamps_s = start_s + np.arange(total) / FS
+    resident_range_s = (float(timestamps_s[0]), float(timestamps_s[-1]))
     return SimpleNamespace(
-        data=data, timestamps_s=np.arange(total) / FS, channel_labels=list(PZT_COLUMNS),
-        sample_rate_hz=FS, sweep_count=total, metadata={},
+        data=data, timestamps_s=timestamps_s, channel_labels=list(PZT_COLUMNS),
+        sample_rate_hz=FS, sweep_count=total, metadata={}, resident_range_s=resident_range_s,
+        window_key=lambda: ("test-source", resident_range_s),
     )
 
 
@@ -107,6 +110,15 @@ def test_driver_keeps_every_emitted_window_in_emission_order():
     assert len(popped) == len(reference) > 0
     for got, expected in zip(popped, reference):
         np.testing.assert_array_equal(got.window_ts, expected.window_ts)
+
+
+def test_a_window_starting_at_a_nonzero_time_yields_windows_at_absolute_times():
+    start_s = 100.0
+    shifted = make_driver(make_snapshot(start_s=start_s)).run_to_end()
+    reference = make_driver(make_snapshot()).run_to_end()
+    assert len(shifted) == len(reference) > 0
+    for got, expected in zip(shifted, reference):
+        np.testing.assert_allclose(got.window_ts, expected.window_ts + start_s)
 
 
 def test_run_to_end_collects_all_windows():
@@ -188,6 +200,13 @@ def test_file_label_baseline_is_fit_from_the_labeled_region_with_the_gate_k():
     resolved = resolve(label_segments((0.0, 0.1)), make_baseline())
     assert resolved.source == BASELINE_FROM_FILE_LABEL
     assert resolved.baseline.k == 6.0
+    assert resolved.baseline.captured_duration_s == pytest.approx(0.1)
+
+
+def test_labels_partly_outside_the_window_fit_from_the_part_inside():
+    snapshot = make_snapshot(start_s=100.0)
+    resolved = resolve(label_segments((99.0, 100.1), (500.0, 501.0)), None, snapshot)
+    assert resolved.source == BASELINE_FROM_FILE_LABEL
     assert resolved.baseline.captured_duration_s == pytest.approx(0.1)
 
 

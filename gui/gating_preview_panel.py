@@ -147,13 +147,15 @@ class GatingPreviewPanelMixin:
         return (f"Gating {setup.gating_version}; idle baseline: {BASELINE_SOURCE_TEXT[baseline_source]}\n"
                 f"{EDIT_ON_TOUCHID_TEXT}")
 
-    def _gating_label_spans(self) -> list[tuple[float, float]]:
-        """Hand-labelled touch segments in seconds; the idle `baseline` class is not a touch."""
+    def _gating_label_spans(self, first_s: float, last_s: float) -> list[tuple[float, float]]:
+        """Hand-labelled touch segments in absolute seconds, clipped to the replayed window
+        [first_s, last_s]; the idle `baseline` class is not a touch."""
         segments = getattr(self, "analysis_label_segments", None) or []
-        return [
-            (float(segment["start_s"]), float(segment["end_s"]))
+        clipped = (
+            (max(float(segment["start_s"]), first_s), min(float(segment["end_s"]), last_s))
             for segment in segments if segment["class"] != FILE_BASELINE_CLASS
-        ]
+        )
+        return [(start, end) for start, end in clipped if end > start]
 
     # ---- drawing (GUI thread: items only, no computation) -----------------------------------
 
@@ -177,7 +179,7 @@ class GatingPreviewPanelMixin:
 
     def _gating_details(self, result: GateReplayResult) -> str:
         lines = [result.logic_text, result_line(result)]
-        label_spans = self._gating_label_spans()
+        label_spans = self._gating_label_spans(float(result.timestamps_s[0]), float(result.timestamps_s[-1]))
         if label_spans:
             lines.append(label_overlap_line(result.accepted_spans_s(), label_spans))
         return "\n".join(line for line in lines if line)
