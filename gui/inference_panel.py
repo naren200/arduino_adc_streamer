@@ -53,6 +53,7 @@ from core.texture_piezo.application.mode import TouchIdMode
 from core.texture_piezo.application.gating_v2_settings import GATING_V2_VERSION, apply_overrides, differing_fields
 from core.texture_piezo.application.quality_gate_settings import load_idle_baseline, save_idle_baseline
 from core.texture_piezo.application.replay_driver import ReplayDriver
+from data_processing.replay_support import replay_unsupported_reason
 from core.texture_piezo.application.replay_fastforward import ReplayFastForward
 from core.texture_piezo.application.replay_setup import (
     BASELINE_FROM_FILE_LABEL, ReplaySetup, ResolvedBaseline, resolve_replay_baseline,
@@ -1328,6 +1329,10 @@ class InferencePanelMixin:
             return
         if snapshot.sweep_count <= 0:
             QMessageBox.warning(self, 'TouchID', 'Loaded source has no samples.')
+            return
+        unsupported_reason = replay_unsupported_reason(snapshot)
+        if unsupported_reason:
+            QMessageBox.warning(self, 'TouchID', f'Cannot replay this source: {unsupported_reason}.')
             return
 
         setup, resolved = self._touchid_resolved_replay(snapshot)

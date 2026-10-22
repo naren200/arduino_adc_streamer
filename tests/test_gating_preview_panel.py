@@ -148,3 +148,27 @@ def test_a_touchid_replay_records_the_setup_it_runs_under(host):
     host._touchid_replay_timer.stop()
 
     assert host._touchid_replay_setup_used == host._touchid_replay_setup_for(host.analysis_snapshot)
+
+
+def test_a_source_that_cannot_be_replayed_shows_a_banner_and_requests_no_overlay(host):
+    load(host, fake_model("v1"))
+    host.touchid_idle_baseline = make_baseline()
+    host.analysis_snapshot.metadata = {"testboard_acquisition": {"adc_resolution_bits": 12, "full_scale_volts": 5.0,
+                                                                 "reference": 5.0}}
+    enable_preview(host)
+
+    assert host.gating_preview_request() is None
+
+    assert not host.analysis_gating_baseline_banner.isHidden()
+    assert host.analysis_gating_baseline_banner.text().startswith("Gate preview unavailable: it is a TestBoard")
+    assert gate_plot_item_count(host) == 0
+
+
+def test_a_source_with_a_timestamp_gap_requests_no_overlay(host):
+    load(host, fake_model("v1"))
+    host.touchid_idle_baseline = make_baseline()
+    host.analysis_snapshot.timestamps_s[100:] += 1.0
+    enable_preview(host)
+
+    assert host.gating_preview_request() is None
+    assert "gap" in host.analysis_gating_baseline_banner.text()

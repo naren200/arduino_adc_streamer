@@ -17,6 +17,7 @@ from core.texture_piezo.application.gating_trace import COMBINED_LANE, IDLE_LANE
 from core.texture_piezo.application.replay_setup import (
     BASELINE_FROM_FILE_LABEL, BASELINE_FROM_GLOBAL, FILE_BASELINE_CLASS, ReplaySetup,
 )
+from data_processing.replay_support import replay_unsupported_reason
 from data_processing.gate_replay import GateReplayResult, label_overlap_line, result_line
 
 ACCEPTED_LANE = "accepted"
@@ -114,6 +115,10 @@ class GatingPreviewPanelMixin:
         snapshot = self.analysis_snapshot
         if snapshot is None or not self.analysis_burst_check.isChecked():
             self._set_gating_banners("", "")
+            return None
+        unsupported_reason = replay_unsupported_reason(snapshot)
+        if unsupported_reason:
+            self._set_gating_banners(f"Gate preview unavailable: {unsupported_reason}.", "")
             return None
         try:
             setup, resolved = self._touchid_resolved_replay(snapshot)

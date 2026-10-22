@@ -27,10 +27,11 @@ from constants.pzt_blip_filter import (
     normalize_pzt_blip_filter_window,
 )
 from constants.shear import SHEAR_SENSOR_POSITIONS
+from data_processing.acquisition_timing import gap_indices
 from data_processing.adc_filter_engine import ADCFilterEngine
 from core.piezo_engine.baseline import total_warmup_sample_count
 from core.piezo_engine.config import EngineConfig, ForceSettings, TimingMode, TimingPolicy
-from core.piezo_engine.force_stage import ForceStage
+from core.piezo_engine.force_stage import ForceStage, ForceTraces
 from core.piezo_engine.median import CausalMedianN
 from core.piezo_engine.overlay import JerkOverlayStage
 from core.piezo_engine.pipeline import INPUT_CONDITIONING_METADATA_KEY, conditioning_record
@@ -46,6 +47,8 @@ from data_processing.signal_integrator import SignalIntegrator
 if TYPE_CHECKING:
     from data_processing.gate_replay import GateReplayResult
 
+AUTO_TIMING_UNAVAILABLE_MESSAGE = "PZT MUX connected time unavailable; choose Manual or Infer from total sample rate"
+TESTBOARD_NO_CONNECTION_TIMING_REASON = "ADS7953 physical connection timing unavailable"
 ANALYSIS_TIMESTAMP_COLUMNS = {"timestamp", "timestamp_s"}
 ANALYSIS_FORCE_COLUMNS = {"force_x", "force_z", "force_x_n", "force_z_n"}
 ANALYSIS_TIMING_COLUMNS = {"sample_dt_us"}  # exported per-sample timing, not a signal
@@ -464,11 +467,30 @@ def resolve_analysis_timing(
     capture CSV named by ``source_id``) and the snapshot's own sample rate -- and
     returns the policy plus the status line shown in the Analysis tab.
     """
+    if _is_auto_timing_mode(settings) and not _has_physical_connection_timing(snapshot.metadata):
+        raise ValueError(f"{AUTO_TIMING_UNAVAILABLE_MESSAGE} ({TESTBOARD_NO_CONNECTION_TIMING_REASON})")
     edge = TimingEdgeInputs(
         block_timing_connected_time_s=_block_timing_for_auto_mode(snapshot, settings),
         sample_rate_hz=_snapshot_sample_rate_hz(snapshot) or None,
     )
     return resolve_timing_policy(snapshot.metadata, settings, edge)
+
+
+def _is_auto_timing_mode(settings: Mapping[str, object]) -> bool:
+    try:
+        return normalize_timing_mode(settings.get("mux_timing_mode", TimingMode.AUTO.value)) is TimingMode.AUTO
+    except ValueError:
+        return False
+
+
+def _has_physical_connection_timing(metadata: Mapping) -> bool:
+    """False for TestBoard (ADS7953) captures: the ADC there has no physical sensor-to-MUX
+    connection interval, so AUTO has nothing to read and must not guess one."""
+    if metadata.get("testboard_acquisition"):
+        return False
+    timing = metadata.get("timing")
+    marker = timing.get("physical_adc_connection_timing") if isinstance(timing, Mapping) else None
+    return not (isinstance(marker, str) and "unavailable" in marker)
 
 
 def _block_timing_for_auto_mode(snapshot: AnalysisSourceSnapshot, settings: Mapping[str, object]) -> float | None:
@@ -609,7 +631,6 @@ def filter_offline_data(snapshot: AnalysisSourceSnapshot, filter_settings: dict)
         index_map=index_map,
     )
     engine.reset_runtime_states(runtime)
-    from data_processing.acquisition_timing import gap_indices
     filtered = np.asarray(snapshot.data, dtype=np.float32).copy()
     boundaries = np.unique(np.concatenate(([0], gap_indices(snapshot.timestamps_s), [len(filtered)]))).astype(int)
     for start, end in zip(boundaries[:-1], boundaries[1:]):
@@ -665,47 +686,77 @@ def build_overlay_traces(
         return overlays
 
     if snapshot.metadata.get('testboard_acquisition'):
-        # Compute each five-channel package independently, retaining array identity.
-        packages = {}
-        for label, column in iter_analysis_signal_columns(snapshot):
-            if label in visible_set:
-                packages.setdefault(label.rsplit('_', 1)[0], []).append((label, column))
-        for package_id, columns in packages.items():
-            metadata = dict(snapshot.metadata)
-            metadata.pop('testboard_acquisition', None)
-            package_snapshot = replace(snapshot, channel_labels=[c[0] for c in columns],
-                                       channel_indices=[c[1] for c in columns], metadata=metadata)
-            if len(_position_channel_map(package_snapshot)) != len(SHEAR_SENSOR_POSITIONS):
-                continue
-            traces = build_overlay_traces(
-                package_snapshot, data, axis_mode=axis_mode,
-                visible_labels=package_snapshot.channel_labels,
-                overlay_flags={**overlay_flags, 'integration': False},
-                vref_voltage=vref_voltage, integration_window_samples=integration_window_samples,
-                hpf_cutoff_hz=hpf_cutoff_hz,
-            )
-            for trace in traces:
-                trace.label = f'{package_id} {trace.label}'
-            overlays.extend(traces)
+        overlays.extend(_build_testboard_package_jerk_traces(
+            snapshot, data, axis_mode, visible_set, overlay_flags, vref_voltage, integration_window_samples,
+        ))
         return overlays
+    overlays.extend(_build_jerk_traces(snapshot, data, x, overlay_flags, vref_voltage, integration_window_samples))
+    return overlays
 
+
+def _is_testboard_capture(snapshot: AnalysisSourceSnapshot) -> bool:
+    return bool(snapshot.metadata.get('testboard_acquisition'))
+
+
+def _package_snapshots(
+    snapshot: AnalysisSourceSnapshot, visible_labels: Iterable[str] | None = None,
+) -> dict[str, AnalysisSourceSnapshot]:
+    """One snapshot per TestBoard package (``A1_PZT3``) that resolves all five C/L/R/T/B positions.
+
+    A package snapshot keeps the capture metadata, so voltage scaling still follows the
+    TestBoard descriptor. Packages with fewer than five positions are skipped."""
+    visible = None if visible_labels is None else set(visible_labels)
+    packages: dict[str, list[tuple[str, int]]] = {}
+    for label, column in iter_analysis_signal_columns(snapshot):
+        if visible is None or label in visible:
+            packages.setdefault(label.rsplit('_', 1)[0], []).append((label, column))
+    snapshots = {
+        package_id: replace(snapshot, channel_labels=[c[0] for c in columns], channel_indices=[c[1] for c in columns])
+        for package_id, columns in packages.items()
+    }
+    return {
+        package_id: package_snapshot for package_id, package_snapshot in snapshots.items()
+        if len(_position_channel_map(package_snapshot)) == len(SHEAR_SENSOR_POSITIONS)
+    }
+
+
+def _build_testboard_package_jerk_traces(
+    snapshot: AnalysisSourceSnapshot, data: np.ndarray, axis_mode: str, visible_labels: set[str],
+    overlay_flags: Mapping[str, bool], vref_voltage: float, integration_window_samples: int,
+) -> list[AnalysisTrace]:
+    """Compute each five-channel package independently, retaining array identity."""
+    x_matrix, _label, _units = build_trace_x_axis(snapshot, axis_mode)
+    x = x_matrix[:, 0] if x_matrix.size else np.empty(0, dtype=np.float64)
+    traces: list[AnalysisTrace] = []
+    for package_id, package_snapshot in _package_snapshots(snapshot, visible_labels).items():
+        for trace in _build_jerk_traces(package_snapshot, data, x, overlay_flags, vref_voltage, integration_window_samples):
+            trace.label = f'{package_id} {trace.label}'
+            traces.append(trace)
+    return traces
+
+
+def _build_jerk_traces(
+    snapshot: AnalysisSourceSnapshot, data: np.ndarray, x: np.ndarray,
+    overlay_flags: Mapping[str, bool], vref_voltage: float, integration_window_samples: int,
+) -> list[AnalysisTrace]:
     resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
     if resolved_positions is None:
-        return overlays
+        return []
     _position_channels, volts_by_position = resolved_positions
 
     # Shear/normal use a causal median baseline (matching the calibration
     # notebook's shear pipeline) rather than the HPF-based SignalIntegrator
     # used for the generic "Integration" overlay trace -- a Butterworth
     # high-pass filter here washed out the slow shear response.
-    overlay = JerkOverlayStage(max(1, int(integration_window_samples))).push(volts_by_position)
-    trimmed_x = x[overlay.dropped_leading:]
+    overlay = _push_overlay_per_gap_free_segment(snapshot, volts_by_position, integration_window_samples)
+    trimmed_x = x[overlay.kept_rows]
+    traces: list[AnalysisTrace] = []
     if overlay_flags.get("shear", False):
-        overlays.append(AnalysisTrace("Shear L/R Jerk [V]", trimmed_x, overlay.shear_jerk_lr, "derived"))
-        overlays.append(AnalysisTrace("Shear T/B Jerk [V]", trimmed_x, overlay.shear_jerk_tb, "derived"))
+        traces.append(AnalysisTrace("Shear L/R Jerk [V]", trimmed_x, overlay.shear_jerk_lr, "derived"))
+        traces.append(AnalysisTrace("Shear T/B Jerk [V]", trimmed_x, overlay.shear_jerk_tb, "derived"))
     if overlay_flags.get("normal", False):
-        overlays.append(AnalysisTrace("Normal Jerk [V]", trimmed_x, overlay.normal_jerk, "derived"))
-    return overlays
+        traces.append(AnalysisTrace("Normal Jerk [V]", trimmed_x, overlay.normal_jerk, "derived"))
+    return traces
 
 
 def replace_signals_with_baseline_removed(
@@ -718,14 +769,28 @@ def replace_signals_with_baseline_removed(
 ) -> list[AnalysisTrace]:
     """Swap each C/L/R/T/B raw signal trace for its baseline-removed version in place.
 
-    Keeps the trace label (so legend and colour are unchanged); the series starts
-    ``dropped_leading`` samples later because the running median needs a warm-up.
+    Keeps the trace label (so legend and colour are unchanged); each gap-free segment
+    starts ``window - 1`` samples later because the running median needs a warm-up.
+    A TestBoard capture is replaced package by package.
     """
+    if not _is_testboard_capture(snapshot):
+        return _replace_package_with_baseline_removed(snapshot, data, traces, vref_voltage, integration_window_samples)
+    for package_snapshot in _package_snapshots(snapshot).values():
+        traces = _replace_package_with_baseline_removed(
+            package_snapshot, data, traces, vref_voltage, integration_window_samples,
+        )
+    return traces
+
+
+def _replace_package_with_baseline_removed(
+    snapshot: AnalysisSourceSnapshot, data: np.ndarray, traces: list[AnalysisTrace],
+    vref_voltage: float, integration_window_samples: int,
+) -> list[AnalysisTrace]:
     resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
     if resolved_positions is None:
         return traces
     position_channels, volts_by_position = resolved_positions
-    overlay = JerkOverlayStage(max(1, int(integration_window_samples))).push(volts_by_position)
+    overlay = _push_overlay_per_gap_free_segment(snapshot, volts_by_position, integration_window_samples)
     position_by_label = {label: position for position, (_column, label) in position_channels.items()}
     replaced = []
     for trace in traces:
@@ -734,8 +799,50 @@ def replace_signals_with_baseline_removed(
             replaced.append(trace)
             continue
         values = np.asarray(overlay.baseline_removed[position], dtype=np.float64)
-        replaced.append(AnalysisTrace(trace.label, trace.x[overlay.dropped_leading:], values, trace.group))
+        replaced.append(AnalysisTrace(trace.label, trace.x[overlay.kept_rows], values, trace.group))
     return replaced
+
+
+@dataclass(frozen=True, slots=True)
+class GapFreeOverlay:
+    """Overlay series of every gap-free segment, concatenated; ``kept_rows`` are the source
+    rows that survived each segment's warm-up drop (they index the x axis)."""
+
+    baseline_removed: Mapping[str, np.ndarray]
+    shear_jerk_lr: np.ndarray
+    shear_jerk_tb: np.ndarray
+    normal_jerk: np.ndarray
+    kept_rows: np.ndarray
+
+
+def _gap_free_segments(timestamps_s: np.ndarray, row_count: int) -> list[tuple[int, int]]:
+    """``(start, end)`` row ranges between timestamp gaps; one range when timestamps and rows disagree."""
+    if len(timestamps_s) != row_count:
+        return [(0, row_count)]
+    boundaries = np.unique(np.concatenate(([0], gap_indices(timestamps_s), [row_count]))).astype(int)
+    return list(zip(boundaries[:-1], boundaries[1:]))
+
+
+def _push_overlay_per_gap_free_segment(
+    snapshot: AnalysisSourceSnapshot, volts_by_position: Mapping[str, np.ndarray], integration_window_samples: int,
+) -> GapFreeOverlay:
+    """Run a fresh ``JerkOverlayStage`` per gap-free segment so running state never crosses a gap."""
+    row_count = len(next(iter(volts_by_position.values())))
+    parts = []
+    for start, end in _gap_free_segments(snapshot.timestamps_s, row_count):
+        stage = JerkOverlayStage(max(1, int(integration_window_samples)))
+        overlay = stage.push({position: volts[start:end] for position, volts in volts_by_position.items()})
+        parts.append((overlay, np.arange(start + overlay.dropped_leading, end)))
+    return GapFreeOverlay(
+        baseline_removed={
+            position: np.concatenate([overlay.baseline_removed[position] for overlay, _rows in parts])
+            for position in volts_by_position
+        },
+        shear_jerk_lr=np.concatenate([overlay.shear_jerk_lr for overlay, _rows in parts]),
+        shear_jerk_tb=np.concatenate([overlay.shear_jerk_tb for overlay, _rows in parts]),
+        normal_jerk=np.concatenate([overlay.normal_jerk for overlay, _rows in parts]),
+        kept_rows=np.concatenate([rows for _overlay, rows in parts]),
+    )
 
 
 def _resolve_shear_position_channels_and_volts(
@@ -804,7 +911,24 @@ def build_force_based_shear_normal_traces(
     """
     if not any(bool(overlay_flags.get(key, False)) for key in ("shear_force", "normal_force")):
         return []
+    if not _is_testboard_capture(snapshot):
+        return _build_package_force_traces(snapshot, data, axis_mode, overlay_flags, vref_voltage, settings)
 
+    package_snapshots = _package_snapshots(snapshot)
+    if not package_snapshots:
+        raise ValueError("Shear Force / Normal Force requires all five C/L/R/T/B channels")
+    traces: list[AnalysisTrace] = []
+    for package_id, package_snapshot in package_snapshots.items():
+        for trace in _build_package_force_traces(package_snapshot, data, axis_mode, overlay_flags, vref_voltage, settings):
+            trace.label = f'{package_id} {trace.label}'
+            traces.append(trace)
+    return traces
+
+
+def _build_package_force_traces(
+    snapshot: AnalysisSourceSnapshot, data: np.ndarray, axis_mode: str,
+    overlay_flags: Mapping[str, bool], vref_voltage: float, settings: ShearNormalForceSettings,
+) -> list[AnalysisTrace]:
     resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
     if resolved_positions is None:
         raise ValueError("Shear Force / Normal Force requires all five C/L/R/T/B channels")
@@ -814,11 +938,11 @@ def build_force_based_shear_normal_traces(
     config = EngineConfig(
         timing=_timing_for_labels(settings.timing, labels_by_position.values()),
         force=ForceSettings.from_mapping(settings.pzt_force_settings),
-        vref_voltage=vref_voltage,
+        vref_voltage=source_voltage(snapshot, vref_voltage),
     )
     time_base_s = build_trace_time_axis_seconds(snapshot)
     row_time_s = time_base_s[:, 0] if time_base_s.size else np.empty(0, dtype=np.float64)
-    forces = ForceStage(labels_by_position, config).push(volts_by_position, row_time_s)
+    forces = _push_force_per_gap_free_segment(snapshot, labels_by_position, config, volts_by_position, row_time_s)
 
     x_matrix, _label, _units = build_trace_x_axis(snapshot, axis_mode)
     x = x_matrix[:, position_channels["C"][0]] if x_matrix.size else np.empty(0, dtype=np.float64)
@@ -829,6 +953,24 @@ def build_force_based_shear_normal_traces(
     if overlay_flags.get("normal_force", False):
         traces.append(AnalysisTrace("Normal Force [N]", x, forces.normal_force, "force"))
     return traces
+
+
+def _push_force_per_gap_free_segment(
+    snapshot: AnalysisSourceSnapshot, labels_by_position: Mapping[str, str], config: EngineConfig,
+    volts_by_position: Mapping[str, np.ndarray], row_time_s: np.ndarray,
+) -> ForceTraces:
+    """Run a fresh ``ForceStage`` per gap-free segment so its integrators never carry across a gap."""
+    parts = [
+        ForceStage(labels_by_position, config).push(
+            {position: volts[start:end] for position, volts in volts_by_position.items()}, row_time_s[start:end],
+        )
+        for start, end in _gap_free_segments(snapshot.timestamps_s, len(row_time_s))
+    ]
+    return ForceTraces(
+        normal_force=np.concatenate([part.normal_force for part in parts]),
+        shear_force_lr=np.concatenate([part.shear_force_lr for part in parts]),
+        shear_force_tb=np.concatenate([part.shear_force_tb for part in parts]),
+    )
 
 
 def build_integration_traces(
@@ -974,6 +1116,15 @@ def _median_filter_columns(raw_columns: np.ndarray, window: int) -> np.ndarray:
     return stage.process(raw_columns).astype(raw_columns.dtype, copy=False)
 
 
+def _median_filter_gap_free_segments(raw_columns: np.ndarray, timestamps_s: np.ndarray, window: int) -> np.ndarray:
+    """:func:`_median_filter_columns` run per gap-free segment, with fresh filter state at each gap,
+    so a median window never blends samples from either side of a timestamp gap."""
+    filtered = np.empty_like(raw_columns)
+    for start, end in _gap_free_segments(timestamps_s, len(raw_columns)):
+        filtered[start:end] = _median_filter_columns(raw_columns[start:end], window)
+    return filtered
+
+
 def _apply_pzt_blip_filter(
     snapshot: AnalysisSourceSnapshot, data: np.ndarray, window: int,
 ) -> np.ndarray:
@@ -996,7 +1147,7 @@ def _apply_pzt_blip_filter(
         return data
     column_indices = np.asarray(sorted(set(columns)), dtype=np.int32)
     data = data.copy()
-    data[:, column_indices] = _median_filter_columns(data[:, column_indices], window)
+    data[:, column_indices] = _median_filter_gap_free_segments(data[:, column_indices], snapshot.timestamps_s, window)
     return data
 
 

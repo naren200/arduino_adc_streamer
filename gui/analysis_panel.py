@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -98,6 +99,7 @@ ANALYSIS_PLOT_SPECS = (
 ANALYSIS_WINDOW_HOVER_RGB = (0, 150, 170)  # not a class color, and visible on the white plot
 ANALYSIS_WINDOW_HOVER_ALPHA = 120
 ANALYSIS_FORCE_TRACES_ALWAYS_UNCHECKED = frozenset({"Force X [N]", "Force Z [N]"})
+ARRAY_QUALIFIED_LABEL = re.compile(r"A\d+_")
 
 
 class AnalysisPanelMixin(GatingPreviewPanelMixin):
@@ -1588,6 +1590,13 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
         # Derived labels include their array-qualified package/source name.
         return f"A{array}_" in label
 
+    def _analysis_force_trace_matches_array(self, label):
+        """Array-qualified force traces (``A1_PZT3 Shear Force ...``) follow the array selector;
+        the load-cell Force X/Z traces belong to no array and always show."""
+        if not ARRAY_QUALIFIED_LABEL.match(label):
+            return True
+        return self._analysis_trace_matches_array(label)
+
     def _render_analysis_prepared(self, auto_range: bool = False):
         prepared = self.analysis_prepared
         if prepared is None:
@@ -1641,7 +1650,8 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
                 "derived", self.analysis_derived_curves, self.analysis_derived_plot, key, color, trace
             )
 
-        for index, trace in enumerate(prepared.force_traces):
+        force_traces = [trace for trace in prepared.force_traces if self._analysis_force_trace_matches_array(trace.label)]
+        for index, trace in enumerate(force_traces):
             key = trace.label
             desired_force.add(key)
             color = self._analysis_force_trace_color(key, index)
@@ -1660,7 +1670,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
 
         visible_force = any(
             self.analysis_force_checks.get(trace.label).isChecked()
-            for trace in prepared.force_traces
+            for trace in force_traces
             if trace.label in self.analysis_force_checks
         )
         self._update_analysis_plot_visibility({
@@ -1696,7 +1706,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
                 (self.analysis_signal_plot, prepared.traces, desired_signal),
                 (self.analysis_integration_plot, integration_traces, desired_integration),
                 (self.analysis_derived_plot, derived_traces, desired_derived),
-                (self.analysis_force_plot, prepared.force_traces, desired_force),
+                (self.analysis_force_plot, force_traces, desired_force),
             ):
                 if desired:
                     self._auto_range_analysis_plot(plot, traces, startup_threshold_x)

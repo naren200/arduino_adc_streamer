@@ -368,3 +368,30 @@ def test_replay_ticks_submit_every_emitted_window_in_order(harness):
     expected = make_driver(snapshot, harness._touchid_replay_setup(input_conditioning=RAW_INPUT)).run_to_end()
     assert len(submitted) == len(expected) > 1
     assert [w.window_ts[0] for w in submitted] == [w.window_ts[0] for w in expected]
+
+
+UNREPLAYABLE_METADATA = {"testboard_acquisition": {"adc_resolution_bits": 12, "full_scale_volts": 5.0, "reference": 5.0}}
+
+
+def test_a_source_that_cannot_be_replayed_warns_and_changes_nothing(harness):
+    load(harness, fake_model("v1"))
+    arm_replay_source(harness)
+    harness.analysis_snapshot.metadata = UNREPLAYABLE_METADATA
+    mode_before = harness.touchid_mode
+    with patch("gui.inference_panel.QMessageBox.warning") as warning, \
+            patch("gui.inference_panel.QMessageBox.question") as question:
+        harness.on_touchid_run_on_source_clicked()
+    assert warning.call_args.args[2].startswith("Cannot replay this source: it is a TestBoard capture")
+    question.assert_not_called()
+    assert harness.touchid_mode == mode_before
+    assert getattr(harness, "_touchid_replay_driver", None) is None
+
+
+def test_a_source_with_a_timestamp_gap_warns_and_changes_nothing(harness):
+    load(harness, fake_model("v1"))
+    arm_replay_source(harness)
+    harness.analysis_snapshot.timestamps_s[100:] += 1.0
+    with patch("gui.inference_panel.QMessageBox.warning") as warning:
+        harness.on_touchid_run_on_source_clicked()
+    assert "gap" in warning.call_args.args[2]
+    assert getattr(harness, "_touchid_replay_driver", None) is None
