@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import tempfile
 import unittest
@@ -6,6 +6,8 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pyqtgraph as pg
+from types import SimpleNamespace
 from PyQt6.QtWidgets import QApplication
 
 from constants.pzt_force import ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS, PZT_FORCE_DEFAULT_SETTINGS
@@ -305,3 +307,123 @@ class AnalysisBaselineRemovedOverlayRoundTripTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeWindowSource:
+    """Satisfies the AnalysisWindowSource contract with a fixed span."""
+
+    def __init__(self, span_s):
+        self.source_id = "fake"
+        self.span_s = float(span_s)
+
+    def clamp_view_start(self, view_start_s):
+        return min(max(0.0, view_start_s), max(0.0, self.span_s - 60.0))
+
+
+class StubLoadWorker:
+    def __init__(self):
+        self.payloads = []
+
+    def submit(self, payload):
+        self.payloads.append(payload)
+
+    def stop(self):
+        pass
+
+    def wait(self, _timeout):
+        pass
+
+
+def make_window_snapshot(span_s, view_start_s):
+    view_end_s = min(view_start_s + 60.0, span_s)
+    resident = (max(0.0, view_start_s - 20.0), min(view_end_s + 20.0, span_s))
+    return SimpleNamespace(
+        span_s=span_s, view_range_s=(view_start_s, view_end_s), resident_range_s=resident,
+        sweep_count=10, samples_per_sweep=5,
+    )
+
+
+class AnalysisWindowNavigationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.panel = AnalysisPanelMixin()
+        self.panel._init_analysis_state()
+        self.addCleanup(self.panel.shutdown_analysis_worker)
+        self.panel.analysis_source_load_worker.stop()
+        self.panel.analysis_source_load_worker.wait(1500)
+        self.panel.analysis_source_load_worker = StubLoadWorker()
+        self.controls_container = self.panel._build_analysis_window_controls()
+        self.panel._set_analysis_status_text = lambda _text: None
+
+    def load(self, span_s, view_start_s=0.0):
+        self.panel.analysis_window_source = FakeWindowSource(span_s)
+        self.panel.analysis_snapshot = make_window_snapshot(span_s, view_start_s)
+        self.panel._update_analysis_window_controls()
+
+    def enabled(self):
+        return (
+            self.panel.analysis_view_left_btn.isEnabled(),
+            self.panel.analysis_view_right_btn.isEnabled(),
+        )
+
+    def test_buttons_disabled_without_source(self):
+        self.panel._update_analysis_window_controls()
+        self.assertEqual(self.enabled(), (False, False))
+
+    def test_buttons_disabled_for_short_source(self):
+        self.load(span_s=45.0)
+        self.assertEqual(self.enabled(), (False, False))
+
+    def test_only_right_enabled_at_start(self):
+        self.load(span_s=300.0, view_start_s=0.0)
+        self.assertEqual(self.enabled(), (False, True))
+
+    def test_only_left_enabled_at_end(self):
+        self.load(span_s=300.0, view_start_s=240.0)
+        self.assertEqual(self.enabled(), (True, False))
+
+    def test_both_enabled_in_middle(self):
+        self.load(span_s=300.0, view_start_s=80.0)
+        self.assertEqual(self.enabled(), (True, True))
+
+    def test_right_click_submits_window_payload_and_blocks_buttons(self):
+        self.load(span_s=300.0, view_start_s=0.0)
+        self.panel.on_analysis_move_view(1)
+
+        payload = self.panel.analysis_source_load_worker.payloads[-1]
+        self.assertEqual(payload["view_start_s"], 40.0)
+        self.assertIs(payload["window_source"], self.panel.analysis_window_source)
+        self.assertEqual(self.enabled(), (False, False))
+
+    def test_move_is_clamped_to_end(self):
+        self.load(span_s=300.0, view_start_s=220.0)
+        self.panel.on_analysis_move_view(1)
+        self.assertEqual(self.panel.analysis_source_load_worker.payloads[-1]["view_start_s"], 240.0)
+
+    def test_limits_cap_zoom_at_60_s_and_pan_to_resident_range(self):
+        plots = [pg.PlotWidget() for _ in range(4)]
+        (self.panel.analysis_signal_plot, self.panel.analysis_integration_plot,
+         self.panel.analysis_derived_plot, self.panel.analysis_force_plot) = plots
+        self.load(span_s=300.0, view_start_s=100.0)
+        self.panel.analysis_prepared = SimpleNamespace(x_units="s")
+
+        self.panel._apply_analysis_window_limits(force_view_range=True)
+
+        limits = plots[0].getViewBox().state["limits"]
+        self.assertEqual(limits["xRange"][1], 60.0)
+        self.assertEqual(limits["xLimits"], [80.0, 180.0])
+        self.assertEqual(plots[0].viewRange()[0], [100.0, 160.0])
+
+    def test_loaded_status_names_view_and_resident_sweeps(self):
+        self.load(span_s=300.0, view_start_s=40.0)
+        self.panel._install_analysis_window_status()
+        self.assertIn("view 40-100 s of 300 s (10 sweeps resident", self.panel._analysis_loaded_status)
+        self.assertEqual(self.panel.analysis_view_range_label.text(), "View 40.0-100.0 s of 300.0 s")
+
+    def test_label_duration_uses_full_span(self):
+        self.load(span_s=300.0, view_start_s=40.0)
+        self.panel.analysis_prepared = SimpleNamespace(x_units="s")
+        self.assertEqual(self.panel._analysis_label_trace_duration_s(), 300.0)

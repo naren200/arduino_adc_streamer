@@ -244,12 +244,12 @@ class InferencePanelMixin:
         # own "baseline"-labeled region(s); see resolve_replay_baseline.
         self._touchid_replay_idle_baseline = None
 
-        # Snapshot object (identity, not value) + raw predictions from the
-        # most recently completed 'Run on Analysis Source' replay -- lets
-        # 'Load Last Inference' reapply those predictions to the Analysis
-        # overlay without re-running the model, as long as analysis_snapshot
-        # is still that exact object (see on_touchid_load_last_inference_clicked).
-        self._touchid_last_inference_snapshot = None
+        # Window key + raw predictions from the most recently completed
+        # 'Run on Analysis Source' replay -- lets 'Load Last Inference'
+        # reapply those predictions to the Analysis overlay without
+        # re-running the model, as long as analysis_snapshot is still the same
+        # window of the same source (see on_touchid_load_last_inference_clicked).
+        self._touchid_last_inference_window_key = None
         self._touchid_last_inference_predictions: list[dict] = []
         self._touchid_last_inference_setup: ReplaySetup | None = None
         self._touchid_replay_setup_used: ReplaySetup | None = None
@@ -1346,7 +1346,10 @@ class InferencePanelMixin:
         self.touchid_run_on_source_btn.setEnabled(False)
         self.touchid_stop_replay_btn.setEnabled(True)
         if hasattr(self, 'log_status'):
-            self.log_status('TouchID: starting replay over analysis source')
+            self.log_status(
+                f'TouchID: starting replay over {self._touchid_replay_scope_text(snapshot)}; '
+                f'idle baseline: {resolved.source} (file-label baselines are limited to this window)'
+            )
 
         if hasattr(self, 'visualization_tabs') and hasattr(self, 'touchid_tab_index'):
             self.visualization_tabs.setCurrentIndex(self.touchid_tab_index)
@@ -1378,6 +1381,13 @@ class InferencePanelMixin:
         self._touchid_replay_timer.setInterval(0)
         self._touchid_replay_timer.timeout.connect(self._touchid_replay_tick)
         self._touchid_replay_timer.start()
+
+    @staticmethod
+    def _touchid_replay_scope_text(snapshot) -> str:
+        resident = getattr(snapshot, 'resident_range_s', None)
+        if resident is None:
+            return 'analysis source'
+        return f'analysis window {resident[0]:.1f}–{resident[1]:.1f} s'
 
     def _touchid_resolve_replay_baseline(self, snapshot, channel_indices: list[int], fs: float):
         return resolve_replay_baseline(
@@ -1446,22 +1456,34 @@ class InferencePanelMixin:
     def on_touchid_fast_forward_toggled(self, *_args):
         self.touchid_fast_forward.set_enabled(self.touchid_fast_forward_check.isChecked())
 
+    def _touchid_last_inference_matches_window(self) -> bool:
+        snapshot = getattr(self, 'analysis_snapshot', None)
+        return (
+            snapshot is not None
+            and self._touchid_last_inference_window_key is not None
+            and snapshot.window_key() == self._touchid_last_inference_window_key
+        )
+
+    def touchid_on_analysis_window_changed(self):
+        """Called after a new Analysis snapshot is installed: predictions from a
+        different window must not be drawn against it."""
+        if not self._touchid_last_inference_matches_window():
+            self.analysis_predicted_labels = []
+            self.analysis_predicted_setup = None
+        if hasattr(self, 'touchid_load_last_inference_btn'):
+            self.touchid_load_last_inference_btn.setEnabled(
+                self._touchid_last_inference_matches_window() and bool(self._touchid_last_inference_predictions)
+            )
+
     def on_touchid_load_last_inference_clicked(self):
         """Reapply the last completed replay's predictions to the Analysis
         overlay without re-running the model, as long as the Analysis tab's
-        analysis_snapshot is still the exact object that replay ran over
-        (identity check -- load_analysis_source always assigns a brand new
-        snapshot object, so any intervening Load, including a re-Load of the
-        same file, invalidates this)."""
-        snapshot = getattr(self, 'analysis_snapshot', None)
-        if (
-            snapshot is None
-            or self._touchid_last_inference_snapshot is None
-            or snapshot is not self._touchid_last_inference_snapshot
-        ):
+        analysis_snapshot is still the same window (window_key) of the same
+        source that replay ran over."""
+        if not self._touchid_last_inference_matches_window():
             QMessageBox.warning(
                 self, 'TouchID',
-                'The Analysis source has changed since the last replay -- '
+                'The Analysis window has changed since the last replay -- '
                 "use 'Run on Analysis Source' to classify it.",
             )
             self.touchid_load_last_inference_btn.setEnabled(False)
@@ -1609,7 +1631,7 @@ class InferencePanelMixin:
         # what each window's own classification produced, unaffected by the
         # smoother -- so it isn't itself smeared by majority-vote lag.
         self.analysis_predicted_labels = overlay_predictions
-        self._touchid_last_inference_snapshot = self._touchid_replay_snapshot
+        self._touchid_last_inference_window_key = self._touchid_replay_snapshot.window_key()
         self._touchid_last_inference_predictions = overlay_predictions
         self._touchid_last_inference_setup = self._touchid_replay_setup_used
         self.analysis_predicted_setup = self._touchid_replay_setup_used
@@ -1619,7 +1641,8 @@ class InferencePanelMixin:
         summary = self._touchid_replay_summary_text(raw_predictions, smoothed_predictions, stopped_early)
         if hasattr(self, 'log_status'):
             self.log_status(
-                f'TouchID: replay predicted {len(raw_predictions)} windows on analysis source'
+                f'TouchID: replay predicted {len(raw_predictions)} windows on '
+                f'{self._touchid_replay_scope_text(self._touchid_replay_snapshot)}'
                 + (' (stopped early)' if stopped_early else '')
             )
             for line in summary.splitlines():
