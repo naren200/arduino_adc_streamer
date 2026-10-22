@@ -20,18 +20,18 @@ from inference._paths import TEXTURE_PIEZO_MODELS
 REAL_BUNDLES = TEXTURE_PIEZO_MODELS / "_bundles"
 DEFAULTS_FILE = "default_models.json"
 OLD, NEW = datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 2, 1, tzinfo=timezone.utc)
-PENTA_V1, ANN_V3, ANN_V6, CHUNK = ("penta", "v1", "default"), ("ann", "v3", "default"), ("ann", "v6", "m1"), ("chunk", "v1", "rerun")
+PENTA_V1, ANN_V3, ANN_V6, CHUNK = ("penta", "v1", "default"), ("ann", "v3", "default"), ("ann", "v6", "m1"), ("chunk", "v1", None)
 
 
-def _newest_real_bundle(family, version, tag):
-    """The real bundle with this header identity (the files' names are not an interface)."""
+def _newest_real_bundle(family, version, tag=None):
+    """The newest real bundle with this header identity; any tag when ``tag`` is None (the files' names are not an interface)."""
     found = []
     for path in REAL_BUNDLES.glob("*.pt") if REAL_BUNDLES.is_dir() else ():
         try:
             header = texture_piezo_adapter.read_model_header(path)
         except (ValueError, OSError):
             continue
-        if (header.model_family, header.weights_version, header.checkpoint_tag) == (family, version, tag):
+        if (header.model_family, header.weights_version) == (family, version) and tag in (None, header.checkpoint_tag):
             found.append((header.bundle_id, path))
     return max(found)[1] if found else None
 
