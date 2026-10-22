@@ -4,6 +4,7 @@ from pathlib import Path
 import struct
 import threading
 import time
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -11,7 +12,9 @@ import pytest
 from config.testboard_acquisition import build_descriptor
 from data_processing.acquisition_queue import AcquisitionQueue, AcquisitionOverrun
 from data_processing.acquisition_timing import DeviceTimeline, DeviceRestart, peak_envelope
+from constants.pzt_blip_filter import PZT_BLIP_FILTER_DEFAULT_ENABLED, PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES
 from data_processing.archive_writer import ArchiveWriterThread
+from data_processing.live_acquisition import LiveAcquisitionMixin
 from data_processing.testboard_acquisition_worker import TestBoardAcquisitionWorker as AcquisitionWorker
 from serial_communication.serial_threads import SerialReaderThread
 
@@ -285,3 +288,34 @@ def test_failed_acquisition_preserves_original_error_at_decoder_boundary():
     worker.error = 'force rendering failed for array 2'
     with pytest.raises(AcquisitionOverrun, match='force rendering failed for array 2'):
         worker.enqueue({'generation': 1})
+
+
+SPIKY_COLUMN = np.array([10, 11, 4000, 12, 13, 14, 15, 4095, 16, 17], dtype=np.uint16)
+
+
+def worker_configured_by_gui(**gui_settings):
+    worker = AcquisitionWorker(descriptor(10), 1, threading.Lock(), 100, None)
+    LiveAcquisitionMixin._apply_blip_filter_settings_to_worker(SimpleNamespace(**gui_settings), worker)
+    return worker
+
+
+def test_gui_blip_filter_disabled_reaches_worker_and_leaves_spikes_unfiltered():
+    worker = worker_configured_by_gui(pzt_blip_filter_enabled=False)
+    starts = 1000 + np.arange(10) * 20
+    worker.process_batch(dict(generation=1, samples=np.tile(SPIKY_COLUMN[:, None], (1, 10)), starts=starts,
+        ends=starts + 9, avg_us=np.ones(10), arrival=time.perf_counter(), decoded=time.perf_counter()))
+    worker.finish_pending()
+    assert worker.pzt_blip_filter_enabled is False
+    np.testing.assert_array_equal(worker.raw[:10, 0], SPIKY_COLUMN)
+
+
+def test_gui_blip_filter_window_reaches_worker():
+    worker = worker_configured_by_gui(pzt_blip_filter_enabled=True, pzt_blip_filter_window_samples=5)
+    assert worker.pzt_blip_filter_enabled is True
+    assert worker.pzt_blip_filter_window_samples == 5
+
+
+def test_worker_uses_blip_filter_defaults_when_gui_has_no_such_attributes():
+    worker = worker_configured_by_gui()
+    assert worker.pzt_blip_filter_enabled == PZT_BLIP_FILTER_DEFAULT_ENABLED
+    assert worker.pzt_blip_filter_window_samples == PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES

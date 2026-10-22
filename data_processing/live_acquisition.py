@@ -5,6 +5,7 @@ import time
 
 from PyQt6.QtCore import QTimer, QCoreApplication, QEventLoop
 
+from constants.pzt_blip_filter import PZT_BLIP_FILTER_DEFAULT_ENABLED, PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES
 from data_processing.acquisition_worker import AcquisitionWorker
 
 
@@ -48,6 +49,7 @@ class LiveAcquisitionMixin:
         worker = AcquisitionWorker(self.array_capture_descriptor, self._capture_generation,
             self.buffer_lock, self.MAX_SWEEPS_BUFFER, self._archive_writer,
             ghost_enabled=self.should_remove_pzt_ghost(), attenuation=self.pzt_ghost_attenuation)
+        self._apply_blip_filter_settings_to_worker(worker)
         self._acquisition_worker = worker
         self.samples_per_sweep = worker.width
         self.raw_data_buffer, self.processed_data_buffer, self.sweep_timestamps_buffer = worker.raw, worker.processed, worker.times
@@ -61,6 +63,13 @@ class LiveAcquisitionMixin:
         self._acquisition_render_timer.start()
         from serial_communication.capture_awake import set_capture_awake
         set_capture_awake(True)
+
+    def _apply_blip_filter_settings_to_worker(self, worker):
+        # GUI controls are locked during capture, so one copy at start stays valid.
+        worker.set_pzt_blip_filter_enabled(
+            getattr(self, 'pzt_blip_filter_enabled', PZT_BLIP_FILTER_DEFAULT_ENABLED))
+        worker.set_pzt_blip_filter_window_samples(
+            getattr(self, 'pzt_blip_filter_window_samples', PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES))
 
     def _watch_acquisition_archive(self):
         pending = []
