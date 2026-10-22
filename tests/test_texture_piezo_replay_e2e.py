@@ -26,7 +26,11 @@ from core.piezo_engine.pipeline import (
 )
 from core.texture_piezo.application.inference_config import InferenceConfig, pzt_columns_for_sensor, set_model_version
 from core.texture_piezo.application.live_channels import named_engine_channels
-from core.texture_piezo.application.live_model import engine_config_for_model, required_channels_for_model
+from core.texture_piezo.application.live_model import (
+    engine_config_for_model, gating_version_for_model, required_channels_for_model, trained_gating_v2_config_for_model,
+)
+from core.texture_piezo.application.replay_driver import ReplayDriver
+from core.texture_piezo.application.replay_setup import ReplaySetup
 from core.texture_piezo.application.stream_processor import TouchIdStreamProcessor
 from core.texture_piezo.gating.v1.quality_gate import fit_idle_baseline
 from core.texture_piezo.models import model_discovery
@@ -102,25 +106,22 @@ def artifacts_for_label(label) -> ModelArtifacts:
 
 def replay_windows(snapshot, idle_baseline, runtime):
     """Every LiveWindow the replay of ``snapshot`` produces for ``runtime``'s config and channels."""
-    columns = pzt_columns_for_sensor(SENSOR_NUMBER)
-    indices = [snapshot.channel_labels.index(column) for column in columns]
-    fs = float(snapshot.sample_rate_hz)
+    columns = tuple(pzt_columns_for_sensor(SENSOR_NUMBER))
     config = InferenceConfig()
-    processor = TouchIdStreamProcessor(
-        pzt_columns=columns, window_size_s=config.window_size_s, hop_size_s=config.hop_size_s,
-        span_stale_timeout_s=config.span_stale_timeout_s, idle_baseline=idle_baseline,
-        onset_skip_s=config.onset_skip_s,
+    setup = ReplaySetup(
+        gating_version=gating_version_for_model(runtime), gating_v2_config=trained_gating_v2_config_for_model(runtime),
+        span_stale_timeout_s=config.span_stale_timeout_s, engine_config=engine_config_for_model(runtime),
+        idle_baseline=idle_baseline, window_size_s=config.window_size_s, hop_size_s=config.hop_size_s,
+        onset_skip_s=config.onset_skip_s, required_channels=required_channels_for_model(runtime), pzt_columns=columns,
         input_conditioning=input_conditioning_from_record(snapshot.metadata.get(INPUT_CONDITIONING_METADATA_KEY)),
-        engine_config=engine_config_for_model(runtime), required_channels=required_channels_for_model(runtime),
     )
-    hop_n = max(1, round(config.hop_size_s * fs))
-    ready = []
-    for start in range(0, snapshot.sweep_count, hop_n):
-        end = min(start + hop_n, snapshot.sweep_count)
-        chunk = {c: snapshot.data[start:end, i].astype(np.float64) for c, i in zip(columns, indices)}
-        timestamps = np.asarray(snapshot.timestamps_s[start:end], dtype=np.float64)
-        ready += processor.push_chunk(processor.filter_raw(chunk), timestamps, fs, now_t=end / fs)
-    return processor, ready
+    processor = setup.new_processor()
+    indices = [snapshot.channel_labels.index(column) for column in columns]
+    driver = ReplayDriver(
+        processor, snapshot.data, snapshot.timestamps_s, columns, indices,
+        float(snapshot.sample_rate_hz), config.hop_size_s,
+    )
+    return processor, driver.run_to_end()
 
 
 def offline_reference(snapshot, processor):

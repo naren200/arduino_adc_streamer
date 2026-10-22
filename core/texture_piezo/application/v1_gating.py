@@ -17,6 +17,7 @@ from core.texture_piezo.gating.v1.segmentation import ActiveSampleQueue
 
 from .buffer import RollingBuffer
 from .gating_strategy import DerivedChunk, GatingParams, ReadyWindow
+from .gating_trace import GateTick, TraceObserver
 from .live_channels import named_engine_channels
 from .sample_store import ContinuousSampleStore
 
@@ -39,6 +40,7 @@ class V1Gating:
             raise ValueError("gating version 'v1' has no GatingParams.v2_config; it would be silently ignored")
         self._params = params
         self._onset_skip_s = params.onset_skip_s
+        self._trace_observer: TraceObserver | None = None
         self.reset()
 
     def reset(self) -> None:
@@ -71,7 +73,23 @@ class V1Gating:
         else:
             ready = self._push_active_queue(chunk)
         self._log_windows(ready)
+        if self._trace_observer is not None:
+            self._trace_observer(GateTick(lane_pieces={}, windows=tuple(ready)))
         return ready
+
+    def set_trace_observer(self, observer: TraceObserver | None) -> None:
+        self._trace_observer = observer
+
+    def describe(self) -> str:
+        params = self._params
+        grid = f"window {params.window_size_s:g} s every {params.hop_size_s:g} s"
+        if params.idle_baseline is None:
+            return f"No idle baseline: no gate, plain fixed grid ({grid}) over the whole stream."
+        return (
+            f"Idle baseline present: idle is stripped from the stream into active fragments, each windowed by {grid}. "
+            f"The first {self._onset_skip_s:g} s of every fragment is dropped; "
+            f"a fragment goes stale after {params.v1_options.span_stale_timeout_s:g} s."
+        )
 
     @staticmethod
     def _log_windows(ready: list[ReadyWindow]) -> None:

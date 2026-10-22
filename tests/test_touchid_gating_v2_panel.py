@@ -10,11 +10,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import pytest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from core.piezo_engine.live_window import LiveWindow
 from core.texture_piezo.application import inference_config
 from core.texture_piezo.application.gating_strategy import ReadyWindow
+from core.texture_piezo.application.mode import TouchIdMode
+from core.texture_piezo.gating.v1.quality_gate import IdleBaseline
 from core.texture_piezo.application.inference_config import InferenceConfig, load_touchid_settings, save_touchid_settings
 from core.texture_piezo.application.live_channels import DEFAULT_CHANNELS
 from core.texture_piezo.application.stream_processor import LIVE_ENGINE_CONFIG
@@ -23,7 +25,9 @@ from core.texture_piezo.application.v1_gating import V1Gating
 from core.texture_piezo.application.v2_gating import V2Gating
 from core.texture_piezo.gating.v2.config import GatingV2Config
 from inference import texture_piezo_adapter
+from core.piezo_engine.pipeline import RAW_INPUT
 from test_inference_panel import TouchIdHarness
+from test_replay_driver import make_driver, make_snapshot
 
 TRAINED_PARAMS = {
     "version": "v2", "idle_gate_enabled": False, "strength_gate_enabled": True, "concat_enabled": True,
@@ -258,3 +262,109 @@ def test_the_classifier_exposes_v2_params_only_for_a_v2_runtime():
     assert classifier.gating_v2_params == TRAINED_PARAMS
     classifier._runtime = SimpleNamespace(GATING_VERSION="v1")
     assert classifier.gating_v2_params is None
+
+
+IDLE_GATED_PARAMS = {**TRAINED_PARAMS, "idle_gate_enabled": True}
+NO_BASELINE_PROMPT = "No idle baseline exists. Continue without the idle gate?"
+
+
+def arm_replay_source(host):
+    """An Analysis snapshot carrying the host's PZT columns, so a run passes every precondition up to the baseline."""
+    columns = list(host.touchid_config.pzt_columns)
+    host.analysis_snapshot = SimpleNamespace(
+        sample_rate_hz=1000.0, channel_labels=columns, sweep_count=200, data=np.zeros((200, len(columns))),
+        timestamps_s=np.arange(200) / 1000.0, metadata={},
+    )
+    host.analysis_label_segments = []
+
+
+def run_on_source(host, answer):
+    """Click Run on Analysis Source, answering the no-baseline question; returns the question calls."""
+    with patch("gui.inference_panel.QMessageBox.question", return_value=answer) as question:
+        host.on_touchid_run_on_source_clicked()
+    timer = getattr(host, "_touchid_replay_timer", None)
+    if timer is not None:
+        timer.stop()
+    return question
+
+
+def test_replay_without_baseline_asks_before_running_an_idle_gated_model(harness):
+    load(harness, fake_model(params=IDLE_GATED_PARAMS))
+    arm_replay_source(harness)
+    question = run_on_source(harness, QMessageBox.StandardButton.No)
+    assert question.call_args.args[2] == NO_BASELINE_PROMPT
+
+
+def test_declining_the_no_baseline_question_changes_nothing(harness):
+    load(harness, fake_model(params=IDLE_GATED_PARAMS))
+    arm_replay_source(harness)
+    processor = harness.touchid_processor
+    run_on_source(harness, QMessageBox.StandardButton.No)
+    assert harness.touchid_mode == TouchIdMode.NORMAL
+    assert harness.touchid_processor is processor
+    assert harness.touchid_config.gating_v2_overrides == {}
+    assert harness.touchid_v2_editors["idle_gate_enabled"].isChecked()
+
+
+def test_accepting_the_no_baseline_question_turns_the_idle_gate_off_and_persists_it(harness):
+    load(harness, fake_model(params=IDLE_GATED_PARAMS))
+    arm_replay_source(harness)
+    run_on_source(harness, QMessageBox.StandardButton.Yes)
+    assert harness.touchid_mode == TouchIdMode.REPLAYING
+    assert harness.touchid_config.gating_v2_overrides == {"idle_gate_enabled": False}
+    assert not harness.touchid_v2_editors["idle_gate_enabled"].isChecked()
+    assert live_config(harness).idle_gate_enabled is False
+    harness.saved.assert_called()
+
+
+def test_a_v2_model_without_an_idle_gate_is_not_asked(harness):
+    load(harness, fake_model())
+    arm_replay_source(harness)
+    question = run_on_source(harness, QMessageBox.StandardButton.No)
+    question.assert_not_called()
+    assert harness.touchid_mode == TouchIdMode.REPLAYING
+
+
+def test_an_existing_baseline_is_not_asked_about(harness):
+    load(harness, fake_model(params=IDLE_GATED_PARAMS))
+    arm_replay_source(harness)
+    harness.touchid_idle_baseline = IdleBaseline(
+        pzt_columns=list(harness.touchid_config.pzt_columns), mean=[0.0] * 5, std=[1.0] * 5, fs=1000.0)
+    question = run_on_source(harness, QMessageBox.StandardButton.No)
+    question.assert_not_called()
+    assert harness.touchid_mode == TouchIdMode.REPLAYING
+
+
+def test_v1_replay_without_baseline_asks_and_runs_on_the_fixed_grid_when_accepted(harness):
+    load(harness, fake_model("v1"))
+    arm_replay_source(harness)
+    question = run_on_source(harness, QMessageBox.StandardButton.Yes)
+    question.assert_called_once()
+    assert harness.touchid_mode == TouchIdMode.REPLAYING
+    assert harness.touchid_config.gating_v2_overrides == {}
+
+
+def test_v1_replay_without_baseline_aborts_when_declined(harness):
+    load(harness, fake_model("v1"))
+    arm_replay_source(harness)
+    run_on_source(harness, QMessageBox.StandardButton.No)
+    assert harness.touchid_mode == TouchIdMode.NORMAL
+
+
+def test_replay_ticks_submit_every_emitted_window_in_order(harness):
+    params = {**TRAINED_PARAMS, "burst_min": 1.0, "sustain_min": 3, "sustain_blocks": 7, "expiry_s": 1.0}
+    load(harness, fake_model(params=params))
+    harness.touchid_config.window_size_s, harness.touchid_config.hop_size_s = 0.1, 0.05
+    harness._rebuild_touchid_buffers()
+    snapshot = make_snapshot()
+    snapshot.channel_labels = list(harness.touchid_config.pzt_columns)
+    harness.analysis_snapshot, harness.analysis_label_segments = snapshot, []
+    submitted, finished = [], []
+    harness._touchid_submit_window = submitted.append
+    harness._touchid_finish_replay = lambda *args, **kwargs: finished.append(True)
+    run_on_source(harness, QMessageBox.StandardButton.No)
+    while not finished:
+        harness._touchid_replay_tick()
+    expected = make_driver(snapshot, harness._touchid_replay_setup(input_conditioning=RAW_INPUT)).run_to_end()
+    assert len(submitted) == len(expected) > 1
+    assert [w.window_ts[0] for w in submitted] == [w.window_ts[0] for w in expected]

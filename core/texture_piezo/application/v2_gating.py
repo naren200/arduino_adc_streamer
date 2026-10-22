@@ -11,8 +11,6 @@ Queue changes and emitted windows are reported as DEBUG events (gating_v2_events
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import numpy as np
 
 from core.piezo_engine.live_window import LiveWindow
@@ -24,9 +22,13 @@ from core.texture_piezo.gating.v2.strong_signal import StrongSignalStage
 
 from . import gating_v2_events as events
 from .gating_strategy import DerivedChunk, GatingParams, ReadyWindow
+from .gating_trace import GateTick, TraceObserver
 from .sample_store import ContinuousSampleStore
 
 NORMAL_JERK_CHANNEL = "normal_jerk"
+STRENGTH_LANE = "strength"
+IDLE_LANE = "idle"
+COMBINED_LANE = "combined"
 
 
 class V2Gating:
@@ -41,8 +43,7 @@ class V2Gating:
         self._params = params
         self._config = params.v2_config
         self._onset_skip_s = params.onset_skip_s
-        # Optional inspection hook: called with (per-stage good pieces, combined pieces) on every push.
-        self.stage_observer: Callable[[list[list[IndexRange]], list[IndexRange]], None] | None = None
+        self._trace_observer: TraceObserver | None = None
         self.reset()
 
     @property
@@ -77,16 +78,51 @@ class V2Gating:
         self._announce_waiting_for_baseline()
         self.store.append(chunk.channel_samples, chunk.derived, chunk.timestamps)
         times = StoreTimes(self.store.timestamps, self.store.base_abs, 1.0 / chunk.fs)
-        pieces = self._stage_pieces(chunk)
-        combined = self._combiner.combine(pieces, times)
-        if self.stage_observer is not None:
-            self.stage_observer(pieces, combined)
+        stage_pieces = self._stage_pieces(chunk)
+        combined = self._combiner.combine(list(stage_pieces.values()), times)
         pushed = self._queue.push(combined, times)
         if events.is_enabled():
             events.log_queue_changes(pushed.changes)
         ready = self._ready_windows(pushed.windows, chunk.fs)
+        self._report_tick(stage_pieces, combined, ready)
         self._trim_store(times)
         return ready
+
+    def set_trace_observer(self, observer: TraceObserver | None) -> None:
+        self._trace_observer = observer
+
+    def _report_tick(
+        self, stage_pieces: dict[str, list[IndexRange]], combined: list[IndexRange], ready: list[ReadyWindow],
+    ) -> None:
+        if self._trace_observer is None:
+            return
+        lane_pieces = {name: tuple(pieces) for name, pieces in {**stage_pieces, COMBINED_LANE: combined}.items()}
+        self._trace_observer(GateTick(lane_pieces=lane_pieces, windows=tuple(ready)))
+
+    def describe(self) -> str:
+        config = self._config
+        lines = [self._describe_final_gate()]
+        if config.strength_gate_enabled:
+            lines.append(
+                f"Strength: block of {config.block_s:g} s is strong when its sum of |{NORMAL_JERK_CHANNEL}| > "
+                f"{config.burst_min:g}; good when more than {config.sustain_min} of the last "
+                f"{config.sustain_blocks} blocks are strong."
+            )
+        if config.idle_gate_enabled:
+            lines.append("Idle: a micro-chunk is active when a raw sample leaves the idle baseline's k-sigma band.")
+        if self.idle_gate_waiting_for_baseline:
+            lines.append("Idle gate is enabled but TouchID has no idle baseline yet, so it constrains nothing.")
+        return "\n".join(lines)
+
+    def _describe_final_gate(self) -> str:
+        stages = [name for name, stage in ((STRENGTH_LANE, self._strength), (IDLE_LANE, self._idle)) if stage is not None]
+        gate = " AND ".join(stages) if stages else "no stage (whole stream)"
+        params, config = self._params, self._config
+        return (
+            f"Final gate: {gate} -> drop first {self._onset_skip_s:g} s of every new range"
+            f" -> queue: window {params.window_size_s:g} s every {params.hop_size_s:g} s,"
+            f" expiry {config.expiry_s:g} s, concat {'on' if config.concat_enabled else 'off'}"
+        )
 
     def _announce_waiting_for_baseline(self) -> None:
         is_waiting = self.idle_gate_waiting_for_baseline
@@ -101,12 +137,12 @@ class V2Gating:
                 f"derived channels lack (has {sorted(chunk.derived)})"
             )
 
-    def _stage_pieces(self, chunk: DerivedChunk) -> list[list[IndexRange]]:
-        pieces = []
+    def _stage_pieces(self, chunk: DerivedChunk) -> dict[str, list[IndexRange]]:
+        pieces = {}
         if self._strength is not None:
-            pieces.append(self._strength.feed(np.asarray(chunk.derived[NORMAL_JERK_CHANNEL]), chunk.fs))
+            pieces[STRENGTH_LANE] = self._strength.feed(np.asarray(chunk.derived[NORMAL_JERK_CHANNEL]), chunk.fs)
         if self._idle is not None:
-            pieces.append(self._idle.feed(self.store, chunk.fs))
+            pieces[IDLE_LANE] = self._idle.feed(self.store, chunk.fs)
         return pieces
 
     def _ready_windows(self, spans: tuple[WindowSpan, ...], fs: float) -> list[ReadyWindow]:
@@ -128,3 +164,4 @@ class V2Gating:
         horizon = times.latest - self._config.expiry_s
         keep_from = times.first_at_or_after(horizon, times.base_abs, times.base_abs + len(times.values))
         self.store.trim_to(keep_from)
+

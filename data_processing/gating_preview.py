@@ -2,7 +2,7 @@
 
 Nothing here re-implements a gate stage or the queue. The capture is fed to ``V2Gating`` in
 hop-sized chunks the way replay does, and every number shown is read back from it: each
-stage's good pieces and the combined pieces through its ``stage_observer`` hook, and the
+stage's good pieces and the combined pieces through its trace observer, and the
 accepted samples from the windows it emitted.
 """
 
@@ -13,7 +13,8 @@ from dataclasses import asdict, dataclass, replace
 import numpy as np
 
 from core.texture_piezo.application.gating_strategy import DerivedChunk, GatingParams
-from core.texture_piezo.application.v2_gating import NORMAL_JERK_CHANNEL, V2Gating
+from core.texture_piezo.application.gating_trace import TraceRecorder
+from core.texture_piezo.application.v2_gating import COMBINED_LANE, IDLE_LANE, NORMAL_JERK_CHANNEL, STRENGTH_LANE, V2Gating
 from core.texture_piezo.gating.v1.quality_gate import IdleBaseline
 from core.texture_piezo.gating.v2.config import GatingV2Config
 from data_processing.analysis_workbench import AnalysisSourceSnapshot
@@ -119,26 +120,19 @@ def run_gate_preview(
         gating = V2Gating(params)
     except ValueError as exc:
         return GatePreview([], [], [], [], logic, error=str(exc))
-    stage_names = [name for name, is_on in (("strength", config.strength_gate_enabled), ("idle", gating._idle is not None)) if is_on]
-    stage_ranges: dict[str, list[tuple[int, int]]] = {name: [] for name in stage_names}
-    combined: list[tuple[int, int]] = []
-
-    def observe(pieces, combined_pieces):
-        for name, stage_pieces in zip(stage_names, pieces):
-            stage_ranges[name].extend(stage_pieces)
-        combined.extend(combined_pieces)
-
-    gating.stage_observer = observe
+    recorder = TraceRecorder()
+    gating.set_trace_observer(recorder.observe)
     accepted, window_count = _feed_capture(gating, view, fs, live)
+    lanes = {lane.name: lane.ranges for lane in recorder.trace().lanes}
     to_x = _index_to_x(view.x)
     total_s = float(view.timestamps_s[-1] - view.timestamps_s[0]) if len(view.timestamps_s) > 1 else 0.0
     accepted_s = sum(float(view.timestamps_s[min(end, len(view.timestamps_s)) - 1] - view.timestamps_s[start])
                      for start, end in accepted)
     result = _result_line(accepted_s, total_s, window_count, gating.idle_gate_waiting_for_baseline)
     return GatePreview(
-        strength=[to_x(r) for r in stage_ranges.get("strength", [])],
-        idle=[to_x(r) for r in stage_ranges.get("idle", [])],
-        combined=[to_x(r) for r in combined],
+        strength=[to_x(r) for r in lanes.get(STRENGTH_LANE, ())],
+        idle=[to_x(r) for r in lanes.get(IDLE_LANE, ())],
+        combined=[to_x(r) for r in lanes.get(COMBINED_LANE, ())],
         accepted=[to_x(r) for r in accepted],
         logic_text=logic + "\n" + result,
         accepted_seconds=tuple(
