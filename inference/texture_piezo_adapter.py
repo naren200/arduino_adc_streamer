@@ -32,7 +32,9 @@ from pathlib import Path
 
 import yaml
 
-from inference._paths import TEXTURE_PIEZO_ROOT, TEXTURE_PIEZO_ROOT_ENV_VAR
+import os
+
+from inference._paths import APP_ROOT_ENV_VAR, TEXTURE_PIEZO_ROOT, TEXTURE_PIEZO_ROOT_ENV_VAR
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIR_NAME = "src"
@@ -74,7 +76,10 @@ def require_checkout(root: Path) -> None:
 
 
 def configured_app_root(root: Path) -> Path | None:
-    """The app checkout texture_piezo's own config points at, or None when unset."""
+    """The app checkout texture_piezo resolves: the environment variable it honours first, else its own config; None when unset."""
+    from_env = os.environ.get(APP_ROOT_ENV_VAR)
+    if from_env:
+        return Path(from_env).resolve()
     config = yaml.safe_load((Path(root) / CONFIG_RELATIVE_PATH).read_text(encoding="utf-8")) or {}
     configured = (config.get("paths") or {}).get(APP_ROOT_CONFIG_KEY)
     if not configured:
@@ -87,8 +92,9 @@ def require_same_app_root(root: Path, app_root: Path = APP_ROOT) -> None:
     configured = configured_app_root(root)
     if configured is None or configured != Path(app_root).resolve():
         raise EngineRootMismatchError(
-            f"texture_piezo's configs/config.yaml paths.{APP_ROOT_CONFIG_KEY} is {configured}, but this app runs "
-            f"from {Path(app_root).resolve()}; point it at this checkout. Importing the runtime would otherwise "
+            f"texture_piezo resolves this app to {configured} (environment variable {APP_ROOT_ENV_VAR}, else its "
+            f"configs/config.yaml paths.{APP_ROOT_CONFIG_KEY}), but this app runs from {Path(app_root).resolve()}; "
+            f"point it at this checkout. Importing the runtime would otherwise "
             "put a second engine checkout on sys.path or fail inside texture_piezo's engine_adapter"
         )
 

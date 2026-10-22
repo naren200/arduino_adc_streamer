@@ -7,6 +7,7 @@ from pathlib import Path
 # sys.path side effect; only inference/texture_piezo_adapter.py makes
 # texture_piezo importable.
 TEXTURE_PIEZO_ROOT_ENV_VAR = "TEXTURE_PIEZO_ROOT"
+APP_ROOT_ENV_VAR = "ARDUINO_ADC_STREAMER_ROOT"  # texture_piezo honours the same name over its config's paths.arduino_adc_streamer_root
 _DEFAULT_TEXTURE_PIEZO_ROOT = Path.home() / "Documents" / "Github" / "texture_piezo"
 
 TEXTURE_PIEZO_ROOT = Path(os.environ.get(TEXTURE_PIEZO_ROOT_ENV_VAR) or _DEFAULT_TEXTURE_PIEZO_ROOT)

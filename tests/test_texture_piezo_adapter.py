@@ -69,7 +69,7 @@ def test_a_missing_checkout_fails_with_a_message_naming_the_env_var(tmp_path):
         adapter.require_checkout(tmp_path / "nowhere")
 
 
-def test_texture_piezo_configured_for_a_sibling_app_checkout_is_refused_before_anything_is_imported(tmp_path):
+def test_texture_piezo_configured_for_a_sibling_app_checkout_is_refused_before_anything_is_imported(tmp_path, config_decides_the_app_root):
     sibling = tmp_path / "arduino_adc_streamer_copy"
     sibling.mkdir()
     root = make_fake_checkout(tmp_path / "texture_piezo", str(sibling))
@@ -80,12 +80,17 @@ def test_texture_piezo_configured_for_a_sibling_app_checkout_is_refused_before_a
     assert not {name for name in set(sys.modules) - modules_before if name.startswith("touchid_inference")}
 
 
-def test_an_app_root_setting_that_names_this_checkout_is_accepted(tmp_path):
+@pytest.fixture
+def config_decides_the_app_root(monkeypatch):
+    monkeypatch.delenv(adapter.APP_ROOT_ENV_VAR, raising=False)
+
+
+def test_an_app_root_setting_that_names_this_checkout_is_accepted(tmp_path, config_decides_the_app_root):
     root = make_fake_checkout(tmp_path / "texture_piezo", adapter.APP_ROOT.as_posix())
     adapter.require_same_app_root(root)
 
 
-def test_an_unset_app_root_setting_is_refused(tmp_path):
+def test_an_unset_app_root_setting_is_refused(tmp_path, config_decides_the_app_root):
     root = make_fake_checkout(tmp_path / "texture_piezo", None)
     with pytest.raises(adapter.EngineRootMismatchError):
         adapter.require_same_app_root(root)
@@ -150,3 +155,16 @@ def test_a_texture_piezo_without_model_catalog_is_refused_with_a_clear_message(m
     monkeypatch.setattr(adapter, "runtime_api", lambda root=TEXTURE_PIEZO_ROOT: outdated_runtime)
     with pytest.raises(adapter.TexturePiezoUnavailableError, match="too old: missing model_catalog; update texture_piezo"):
         adapter.model_catalog()
+
+
+def test_the_app_root_environment_variable_wins_over_texture_piezos_config(tmp_path, monkeypatch):
+    root = make_fake_checkout(tmp_path / "texture_piezo", (tmp_path / "somewhere_else").as_posix())
+    monkeypatch.setenv(adapter.APP_ROOT_ENV_VAR, str(adapter.APP_ROOT))
+    adapter.require_same_app_root(root)
+
+
+def test_an_app_root_environment_variable_naming_another_checkout_is_refused(tmp_path, monkeypatch):
+    root = make_fake_checkout(tmp_path / "texture_piezo", adapter.APP_ROOT.as_posix())
+    monkeypatch.setenv(adapter.APP_ROOT_ENV_VAR, str(tmp_path / "somewhere_else"))
+    with pytest.raises(adapter.EngineRootMismatchError, match=adapter.APP_ROOT_ENV_VAR):
+        adapter.require_same_app_root(root)
