@@ -1,0 +1,43 @@
+{
+  "created_utc": "2026-10-20T20:44:46.789741+00:00",
+  "source_unchanged": true,
+  "source_tables": 7,
+  "result_conditions": 6,
+  "observations": 48,
+  "all_manual_rows_transcribed": true,
+  "no_ghost_not_encoded_as_zero": true,
+  "gui_default_engine": "lpspi",
+  "firmware_default_engine": "lpspi",
+  "original_test_engine": "blocking",
+  "lpspi_rerun_rates": 3,
+  "engines_confirmed_by_user": true,
+  "historical_engine_runtime_verified": false,
+  "hardware_tests_run": false,
+  "pdf": {
+    "path": "docs\\reports\\exports\\TestBoard_ADC124_Ghosting_Comparison_2026-10-20.pdf",
+    "sha256": "71f86980a20f55f6377eb6144c2327ed8f6803df0417001171e3a7a03919ef27",
+    "visual_review_pending": false,
+    "pages": 16,
+    "render_engine": "Poppler 26.09.0 at 115 dpi",
+    "all_pages_rendered_and_visually_reviewed": true,
+    "text_out_of_bounds": 0,
+    "blank_pages": 0,
+    "review": "All 16 pages reviewed in four contact sheets; final enlarged engine comparison chart and table inspected individually on page 4. Remaining layout unchanged."
+  },
+  "input_sha256": {
+    "docs\\testing\\benchmarks\\testboard-adc124\\Ghosting Tests TestBoard_ADC124.docx": "f276dee2195b207055b791ef43da23ab801acb40bd500c70a9526ec810dfd9d9",
+    "config\\boards\\profiles\\testboard_adc124.json": "2cfef56e531a08ea29b97d428ae105060eb076fc104255bff07ad4fe3a20cc82",
+    "Arduino_Sketches\\TestBoard_ADC124\\src\\main.cpp": "a9df6d231bd41d247214e3be0c990569afec8a74d7a133e71f358f178eb5e35f",
+    "data_processing\\timing_display.py": "a03e2504427b4f6b32bf425ed43eeb303eb7a3be537401fe37eb2415fbab22f5",
+    "Arduino_Sketches\\TestBoard_ADC124\\benchmarks\\report_adc124_ghosting.py": "d831f6433d508fe68d47a364a9513a4c5486313b24ffc30f144f75be3decdd89"
+  },
+  "pdf_all_48_original_rows_and_amplitudes_verified": true,
+  "pdf_all_engine_rates_and_missing_cells_verified": true,
+  "original_manual_observation_csv_unchanged": true,
+  "previous_report_archived": "docs\\testing\\results\\testboard-adc124\\ghosting_manual_2026-10-20\\report_revisions\\blocking_only\\report.pdf",
+  "artifact_sha256": {
+    "conditions.csv": "89103a0149c05f511e166ccb026f0afd2eae14bc29b9093bdeae22af779cba85",
+    "engine_rate_comparison.csv": "f34dcdb45e2afd1fdd5706c50c3bbea307621d454a8d77611be6e282ff88e0b6",
+    "manual_observations.csv": "2eb226d770916f35f3a3e989faf51bf72a13d0b7a2996086e5655f38387e29bd"
+  }
+}

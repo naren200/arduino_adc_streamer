@@ -1,0 +1,534 @@
+{
+  "schema_version": 1,
+  "profile_version": 5,
+  "id": "testboard_adc124",
+  "mcu_aliases": [
+    "TestBoard_ADC124"
+  ],
+  "provenance": {
+    "source": "Arduino_Sketches/TestBoard_ADC124/",
+    "verified_against": "Protocol 3, adc124-selector-lookahead-v1; host regression tests (hardware validation pending)"
+  },
+  "default_mode": "PZT",
+  "hardware": {
+    "adc_resolution_bits": 12,
+    "adc_lane_count": 2,
+    "inputs_per_adc": 32,
+    "max_arrays": 2,
+    "reserved_inputs": {
+      "vmid": 7
+    },
+    "lane_label": "ADC",
+    "route_encoding": {
+      "inputs_per_mux": 8
+    },
+    "unavailable_inputs": [
+      6,
+      7,
+      14,
+      15,
+      22,
+      23,
+      31
+    ]
+  },
+  "transport": {
+    "baud_rate": 460800,
+    "command_terminator": "***",
+    "run_ack": "none",
+    "bootstrap": "shared_usb"
+  },
+  "preferences": {
+    "reconnect": "defaults"
+  },
+  "sensor_requirements": {},
+  "sensor_editability": {
+    "electrical": false,
+    "spatial": false
+  },
+  "modes": {
+    "PZT": {
+      "device_mode": "adc",
+      "features": {
+        "is_array_pzt_pzr17": false,
+        "is_teensy": false,
+        "yaxis_units_locked": false,
+        "yaxis_units_value": null,
+        "show_charge_discharge_labels": false,
+        "show_manual_channels": false,
+        "device_mode_log_label": "ADC streamer"
+      },
+      "parameters": {
+        "reference": {
+          "type": "enum",
+          "default": "3.3",
+          "label": "Voltage Reference:",
+          "policy": "fixed",
+          "section": "adc",
+          "choices": [
+            {
+              "id": "3.3",
+              "label": "3.3 V (fixed)",
+              "wire_value": "3.3",
+              "full_scale_volts": 3.3
+            }
+          ],
+          "command": "ref"
+        },
+        "vmid_sampling": {
+          "type": "boolean",
+          "default": false,
+          "label": "Use Vmid Sample",
+          "policy": "editable",
+          "section": "acquisition",
+          "legacy_key": "use_ground",
+          "command": "vmid",
+          "tooltip": "Visit VMID between sensor groups. Wait-only firmware applies the VMID settling delay without ADC conversions; startup/stop parking always runs"
+        },
+        "samples_per_channel": {
+          "type": "integer",
+          "default": 1,
+          "label": "Repeat Count:",
+          "policy": "fixed",
+          "section": "acquisition",
+          "legacy_key": "repeat",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "sweeps_per_block": {
+          "type": "integer",
+          "default": 1,
+          "label": "Sweeps per Block:",
+          "policy": "fixed",
+          "section": "acquisition",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "spi_clock_hz": {
+          "type": "integer",
+          "default": 16000000,
+          "label": "SPI CLK [MHz]:",
+          "policy": "editable",
+          "section": "adc",
+          "display_scale": 1e-06,
+          "display_unit": "MHz",
+          "decimals": 3,
+          "step": 100000,
+          "tooltip": "Requested SCLK, 8\u201316 MHz; the actual divider may round it",
+          "legacy_key": "testboard_spi_clock_hz",
+          "minimum": 8000000,
+          "maximum": 16000000,
+          "command": "spiclock"
+        },
+        "settling_conversions": {
+          "type": "integer",
+          "default": 1,
+          "label": "Repeat Count:",
+          "policy": "editable",
+          "section": "acquisition",
+          "tooltip": "Settling conversions per channel; only the final result is retained",
+          "legacy_key": "testboard_channel_repeat",
+          "minimum": 1,
+          "maximum": 3,
+          "command": "channelrepeat"
+        },
+        "array_selection": {
+          "type": "enum",
+          "default": "both",
+          "label": "Array:",
+          "policy": "editable",
+          "section": "acquisition",
+          "legacy_key": "testboard_array_selection",
+          "choices": [
+            {
+              "id": "both",
+              "label": "Both arrays",
+              "wire_value": "both"
+            },
+            {
+              "id": "1",
+              "label": "Array 1",
+              "wire_value": "1"
+            },
+            {
+              "id": "2",
+              "label": "Array 2",
+              "wire_value": "2"
+            }
+          ],
+          "command": "array"
+        },
+        "scan_order": {
+          "type": "enum",
+          "default": "adc",
+          "label": "Scan order:",
+          "policy": "editable",
+          "tooltip": "ADC scans each array in turn; MUX shares address settling across arrays. Configure again after changing this setting.",
+          "section": "acquisition",
+          "legacy_key": "testboard_scan_order",
+          "choices": [
+            {
+              "id": "adc",
+              "label": "ADC (array sequential)",
+              "wire_value": "adc"
+            },
+            {
+              "id": "mux",
+              "label": "MUX (shared settling)",
+              "wire_value": "mux"
+            }
+          ],
+          "command": "scanorder"
+        },
+        "spi_engine": {
+          "type": "enum",
+          "default": "lpspi",
+          "label": "SPI engine:",
+          "policy": "config_file_only",
+          "section": "acquisition",
+          "choices": [
+            {
+              "id": "blocking",
+              "label": "blocking",
+              "wire_value": "blocking"
+            },
+            {
+              "id": "dma",
+              "label": "dma",
+              "wire_value": "dma"
+            },
+            {
+              "id": "lpspi",
+              "label": "lpspi",
+              "wire_value": "lpspi"
+            }
+          ],
+          "command": "spiengine"
+        },
+        "spi_frame": {
+          "type": "enum",
+          "default": "burst",
+          "label": "SPI framing:",
+          "policy": "config_file_only",
+          "section": "acquisition",
+          "choices": [
+            {
+              "id": "burst",
+              "label": "burst",
+              "wire_value": "burst"
+            },
+            {
+              "id": "single",
+              "label": "single",
+              "wire_value": "single"
+            }
+          ],
+          "command": "spiframe"
+        },
+        "settle_time_us": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 1000,
+          "label": "Settle time [us]:",
+          "policy": "editable",
+          "section": "acquisition",
+          "command": "muxsettle",
+          "order": 10,
+          "tooltip": "Sensor analog settling after external MUX address changes"
+        },
+        "vmid_settle_follow_sensor": {
+          "type": "boolean",
+          "default": false,
+          "label": "VMID settle follows sensor",
+          "policy": "editable",
+          "section": "acquisition",
+          "order": 11,
+          "tooltip": "Optional: use sensor settling instead of the independent VMID delay"
+        },
+        "vmid_settle_time_us": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 1000,
+          "label": "VMID settle time [us]:",
+          "policy": "editable",
+          "section": "acquisition",
+          "order": 12,
+          "tooltip": "Enable Use Vmid Sample to edit this independent delay; zero retains switching guards"
+        }
+      },
+      "scaling": {
+        "units": "adc_counts"
+      },
+      "adapters": {
+        "protocol": "profile_commands",
+        "frame": "adc_u16_timed",
+        "acquisition": "multi_array",
+        "timing": "unavailable"
+      },
+      "rules": [
+        {
+          "when": {
+            "parameter": "vmid_sampling",
+            "equals": false
+          },
+          "enabled": {
+            "vmid_settle_time_us": false
+          }
+        },
+        {
+          "when": {
+            "parameter": "vmid_settle_follow_sensor",
+            "equals": true
+          },
+          "enabled": {
+            "vmid_settle_time_us": false
+          }
+        }
+      ],
+      "buffer_limits": {},
+      "emitted_adc_lanes": 2,
+      "streaming": {
+        "pipeline": "batched_timed_sweeps",
+        "render_interval_ms": 200
+      },
+      "configuration": {
+        "acknowledgement": "bare",
+        "commands": [
+          {
+            "command": "mode",
+            "value": {
+              "source": "mode"
+            }
+          },
+          {
+            "parameter": "reference"
+          },
+          {
+            "parameter": "array_selection"
+          },
+          {
+            "parameter": "scan_order"
+          },
+          {
+            "command": "adcchannels",
+            "value": {
+              "source": "configured_routes"
+            }
+          },
+          {
+            "parameter": "vmid_sampling"
+          },
+          {
+            "parameter": "spi_clock_hz"
+          },
+          {
+            "parameter": "settling_conversions"
+          },
+          {
+            "parameter": "spi_engine"
+          },
+          {
+            "parameter": "spi_frame"
+          },
+          {
+            "parameter": "settle_time_us"
+          },
+          {
+            "command": "vmidsettle",
+            "value": {
+              "when": {
+                "parameter": "vmid_settle_follow_sensor",
+                "equals": true
+              },
+              "then": {
+                "literal": "default"
+              },
+              "else": {
+                "parameter": "vmid_settle_time_us"
+              }
+            }
+          }
+        ],
+        "status": {
+          "command": "status",
+          "start": {
+            "prefix": "# board="
+          },
+          "end": {
+            "prefix": "#OK"
+          },
+          "retain_unknown": true,
+          "fields": {
+            "array": {
+              "type": "text",
+              "target": "testboard_array",
+              "expected": {
+                "parameter": "array_selection"
+              }
+            },
+            "scanorder": {
+              "type": "text",
+              "target": "testboard_scan_order",
+              "expected": {
+                "parameter": "scan_order"
+              }
+            },
+            "spi_clock_hz": {
+              "type": "integer",
+              "target": "testboard_spi_clock_hz",
+              "expected": {
+                "parameter": "spi_clock_hz"
+              }
+            },
+            "route_count": {
+              "type": "integer",
+              "target": "testboard_route_count",
+              "expected": {
+                "source": "route_count"
+              }
+            },
+            "vref": {
+              "type": "parameter",
+              "target": "reference",
+              "parameter": "reference",
+              "expected": {
+                "parameter": "reference"
+              }
+            },
+            "adcchannels": {
+              "type": "routes",
+              "target": "testboard_routes",
+              "expected": {
+                "source": "configured_routes"
+              }
+            },
+            "board": {
+              "type": "text",
+              "target": "parameters.board",
+              "expected": {
+                "literal": "TestBoard_ADC124"
+              }
+            },
+            "protocol_version": {
+              "type": "integer",
+              "target": "parameters.protocol_version",
+              "expected": {
+                "literal": 3
+              }
+            },
+            "spi_frame": {
+              "type": "text",
+              "target": "parameters.spi_frame",
+              "expected": {
+                "parameter": "spi_frame"
+              }
+            },
+            "spiengine": {
+              "type": "text",
+              "target": "testboard_engine",
+              "expected": {
+                "parameter": "spi_engine"
+              }
+            },
+            "channelrepeat": {
+              "type": "integer",
+              "target": "testboard_channel_repeat",
+              "also_targets": [
+                "testboard_effective_repeat"
+              ],
+              "expected": {
+                "parameter": "settling_conversions"
+              }
+            },
+            "vmid_address": {
+              "type": "integer",
+              "target": "ground_pin",
+              "expected": {
+                "source": "vmid_channel"
+              }
+            },
+            "vmid_between_groups": {
+              "type": "boolean",
+              "target": "testboard_vmid",
+              "also_targets": [
+                "testboard_effective_vmid"
+              ],
+              "expected": {
+                "parameter": "vmid_sampling"
+              }
+            },
+            "mux_settle_us": {
+              "type": "integer",
+              "target": "parameters.mux_settle_us",
+              "expected": {
+                "parameter": "settle_time_us"
+              }
+            },
+            "vmid_settle_us": {
+              "type": "integer",
+              "target": "parameters.vmid_settle_us",
+              "expected": {
+                "when": {
+                  "parameter": "vmid_settle_follow_sensor",
+                  "equals": true
+                },
+                "then": {
+                  "parameter": "settle_time_us"
+                },
+                "else": {
+                  "parameter": "vmid_settle_time_us"
+                }
+              }
+            },
+            "vmid_settle_mode": {
+              "type": "text",
+              "target": "parameters.vmid_settle_mode",
+              "expected": {
+                "when": {
+                  "parameter": "vmid_settle_follow_sensor",
+                  "equals": true
+                },
+                "then": {
+                  "literal": "follow_sensor"
+                },
+                "else": {
+                  "literal": "explicit"
+                }
+              }
+            },
+            "payload_routes": {
+              "type": "text",
+              "target": "parameters.payload_routes",
+              "expected": {
+                "source": "payload_routes"
+              }
+            },
+            "sampling_sweeps": {
+              "type": "integer",
+              "target": "stream_diagnostics.sampling_sweeps"
+            },
+            "usb_frames_sent": {
+              "type": "integer",
+              "target": "stream_diagnostics.usb_frames_sent"
+            },
+            "usb_frames_discarded": {
+              "type": "integer",
+              "target": "stream_diagnostics.usb_frames_discarded"
+            },
+            "sampling_period_max_us": {
+              "type": "integer",
+              "target": "stream_diagnostics.sampling_period_max_us"
+            },
+            "sampling_period_over_1ms": {
+              "type": "integer",
+              "target": "stream_diagnostics.sampling_period_over_1ms"
+            }
+          }
+        },
+        "capture_engine_field": "testboard_engine"
+      }
+    }
+  }
+}

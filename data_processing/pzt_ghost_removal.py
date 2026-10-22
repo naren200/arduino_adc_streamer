@@ -92,13 +92,20 @@ class PztGhostRemovalMixin:
             return groups
 
         if (
-            hasattr(self, 'is_testboard_7953_mode')
-            and self.is_testboard_7953_mode()
-            and hasattr(self, 'get_testboard_adc_routes')
+            hasattr(self, 'is_multi_array_mode')
+            and self.is_multi_array_mode()
+            and hasattr(self, 'get_array_adc_routes')
         ):
-            routes = list(self.get_testboard_adc_routes())
+            descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
+            if descriptor:
+                cache = getattr(self, '_pzt_group_cache', None)
+                if cache is not None and cache[0] is descriptor and cache[1] == width:
+                    return cache[2]
+                routes = [tuple(route) for route in descriptor['ordered_routes']]
+            else:
+                routes = list(self.get_array_adc_routes())
             groups = []
-            for adc_lane in (1, 2, 3, 4):
+            for adc_lane in sorted({route[0] for route in routes}):
                 lane_route_indices = [
                     index for index, route in enumerate(routes)
                     if int(route[0]) == adc_lane
@@ -111,6 +118,8 @@ class PztGhostRemovalMixin:
                     columns = [column for column in columns if column < width]
                     if columns:
                         groups.append(columns)
+            if descriptor:
+                self._pzt_group_cache = (descriptor, width, groups)
             return groups
 
         if hasattr(self, 'is_array_pzt1_mode') and self.is_array_pzt1_mode():
@@ -140,7 +149,7 @@ class PztGhostRemovalMixin:
     def _pzt_ghost_baseline_array_from_plot(self, samples_per_sweep: int) -> np.ndarray | None:
         baselines = np.zeros(int(samples_per_sweep), dtype=np.float32)
         covered = np.zeros(int(samples_per_sweep), dtype=bool)
-        for spec in self.get_display_channel_specs():
+        for spec in getattr(self, "get_acquisition_channel_specs", self.get_display_channel_specs)():
             baseline = self.plot_baselines.get(spec.get('key'))
             if baseline is None:
                 continue
@@ -204,7 +213,10 @@ class PztGhostRemovalMixin:
         self._pzt_ghost_baselines = baselines
         self._pzt_ghost_noise = noise
         self._pzt_ghost_calibration_pending = False
-        if was_pending:
+        worker = getattr(self, '_acquisition_worker', None)
+        if worker is not None:
+            worker.request_baselines(baselines, noise)
+        if was_pending and worker is None:
             self._replace_retained_pzt_data_with_clean_signal()
             if hasattr(self, 'log_status'):
                 self.log_status('PZT ghost-removal baseline calibrated from the startup Zero Signals window')

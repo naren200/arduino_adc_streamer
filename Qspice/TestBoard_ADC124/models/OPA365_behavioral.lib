@@ -1,0 +1,23 @@
+* OPA365 behavioral macro-model (NOT the TI SPICE model)
+*
+* Pins : inp, inn, out, vdd, gnd
+* Single dominant pole (gain-bandwidth), slew limit, rail-to-rail clamp with
+* headroom, open-loop output resistance, input offset / bias current /
+* input capacitances.
+*
+* Global .param values used (set by build_model.py from config.json):
+*   op_gbw, op_aol, op_sr, op_vos, op_ib, op_cdiff, op_ccm, op_ro, op_vmargin
+.param op_gm=1m
+.param op_c1={op_gm/(6.283185307*op_gbw)}
+.subckt OPA365_BEH inp inn out vdd gnd
+Ccmp inp gnd {op_ccm}
+Ccmn inn gnd {op_ccm}
+Cdif inp inn {op_cdiff}
+Ibp  inp gnd {op_ib}
+Ibn  inn gnd {op_ib}
+Bgm  gnd int I=limit({op_gm}*(V(inp)-V(inn)+{op_vos}), -{op_sr}*{op_c1}, {op_sr}*{op_c1})
+Rint int gnd {op_aol/op_gm}
+Cint int gnd {op_c1}
+Bout outi gnd V=limit(V(int), V(gnd)+{op_vmargin}, V(vdd)-{op_vmargin})
+Ro   outi out {op_ro}
+.ends OPA365_BEH

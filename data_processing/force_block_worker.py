@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import queue
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -38,6 +38,7 @@ class ForceBlockBatch:
     dropped_sweeps_before: int        # counter only, not physics
     grid_positions: dict              # from _get_force_display_grid_positions()
     channel_calibration: dict         # sign-only polarity per package/position
+    sample_intervals_s: np.ndarray | None = None  # individual frame footer intervals, when supplied
 
 
 @dataclass
@@ -45,6 +46,7 @@ class ForceRenderResult:
     package_results: list
     array_result: object | None
     dropped_sweeps: int
+    array_results: dict = field(default_factory=dict)
 
 
 class ForceBlockWorker(QThread):
@@ -193,17 +195,21 @@ class ForceBlockWorker(QThread):
             self._integrate_sweeps(batch)
             if batch.jerk_shapes:
                 self._engine.apply_jerk_shapes(batch.jerk_shapes)
-            result = ForceRenderResult(
-                package_results=self._engine.package_results(),
-                array_result=self._engine.array_result(),
-                dropped_sweeps=batch.dropped_sweeps_before,
-            )
+            result = self.build_render_result(batch.dropped_sweeps_before)
             self.result_ready.emit(result)
         except ValueError as exc:
             # Discontinuity (restart/buffer gap) — reset engine state and
             # continue from the next batch.  Never call back into GUI thread.
             self._safe_reset()
             _ = exc  # discontinuity logged by caller via status label indirectly
+
+    def build_render_result(self, dropped_sweeps=0):
+        """Compose each physical array separately; their grid positions overlap."""
+        packages = self._engine.package_results()
+        arrays = {array: self._engine.array_result(f'A{array}_') for array in (1, 2)
+                  if any(p.sensor_id.startswith(f'A{array}_') for p in packages)}
+        primary = self._engine.array_result() if not arrays else None
+        return ForceRenderResult(packages, primary, dropped_sweeps, arrays)
 
     def _integrate_sweeps(self, batch: ForceBlockBatch) -> None:
         """Integrate every sweep in batch through the force engine."""
@@ -274,7 +280,8 @@ class ForceBlockWorker(QThread):
             raw_voltage = centered_counts * batch.voltage_scale * batch.polarity_multiplier
             pkg_v[position] = raw_voltage
             pkg_t[position] = (
-                float(batch.timestamps[row_index]) + float(sample_index) * batch.dt_s
+                float(batch.timestamps[row_index]) + float(sample_index) *
+                (float(batch.sample_intervals_s[row_index]) if batch.sample_intervals_s is not None else batch.dt_s)
             )
             self._apply_mux_timing(
                 batch, spec, repeat_index, sample_index, row_index, position, pkg_t, pkg_l, pkg_p

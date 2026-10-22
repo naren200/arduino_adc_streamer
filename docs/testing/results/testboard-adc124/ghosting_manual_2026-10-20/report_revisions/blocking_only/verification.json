@@ -1,0 +1,36 @@
+{
+  "created_utc": "2026-10-20T19:23:27.591803+00:00",
+  "source_unchanged": true,
+  "source_tables": 7,
+  "result_conditions": 6,
+  "observations": 48,
+  "all_manual_rows_transcribed": true,
+  "no_ghost_not_encoded_as_zero": true,
+  "gui_default_engine": "blocking",
+  "firmware_default_engine": "blocking",
+  "historical_engine_runtime_verified": false,
+  "hardware_tests_run": false,
+  "pdf": {
+    "path": "docs\\reports\\exports\\TestBoard_ADC124_Ghosting_Comparison_2026-10-20.pdf",
+    "sha256": "86e85ee0d6f7de6c117e8c97c02611ecd5fd05d3aa0d18c6b902edbb8bbfab98",
+    "visual_review_pending": false,
+    "pages": 15,
+    "render_engine": "Poppler 26.09.0 at 115 dpi",
+    "all_pages_rendered_and_visually_reviewed": true,
+    "text_out_of_bounds": 0,
+    "blank_pages": 0,
+    "review": "All 15 pages reviewed in four contact sheets; timing chart, main-amplitude chart and fastest-condition appendix also reviewed individually."
+  },
+  "input_sha256": {
+    "docs\\testing\\benchmarks\\testboard-adc124\\Ghosting Tests TestBoard_ADC124.docx": "f276dee2195b207055b791ef43da23ab801acb40bd500c70a9526ec810dfd9d9",
+    "config\\boards\\profiles\\testboard_adc124.json": "d787ba0e34dd2524357fba0e0867b23ce49c442752bce72ccc0d2a8ede28d786",
+    "Arduino_Sketches\\TestBoard_ADC124\\src\\main.cpp": "b336b5d5595e13f4ddf17d0f4ca19f345fef9721427ebea76d2319f5861f1603",
+    "data_processing\\timing_display.py": "a03e2504427b4f6b32bf425ed43eeb303eb7a3be537401fe37eb2415fbab22f5",
+    "Arduino_Sketches\\TestBoard_ADC124\\benchmarks\\report_adc124_ghosting.py": "11bc1d67e8d13962309e8449af5a8397cb23d572fae3e726188327ccd724149c"
+  },
+  "pdf_all_48_rows_and_amplitudes_verified_against_docx": true,
+  "artifact_sha256": {
+    "conditions.csv": "89103a0149c05f511e166ccb026f0afd2eae14bc29b9093bdeae22af779cba85",
+    "manual_observations.csv": "2eb226d770916f35f3a3e989faf51bf72a13d0b7a2996086e5655f38387e29bd"
+  }
+}

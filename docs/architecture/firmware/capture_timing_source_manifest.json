@@ -1,0 +1,96 @@
+{
+  "review_date": "2026-10-21",
+  "repository_head": "bc74949548091bb43aaffdfc37b169fce83f3a21",
+  "hardware_access": false,
+  "raw_binary_redecode": false,
+  "source_files": [
+    {
+      "path": "Arduino_Sketches/TestBoard_7953/benchmarks/results/live_usb_production_adc_10_20/benchmark_results.csv",
+      "sha256": "48bbcddf6905558eee5061588f182e2333f0dd311c637fb1238226a549989cf0"
+    },
+    {
+      "path": "Arduino_Sketches/TestBoard_7953/include/ConfigurableParameters.h",
+      "sha256": "e0fe07185c0131cb47f6a6af9c9872f9b2f304b6393502380caf4a00d72183e9"
+    },
+    {
+      "path": "Arduino_Sketches/TestBoard_7953/include/PztController.h",
+      "sha256": "c5adcfa1153c15acef0a66b5aada5d6e2899f60441ff0a3b84c7a60b19bcf826"
+    },
+    {
+      "path": "Arduino_Sketches/TestBoard_7953/src/Ads7953Adc.cpp",
+      "sha256": "424dc9c9dcb4c7b94d26093963dfbe5b9180dbe61390fd702ad03ede4782765b"
+    },
+    {
+      "path": "Arduino_Sketches/TestBoard_7953/src/PztController.cpp",
+      "sha256": "b07feebc221248f48217381153545ad2912ca1ffd007d51a1eaa1208503cc575"
+    },
+    {
+      "path": "Arduino_Sketches/TestBoard_7953/src/SpiController.cpp",
+      "sha256": "0bf585188b0c8dde1f6f32ba13456b5d21a53d9a760af9c2fca3e53113114069"
+    },
+    {
+      "path": "Arduino_Sketches/TestBoard_ADC124/include/ConfigurableParameters.h",
+      "sha256": "d348302a09714d8432f40d7f90e1af5860758eef6e0ccad2244eee25f705534d"
+    },
+    {
+      "path": "Arduino_Sketches/TestBoard_ADC124/src/Adc124s101.cpp",
+      "sha256": "99e7de9949c7430ecdbe9dfab42adb5b48c7809a67099a77c1a9d38cc014e099"
+    },
+    {
+      "path": "Arduino_Sketches/TestBoard_ADC124/src/main.cpp",
+      "sha256": "a9df6d231bd41d247214e3be0c990569afec8a74d7a133e71f358f178eb5e35f"
+    },
+    {
+      "path": "Arduino_Sketches/TestBoard_ADC124/src/SpiController.cpp",
+      "sha256": "8c4095b09ea85920477a70b4f3f9964b92bc2b8b6df599c7a7224e828e5566e9"
+    },
+    {
+      "path": "config/boards/profiles/testboard_7953.json",
+      "sha256": "2173e58a66e4dc4461a42431b0c01946a34c2a04ef24ac518235762a907c8485"
+    },
+    {
+      "path": "config/boards/profiles/testboard_adc124.json",
+      "sha256": "2cfef56e531a08ea29b97d428ae105060eb076fc104255bff07ad4fe3a20cc82"
+    },
+    {
+      "path": "docs/testing/benchmarks/testboard-7953/TESTBOARD_7953_LIVE_USB_FULL_MATRIX_RESULTS.md",
+      "sha256": "cc9d87ffdf18de762452953ce5c43acd86d213b0bbfbd2a016c6e085a203e1a1"
+    },
+    {
+      "path": "docs/testing/benchmarks/testboard-7953/TESTBOARD_7953_PHASE_PROFILING_RESULTS.md",
+      "sha256": "e894d39a9714c31886b0dc7a1e92bd8dd60dd64a52f249f1ce95aafc64c524d9"
+    },
+    {
+      "path": "docs/testing/results/testboard-7953/gui-noise-analysis/channel11_four_adc/report.md",
+      "sha256": "2ad555c4bf8a8d6e98a986dca176a4737e3da183e0531bccf7415a7938ab9c88"
+    },
+    {
+      "path": "docs/testing/results/testboard-7953/TESTBOARD_7953_MANUAL_GHOSTING_RESULTS.md",
+      "sha256": "9c0babc0ce6fb5e4acbe03c43b1e750ab6e5feb08ebaa05cfd54346f0974f56b"
+    },
+    {
+      "path": "docs/testing/results/testboard-adc124/ghosting_manual_2026-10-20/engine_rate_comparison.csv",
+      "sha256": "f34dcdb45e2afd1fdd5706c50c3bbea307621d454a8d77611be6e282ff88e0b6"
+    },
+    {
+      "path": "docs/testing/results/testboard-adc124/ghosting_manual_2026-10-20/lpspi_rerun_source.json",
+      "sha256": "8387649cb89bfefe7b66b8a3da3c2ae4d965b3e2ccc4b9f8d42e5ba9184fbbe5"
+    },
+    {
+      "path": "docs/testing/results/testboard-adc124/ghosting_manual_2026-10-20/README.md",
+      "sha256": "c7451848644dd28b3a80bd910b7e8898f890e7824d2e940a6d099970a66ed9b3"
+    },
+    {
+      "path": "docs/testing/results/testboard-adc124/mux_type_comparison_2026-10-15/README.md",
+      "sha256": "0f95831701a329a2b660f6ad3beac4eac7e9c7641bda4ee6572799d94099b2da"
+    },
+    {
+      "path": "docs/testing/results/testboard-adc124/selector_lookahead_lpspi_2026-10-14/capture_metrics.csv",
+      "sha256": "ca628cd03b7a5ddaaec3b55c0087058f2d48a23df023bc58b554f9350eca280c"
+    },
+    {
+      "path": "docs/testing/results/testboard-adc124/selector_lookahead_lpspi_2026-10-14/README.md",
+      "sha256": "9a7364f390b6fe6f06b6779986038ad4849fe35f327e7b8b035e32e83f1067ce"
+    }
+  ]
+}

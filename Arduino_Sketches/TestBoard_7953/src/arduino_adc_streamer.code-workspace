@@ -1,0 +1,18 @@
+{
+	"folders": [
+		{
+			"path": "../../.."
+		},
+		{
+			"name": "TestBoard_7953",
+			"path": ".."
+		},
+		{
+			"name": "TestBoard_ADC124",
+			"path": "../../TestBoard_ADC124"
+		}
+	],
+	"settings": {
+		"python-envs.defaultEnvManager": "ms-python.python:system"
+	}
+}

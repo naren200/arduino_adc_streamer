@@ -1,0 +1,290 @@
+#include "SpiController.h"
+
+#include "ConfigurableParameters.h"
+
+namespace {
+DMAMEM static uint8_t g_dma_tx[32] __attribute__((aligned(32)));
+DMAMEM static uint8_t g_dma_rx[32] __attribute__((aligned(32)));
+#if defined(__IMXRT1062__)
+// Match SPISettings' command format without reading asynchronous TCR state.
+// RT1060 RM 48.4.1.15 warns that a read during FIFO command loading can be wrong.
+constexpr uint32_t kSpiCommand = LPSPI_TCR_FRAMESZ(7) |
+    (testboard_config::kSpiBitOrder == LSBFIRST ? LPSPI_TCR_LSBF : 0u) |
+    (testboard_config::kSpiMode & 0x08 ? LPSPI_TCR_CPOL : 0u) |
+    (testboard_config::kSpiMode & 0x04 ? LPSPI_TCR_CPHA : 0u);
+constexpr uint32_t kLpspiCommand =
+    (kSpiCommand & ~LPSPI_TCR_FRAMESZ(0xFFF)) | LPSPI_TCR_FRAMESZ(15);
+#endif
+}
+
+SpiController::SpiController(SPIClass &bus, uint8_t miso, uint8_t mosi, uint8_t sck)
+    : bus_(bus), miso_(miso), mosi_(mosi), sck_(sck) {
+#if defined(__IMXRT1062__)
+  if (&bus_ == &SPI) {
+    lpspi_ = &IMXRT_LPSPI4_S;
+    dma_tx_ = g_dma_tx;
+    dma_rx_ = g_dma_rx;
+  }
+#endif
+}
+
+void SpiController::begin() {
+  bus_.setMISO(miso_);
+  bus_.setMOSI(mosi_);
+  bus_.setSCK(sck_);
+  bus_.begin();
+}
+
+SpiController::ChipSelect SpiController::registerChipSelect(uint8_t cs_pin) {
+  pinMode(cs_pin, OUTPUT);
+  digitalWriteFast(cs_pin, HIGH);
+#if defined(__IMXRT1062__)
+  return {portSetRegister(cs_pin), portClearRegister(cs_pin), digitalPinToBitMask(cs_pin)};
+#else
+  return {};
+#endif
+}
+
+bool SpiController::setClockHz(uint32_t clock_hz) {
+  if (transaction_active_ || lpspi_session_active_ ||
+      clock_hz < testboard_config::kMinSpiClockHz ||
+      clock_hz > testboard_config::kMaxSpiClockHz) {
+    return false;
+  }
+  clock_hz_ = clock_hz;
+  return true;
+}
+
+uint32_t SpiController::clockHz() const {
+  return clock_hz_;
+}
+
+uint16_t SpiController::transfer16(uint8_t cs_pin, uint16_t tx_word) {
+  // The blocking path must never inherit the direct engine's 16-bit session.
+  endLpspiSession();
+  const SPISettings settings(
+      clock_hz_,
+      testboard_config::kSpiBitOrder,
+      testboard_config::kSpiMode);
+  bus_.beginTransaction(settings);
+  digitalWriteFast(cs_pin, LOW);
+  delayNanoseconds(testboard_config::kCsSetupTimeNs);
+  const uint16_t rx_word = bus_.transfer16(tx_word);
+  digitalWriteFast(cs_pin, HIGH);
+  bus_.endTransaction();
+  delayNanoseconds(testboard_config::kCsHighTimeNs);
+  return rx_word;
+}
+
+bool SpiController::startDma16(uint8_t cs_pin, uint16_t tx_word) {
+  return startDmaBurst(cs_pin, &tx_word, 1);
+}
+
+bool SpiController::transferBurst(uint8_t cs_pin, const uint16_t *tx,
+                                 uint16_t *rx, uint8_t words) {
+  if (!words || words > 13 || transaction_active_) return false;
+  endLpspiSession();
+  bus_.beginTransaction(SPISettings(clock_hz_, testboard_config::kSpiBitOrder, testboard_config::kSpiMode));
+  digitalWriteFast(cs_pin, LOW);
+  delayNanoseconds(testboard_config::kCsSetupTimeNs);
+  for (uint8_t i = 0; i < words; ++i) rx[i] = bus_.transfer16(tx[i]);
+  digitalWriteFast(cs_pin, HIGH);
+  bus_.endTransaction();
+  delayNanoseconds(testboard_config::kCsHighTimeNs);
+  return true;
+}
+
+bool SpiController::startDmaBurst(uint8_t cs_pin, const uint16_t *tx, uint8_t words) {
+#if defined(SPI_HAS_TRANSFER_ASYNC)
+  if (!words || words > 13 || transaction_active_ || lpspi_session_active_ ||
+      dma_tx_ == nullptr || dma_rx_ == nullptr) {
+    return false;
+  }
+  dma_words_ = words;
+  for (uint8_t i = 0; i < words; ++i) {
+    dma_tx_[2 * i] = static_cast<uint8_t>(tx[i] >> 8);
+    dma_tx_[2 * i + 1] = static_cast<uint8_t>(tx[i]);
+    dma_rx_[2 * i] = dma_rx_[2 * i + 1] = 0;
+  }
+  dma_event_.clearEvent();
+  const SPISettings settings(
+      clock_hz_,
+      testboard_config::kSpiBitOrder,
+      testboard_config::kSpiMode);
+  bus_.beginTransaction(settings);
+  active_cs_pin_ = cs_pin;
+  transaction_active_ = true;
+  digitalWriteFast(cs_pin, LOW);
+  delayNanoseconds(testboard_config::kCsSetupTimeNs);
+  if (!bus_.transfer(dma_tx_, dma_rx_, words * 2, dma_event_)) {
+    endActiveTransfer();
+    return false;
+  }
+  dma_active_ = true;
+  return true;
+#else
+  (void)cs_pin;
+  (void)tx; (void)words;
+  return false;
+#endif
+}
+
+bool SpiController::dmaComplete() {
+  return dma_active_ && static_cast<bool>(dma_event_);
+}
+
+bool SpiController::finishDma16(uint16_t &rx_word) {
+  return finishDmaBurst(&rx_word, 1);
+}
+
+bool SpiController::finishDmaBurst(uint16_t *rx, uint8_t words) {
+  if (!dmaComplete() || words != dma_words_) return false;
+  for (uint8_t i = 0; i < words; ++i)
+    rx[i] = (uint16_t(dma_rx_[2 * i]) << 8) | dma_rx_[2 * i + 1];
+  dma_event_.clearEvent();
+  dma_active_ = false;
+  endActiveTransfer();
+  return true;
+}
+
+void SpiController::cancelDma16() {
+  if (!dma_active_ && !transaction_active_) return;
+#if defined(__IMXRT1062__)
+  if (lpspi_ != nullptr) {
+    lpspi_->DER = 0;
+    lpspi_->CR = LPSPI_CR_MEN | LPSPI_CR_RRF | LPSPI_CR_RTF;
+  }
+#endif
+  dma_active_ = false;
+  dma_event_.clearEvent();
+  endActiveTransfer();
+}
+
+bool SpiController::beginLpspiSession() {
+#if defined(__IMXRT1062__)
+  if (transaction_active_ || lpspi_ == nullptr) return false;
+  if (lpspi_session_active_) return true;
+  const uint32_t parameters = lpspi_->PARAM;
+  const uint8_t tx_log = parameters & 0xFF, rx_log = (parameters >> 8) & 0xFF;
+  if (tx_log > 4 || rx_log > 4) return false;
+  lpspi_tx_depth_ = uint8_t(1u << tx_log);
+  lpspi_rx_depth_ = uint8_t(1u << rx_log);
+  const SPISettings settings(
+      clock_hz_,
+      testboard_config::kSpiBitOrder,
+      testboard_config::kSpiMode);
+  bus_.beginTransaction(settings);
+  // Flush once with the peripheral disabled, then queue a known 16-bit command
+  // before enabling. Never derive the command from TCR readback after a flush.
+  lpspi_->CR = 0;
+  lpspi_->DER = 0;
+  lpspi_->CR = LPSPI_CR_RRF | LPSPI_CR_RTF;
+  lpspi_->SR = 0x3F00;
+  saved_tcr_ = kSpiCommand;
+  lpspi_->TCR = kLpspiCommand;
+  lpspi_->CR = LPSPI_CR_MEN;
+  lpspi_session_active_ = true;
+  return true;
+#else
+  return false;
+#endif
+}
+
+bool SpiController::transferLpspiBurst(const ChipSelect &cs, const uint16_t *tx,
+    uint16_t *rx, uint8_t words, uint32_t timeout_ticks, uint32_t service_ticks) {
+#if defined(__IMXRT1062__)
+  if (!words || words > 13 || !tx || !rx || !cs.clear || !cs.set || transaction_active_)
+    return false;
+  const bool own_session = !lpspi_session_active_;
+  if (own_session && !beginLpspiSession()) return false;
+  lpspi_single_word_ = own_session;
+  active_cs_set_ = cs.set; active_cs_mask_ = cs.mask;
+  transaction_active_ = lpspi_active_ = burst_active_ = true;
+  // A preceding batch must have been fully drained; never consume stale RX.
+  if (!(lpspi_->RSR & LPSPI_RSR_RXEMPTY)) { cancelLpspi16(); return false; }
+  lpspi_->SR = 0x3F00;
+  *cs.clear = cs.mask;
+  delayNanoseconds(testboard_config::kCsSetupTimeNs);
+  uint8_t submitted = 0, received = 0;
+  const uint32_t started = ARM_DWT_CYCCNT;
+  uint32_t last_service = started;
+  for (;;) {
+    // Bound all outstanding responses, including the word in the shifter.
+    // TXCOUNT also includes commands queued by TCR, so check actual space.
+    while (submitted < words && submitted - received < lpspi_rx_depth_ &&
+           (lpspi_->FSR & 0x1F) < lpspi_tx_depth_) {
+      if (submitted + 1 == words) lpspi_->SR = LPSPI_SR_TCF;
+      lpspi_->TDR = tx[submitted++];
+    }
+    while (received < submitted && !(lpspi_->RSR & LPSPI_RSR_RXEMPTY))
+      rx[received++] = static_cast<uint16_t>(lpspi_->RDR);
+    const uint32_t status = lpspi_->SR;
+    if (status & (LPSPI_SR_TEF | LPSPI_SR_REF)) { cancelLpspi16(); return false; }
+    // RX readiness alone can precede the final clock edge. Require all words,
+    // empty TX, hardware completion and idle before releasing the GPIO CS.
+    if (received == words && (status & LPSPI_SR_TCF) && !(status & LPSPI_SR_MBF) &&
+        !(lpspi_->FSR & 0x1F)) break;
+    const uint32_t now = ARM_DWT_CYCCNT;
+    if (uint32_t(now - started) >= timeout_ticks) { cancelLpspi16(); return false; }
+    if (uint32_t(now - last_service) >= service_ticks) { yield(); last_service = now; }
+  }
+  lpspi_active_ = false;
+  endLpspiBurst();
+  return true;
+#else
+  (void)cs; (void)tx; (void)rx; (void)words; (void)timeout_ticks; (void)service_ticks;
+  return false;
+#endif
+}
+
+void SpiController::endLpspiSession() {
+#if defined(__IMXRT1062__)
+  if (!lpspi_session_active_) return;
+  if (lpspi_active_ || burst_active_) {
+    lpspi_single_word_ = false;
+    cancelLpspi16();
+  }
+  lpspi_->TCR = saved_tcr_;
+  bus_.endTransaction();
+  lpspi_session_active_ = false;
+#endif
+}
+
+bool SpiController::startLpspi16(uint8_t cs_pin, uint16_t tx_word) {
+#if defined(__IMXRT1062__)
+  const ChipSelect cs = {portSetRegister(cs_pin), portClearRegister(cs_pin),
+                         digitalPinToBitMask(cs_pin)};
+  return startLpspi16(cs, tx_word);
+#else
+  (void)cs_pin;
+  (void)tx_word;
+  return false;
+#endif
+}
+
+void SpiController::cancelLpspi16() {
+#if defined(__IMXRT1062__)
+  if (lpspi_active_ && lpspi_ != nullptr) {
+    lpspi_->CR = 0;
+    lpspi_->DER = 0;
+    lpspi_->CR = LPSPI_CR_RRF | LPSPI_CR_RTF;
+    lpspi_->SR = 0x3F00;
+    lpspi_->TCR = kLpspiCommand;
+    lpspi_->CR = LPSPI_CR_MEN;
+  }
+#endif
+  lpspi_active_ = false;
+  burst_active_ = false;
+  releaseChipSelect();
+  transaction_active_ = false;
+  if (lpspi_single_word_) endLpspiSession();
+}
+
+void SpiController::endActiveTransfer() {
+  if (!transaction_active_) return;
+  if (active_cs_pin_ != 0xFF) digitalWriteFast(active_cs_pin_, HIGH);
+  bus_.endTransaction();
+  delayNanoseconds(testboard_config::kCsHighTimeNs);
+  active_cs_pin_ = 0xFF;
+  transaction_active_ = false;
+}

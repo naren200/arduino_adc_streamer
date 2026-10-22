@@ -291,6 +291,14 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
         self.analysis_load_btn.clicked.connect(self.load_analysis_source)
         self.analysis_load_btn.setMaximumWidth(90)
         controls_layout.addWidget(self.analysis_load_btn, 0, 2, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.analysis_array_combo = QComboBox()
+        self.analysis_array_combo.setToolTip("Display one array from the loaded Analysis source")
+        self.analysis_array_combo.currentTextChanged.connect(self.on_analysis_array_changed)
+        self.analysis_array_combo.hide()
+        self.analysis_array_label = QLabel('Display Array:')
+        self.analysis_array_label.hide()
+        controls_layout.addWidget(self.analysis_array_label, 2, 0)
+        controls_layout.addWidget(self.analysis_array_combo, 2, 1)
 
         self.analysis_csv_path_edit = QLineEdit()
         self.analysis_csv_path_edit.setPlaceholderText("CSV file (matching *_metadata.json is auto-detected)")
@@ -1146,6 +1154,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
     def _finish_analysis_source_loaded(self):
         """Shared post-load steps for both the synchronous in-memory/archive
         path and AnalysisSourceLoadWorker's background CSV-load result."""
+        self._populate_analysis_array_selector()
         self._rebuild_analysis_channel_checks()
         if hasattr(self, 'touchid_load_last_inference_btn'):
             # New snapshot object -- any cached replay predictions no
@@ -1165,6 +1174,16 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
             self.log_status(self._analysis_loaded_status)
         self.save_last_analysis_settings()
 
+    def _populate_analysis_array_selector(self):
+        descriptor = self.analysis_snapshot.metadata.get('testboard_acquisition')
+        self.analysis_array_combo.blockSignals(True)
+        self.analysis_array_combo.clear()
+        self.analysis_array_combo.addItems([str(a) for a in descriptor['sampled_arrays']] if descriptor else [])
+        self.analysis_array_combo.setVisible(bool(descriptor))
+        self.analysis_array_label.setVisible(bool(descriptor))
+        self.analysis_array_combo.setEnabled(bool(descriptor and len(descriptor['sampled_arrays']) > 1))
+        self.analysis_array_combo.blockSignals(False)
+
     def _rebuild_analysis_channel_checks(self):
         for check in self.analysis_channel_checks.values():
             check.deleteLater()
@@ -1176,6 +1195,8 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
                 check = QCheckBox(label)
                 check.setChecked(bool(saved_visibility.get(label, True)))
                 check.stateChanged.connect(self.on_analysis_settings_changed)
+                descriptor = snapshot.metadata.get('testboard_acquisition')
+                check.setVisible(not descriptor or label.startswith(f'A{self.analysis_array_combo.currentText()}_'))
                 self.analysis_channel_checks[label] = check
         self._relayout_analysis_checkboxes()
 
@@ -1443,7 +1464,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
             "filter_enabled": bool(self.analysis_filter_check.isChecked()),
             "filter_settings": filter_settings,
             "overlay_flags": self.analysis_state.get("overlays", {}),
-            "vref_voltage": self.get_vref_voltage() if hasattr(self, "get_vref_voltage") else 3.3,
+            "vref_voltage": self._analysis_source_voltage(),
             "integration_window_samples": int(getattr(self, "signal_integration_window_samples", 1) or 1),
             "hpf_cutoff_hz": float(getattr(self, "signal_integration_hpf_cutoff_hz", 0.0) or 0.0),
             "pzt_force_settings": self.analysis_state.get("pzt_force", {}),
@@ -1486,7 +1507,10 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
             curve.setDownsampling(auto=True, method="peak")
             store[key] = curve
             self._analysis_pen_colors[(group, key)] = color
-        curve.setData(trace.x, trace.y)
+        from data_processing.acquisition_timing import peak_envelope
+        x, y = peak_envelope(trace.x, trace.y, max(4, int(plot.width()) * 2))
+        curve.setDownsampling(auto=False)
+        curve.setData(x, y, connect='finite')
         self._apply_analysis_curve_pen(group, key, curve, color)
         curve.setVisible(visible)
         return curve
@@ -1541,6 +1565,29 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
         for key in stale_keys:
             plot.removeItem(store.pop(key))
 
+    def on_analysis_array_changed(self, _text):
+        array = self.analysis_array_combo.currentText()
+        for label, check in self.analysis_channel_checks.items():
+            check.setVisible(not array or label.startswith(f"A{array}_"))
+        self._render_analysis_prepared()
+
+    def _analysis_source_voltage(self):
+        snapshot = getattr(self, 'analysis_snapshot', None)
+        fallback = self.get_vref_voltage() if hasattr(self, 'get_vref_voltage') else 3.3
+        if snapshot:
+            from data_processing.analysis_workbench import source_voltage
+            return source_voltage(snapshot, fallback)
+        return fallback
+
+    def _analysis_trace_matches_array(self, label):
+        combo = getattr(self, 'analysis_array_combo', None)
+        descriptor = self.analysis_snapshot.metadata.get('testboard_acquisition') if self.analysis_snapshot else None
+        if combo is None or not descriptor:
+            return True
+        array = combo.currentText()
+        # Derived labels include their array-qualified package/source name.
+        return f"A{array}_" in label
+
     def _render_analysis_prepared(self, auto_range: bool = False):
         prepared = self.analysis_prepared
         if prepared is None:
@@ -1564,6 +1611,8 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
         desired_force = set()
         self.analysis_trace_colors = {}
         for index, trace in enumerate(prepared.traces):
+            if not self._analysis_trace_matches_array(trace.label):
+                continue
             key = trace.label
             desired_signal.add(key)
             color = PLOT_COLORS[index % len(PLOT_COLORS)]
@@ -1572,8 +1621,8 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
                 "signal", self.analysis_signal_curves, self.analysis_signal_plot, key, color, trace
             )
 
-        integration_traces = [trace for trace in prepared.overlay_traces if trace.group == "integration"]
-        derived_traces = [trace for trace in prepared.overlay_traces if trace.group != "integration"]
+        integration_traces = [trace for trace in prepared.overlay_traces if trace.group == "integration" and self._analysis_trace_matches_array(trace.label)]
+        derived_traces = [trace for trace in prepared.overlay_traces if trace.group != "integration" and self._analysis_trace_matches_array(trace.label)]
         for index, trace in enumerate(integration_traces):
             key = trace.label
             desired_integration.add(key)

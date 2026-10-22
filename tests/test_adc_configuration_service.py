@@ -160,21 +160,30 @@ class ADCConfigurationServiceTests(unittest.TestCase):
         self.assertIn("Configuration matches: [1, 2]", result.messages)
 
     def test_7953_sends_sparse_routes_scan_order_array_selection_and_vmid(self):
+        # The GUI must preserve both the firmware default and explicit overrides.
+        for engine in ("lpspi", "blocking", "dma"):
+            with self.subTest(engine=engine):
+                self._check_7953_configuration_preserves_engine(engine)
+
+    def _check_7953_configuration_preserves_engine(self, engine):
         commands = []
 
         def send_command(command, expected):
             commands.append((command, expected))
-            responses = {
-                "array both": (True, "both"),
-                "scanorder array": (True, "array"),
-                "adcchannels 1:0,2:10,3:0,4:10": (True, "1:0,2:10,3:0,4:10"),
-                "vmid 15": (True, "15"),
-            }
-            return responses[command]
+            return True, None  # TestBoard acknowledges without echoed values.
 
-        service = ADCConfigurationService(send_command)
+        from serial_communication.testboard_status import apply_testboard_status_line
+        from serial_communication.adc_connection_state import build_default_arduino_status
+        status = build_default_arduino_status()
+        for line in ("adcchannels=1:0,2:10,3:0,4:10", "array=both", "scanorder=array",
+                     "adcseq=manual", "spi_clock_hz=20000000", "channelrepeat_requested=1",
+                     "channelrepeat_effective=1", "vmid_channel=15", "vref=2.5", "route_count=4",
+                     "vmid_between_channels_requested=true", "vmid_between_channels_effective=true", f"spiengine={engine}"):
+            apply_testboard_status_line(status, '# ' + line)
+        service = ADCConfigurationService(send_command, read_testboard_status=lambda: status)
         request = build_request(
             current_mcu="PCB_TestBoard_7953",
+            reference="2.5",
             channels=[0, 10],
             channels_to_send=[0, 10],
             use_ground=True,
@@ -192,12 +201,15 @@ class ADCConfigurationServiceTests(unittest.TestCase):
         result = service.send_config_with_verification(request)
 
         self.assertTrue(result.success)
+        self.assertEqual(result.arduino_status.testboard_engine, engine)
+        self.assertFalse(any(command.startswith("spiengine") for command, _ in commands))
         self.assertEqual(
             [command for command, _expected in commands],
             [
+                "mode PZT", "ref 2.5", "spiclock 20000000",
                 "array both",
                 "scanorder array", "adcchannels 1:0,2:10,3:0,4:10",
-                "vmid 15",
+                "channelrepeat 1", "vmid true", "adcseq manual",
             ],
         )
         self.assertTrue(result.arduino_status.use_ground)

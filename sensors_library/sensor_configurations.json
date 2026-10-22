@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "selected_name": "Array_PCB1.7",
   "deleted_names": [
     "Single_PZT_New"
@@ -167,6 +167,119 @@
       }
     },
     {
+      "name": "Array_V2.6",
+      "channel_sensor_map": [
+        "B",
+        "L",
+        "C",
+        "R",
+        "T"
+      ],
+      "type": "array_layout",
+      "reverse_polarity": true,
+      "array_layout": {
+        "cells": [
+          [
+            null,
+            "PZT7",
+            null
+          ],
+          [
+            "PZT1",
+            "PZT6",
+            "PZT5"
+          ],
+          [
+            "PZR2",
+            "PZT3",
+            "PZR4"
+          ]
+        ]
+      },
+      "mux_mapping": {
+        "PZR2": {
+          "mux": 2,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "rs_channels": []
+        },
+        "PZR4": {
+          "mux": 2,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "rs_channels": []
+        },
+        "PZT1": {
+          "mux": 1,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "rs_channels": []
+        },
+        "PZT3": {
+          "mux": 1,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "rs_channels": []
+        },
+        "PZT5": {
+          "mux": 2,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "rs_channels": []
+        },
+        "PZT6": {
+          "mux": 1,
+          "channels": [
+            10,
+            11,
+            12,
+            13,
+            14
+          ],
+          "rs_channels": []
+        },
+        "PZT7": {
+          "mux": 2,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "rs_channels": []
+        }
+      },
+      "channel_layout": {
+        "channels_per_sensor": 5
+      }
+    },
+    {
       "name": "Single_PZT_New_grey_wire",
       "channel_sensor_map": [
         "T",
@@ -277,6 +390,211 @@
           "rs_channels": [
             1,
             0
+          ]
+        }
+      },
+      "channel_layout": {
+        "channels_per_sensor": 5
+      }
+    },
+    {
+      "name": "TestBoard_7953",
+      "type": "array_layout",
+      "board_profile": "TestBoard_7953",
+      "reverse_polarity": false,
+      "channel_sensor_map": [
+        "B",
+        "L",
+        "C",
+        "R",
+        "T"
+      ],
+      "array_count": 2,
+      "arrays": {
+        "1": {
+          "adc_lanes": [
+            1,
+            2
+          ]
+        },
+        "2": {
+          "adc_lanes": [
+            3,
+            4
+          ]
+        }
+      },
+      "array_layout": {
+        "cells": [
+          [
+            null,
+            "PZT7",
+            null
+          ],
+          [
+            "PZT1",
+            "PZT6",
+            "PZT5"
+          ],
+          [
+            null,
+            "PZT3",
+            null
+          ]
+        ]
+      },
+      "mux_mapping": {
+        "PZT6": {
+          "mux": 1,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "PZT7": {
+          "mux": 1,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ]
+        },
+        "PZT1": {
+          "mux": 2,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "PZT3": {
+          "mux": 2,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ]
+        },
+        "PZT5": {
+          "mux": 2,
+          "channels": [
+            10,
+            11,
+            12,
+            13,
+            14
+          ]
+        }
+      },
+      "channel_layout": {
+        "channels_per_sensor": 5
+      }
+    },
+    {
+      "name": "TestBoard_ADC124",
+      "type": "array_layout",
+      "board_profile": "testboard_adc124",
+      "reverse_polarity": false,
+      "channel_sensor_map": [
+        "CH1",
+        "CH2",
+        "CH3",
+        "CH4",
+        "CH5"
+      ],
+      "array_count": 2,
+      "arrays": {
+        "1": {
+          "adc_lanes": [
+            1
+          ]
+        },
+        "2": {
+          "adc_lanes": [
+            2
+          ]
+        }
+      },
+      "route_encoding": {
+        "inputs_per_mux": 8
+      },
+      "array_layout": {
+        "cells": [
+          [
+            null,
+            "PZT7",
+            null
+          ],
+          [
+            "PZT1",
+            "PZT6",
+            "PZT5"
+          ],
+          [
+            null,
+            "PZT3",
+            null
+          ]
+        ]
+      },
+      "mux_mapping": {
+        "PZT1": {
+          "mux": 1,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "PZT3": {
+          "mux": 1,
+          "channels": [
+            8,
+            9,
+            10,
+            11,
+            12
+          ]
+        },
+        "PZT5": {
+          "mux": 1,
+          "channels": [
+            16,
+            17,
+            18,
+            19,
+            20
+          ]
+        },
+        "PZT6": {
+          "mux": 1,
+          "channels": [
+            24,
+            25,
+            26,
+            27,
+            28
+          ]
+        },
+        "PZT7": {
+          "mux": 1,
+          "channels": [
+            5,
+            13,
+            21,
+            29,
+            30
           ]
         }
       },
