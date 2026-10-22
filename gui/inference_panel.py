@@ -30,7 +30,9 @@ from PyQt6.QtWidgets import (
 import json
 import logging
 import re
+from functools import partial
 
+from gui.window_overlay import first_hop_tiles, window_stretches
 from core.texture_piezo.models.classifier import TextureClassifier
 from core.texture_piezo.application.classify_worker import TouchIdClassifyWorker
 from core.texture_piezo.application.inference_config import (
@@ -48,16 +50,18 @@ from core.texture_piezo.application.inference_config import (
 from core.texture_piezo.models import model_discovery
 from core.texture_piezo.models.model_discovery import CHECKPOINT_DEFAULT
 from core.texture_piezo.application.mode import TouchIdMode
+from core.texture_piezo.application.gating_v2_settings import GATING_V2_VERSION, apply_overrides, differing_fields
 from core.texture_piezo.application.quality_gate_settings import load_idle_baseline, save_idle_baseline
 from core.texture_piezo.application.replay_fastforward import ReplayFastForward
 from core.texture_piezo.application.smoothing import WindowedVoteSmoother, is_guilty_candidate
-from core.texture_piezo.gating.quality_gate import IDLE_CAPTURE_DURATION_S, fit_idle_baseline
+from core.texture_piezo.gating.v1.quality_gate import IDLE_CAPTURE_DURATION_S, fit_idle_baseline
 from core.piezo_engine.pipeline import (
     INPUT_CONDITIONING_METADATA_KEY, RAW_INPUT, input_conditioning_from_record,
 )
 from core.texture_piezo.application.stream_processor import TouchIdStreamProcessor
 from core.texture_piezo.application.live_model import (
-    engine_config_for_model, ingest_filter_warning, required_channels_for_model,
+    engine_config_for_model, gating_version_for_model, ingest_filter_warning, required_channels_for_model,
+    trained_gating_v2_config_for_model,
 )
 from core.piezo_engine.config import EngineConfigMismatchError
 from constants.plotting import PLOT_COLORS
@@ -124,6 +128,22 @@ _TOUCHID_STREAM_DOWNSAMPLE_FACTOR = 2
 # events), so it deliberately stays a single flat color instead, same as
 # before this per-segment coloring was added.
 _TOUCHID_REGION_FALLBACK_COLOR = (255, 235, 59)
+
+_TOUCHID_V2_IDLE_BASELINE_NEEDED_TEXT = 'idle baseline needed'
+_TOUCHID_V2_DIFFERS_STYLE = 'color: #cc0000; font-weight: bold;'
+_TOUCHID_V2_FLAG_LABELS = {
+    'idle_gate_enabled': 'Idle gate',
+    'strength_gate_enabled': 'Strength gate',
+    'concat_enabled': 'Concatenate ranges',
+}
+# field -> (label, minimum, maximum, decimals, step); decimals 0 makes an integer spin box.
+_TOUCHID_V2_NUMBER_SPECS = {
+    'burst_min': ('Burst min:', 0.0, 1e9, 6, 1.0),
+    'sustain_min': ('Sustain min:', 0, 1000, 0, 1),
+    'sustain_blocks': ('Sustain blocks:', 1, 1000, 0, 1),
+    'block_s': ('Block (s):', 0.001, 10.0, 4, 0.01),
+    'expiry_s': ('Expiry (s):', 0.01, 60.0, 3, 0.5),
+}
 
 
 class InferencePanelMixin:
@@ -587,6 +607,8 @@ class InferencePanelMixin:
         tuning_row.addStretch()
         root_layout.addLayout(tuning_row)
 
+        root_layout.addWidget(self._touchid_build_v2_group())
+
         plots_col = QVBoxLayout()
 
         stream_group = QGroupBox('Signal Stream (TouchID window)')
@@ -641,7 +663,46 @@ class InferencePanelMixin:
 
         root_layout.addLayout(plots_col, 1)
 
+        self._touchid_refresh_v2_group()
         return tab
+
+    def _touchid_build_v2_group(self) -> QGroupBox:
+        """The gating-v2 settings, shown only while the loaded model is gated by v2 (see _touchid_refresh_v2_group)."""
+        self.touchid_v2_group = QGroupBox('Gating v2')
+        layout = QHBoxLayout(self.touchid_v2_group)
+        self._touchid_add_v2_editors(layout)
+        self._touchid_add_v2_readouts(layout)
+        return self.touchid_v2_group
+
+    def _touchid_add_v2_editors(self, layout):
+        self.touchid_v2_editors = {}
+        for name, text in _TOUCHID_V2_FLAG_LABELS.items():
+            editor = QCheckBox(text)
+            editor.stateChanged.connect(partial(self._on_touchid_v2_field_edited, name))
+            self.touchid_v2_editors[name] = editor
+            layout.addWidget(editor)
+        for name, (text, minimum, maximum, decimals, step) in _TOUCHID_V2_NUMBER_SPECS.items():
+            editor = QDoubleSpinBox() if decimals else QSpinBox()
+            if decimals:
+                editor.setDecimals(decimals)
+            editor.setRange(minimum, maximum)
+            editor.setSingleStep(step)
+            editor.valueChanged.connect(partial(self._on_touchid_v2_field_edited, name))
+            self.touchid_v2_editors[name] = editor
+            layout.addWidget(QLabel(text))
+            layout.addWidget(editor)
+
+    def _touchid_add_v2_readouts(self, layout):
+        self.touchid_v2_reset_btn = QPushButton('Reset to training values')
+        self.touchid_v2_reset_btn.clicked.connect(self.on_touchid_v2_reset_clicked)
+        layout.addWidget(self.touchid_v2_reset_btn)
+        self.touchid_v2_differs_label = QLabel()
+        self.touchid_v2_differs_label.setStyleSheet(_TOUCHID_V2_DIFFERS_STYLE)
+        layout.addWidget(self.touchid_v2_differs_label)
+        self.touchid_v2_status_label = QLabel()
+        self.touchid_v2_status_label.setStyleSheet(_TOUCHID_STATUS_WARNING_STYLE)
+        layout.addWidget(self.touchid_v2_status_label)
+        layout.addStretch()
 
     def _touchid_load_classifier(self):
         """Load the configured model. A failure never raises into the GUI: it is kept as
@@ -699,14 +760,34 @@ class InferencePanelMixin:
         if message and hasattr(self, 'log_status'):
             self.log_status('TouchID WARNING: ' + message)
 
-    def _touchid_rebuild_processor_if_engine_config_changed(self):
-        """A model swap can change the engine config; the running processor's causal state
-        belongs to the old one, so start a fresh stream (same as a sensor switch)."""
-        if self.touchid_processor.engine_config == self._touchid_engine_config():
-            return
-        self.touchid_processor = self._touchid_new_processor()
-        self._touchid_reset_region_coloring()
-        self._touchid_reset_read_cursor()
+    def _touchid_rebuild_processor_if_model_binding_changed(self):
+        """A model swap can change the engine config or the gating. A new engine config
+        invalidates the running processor's causal state, so start a fresh stream (same as
+        a sensor switch). Same engine config but another gating strategy or v2 config keeps
+        the raw stream unbroken, so only the windowing is rebuilt and the engine state carried over."""
+        if self.touchid_processor.engine_config != self._touchid_engine_config():
+            self.touchid_processor = self._touchid_new_processor()
+            self._touchid_reset_region_coloring()
+            self._touchid_reset_read_cursor()
+        elif self._touchid_processor_gating_is_stale():
+            self._rebuild_touchid_buffers()
+
+    def _touchid_processor_gating_is_stale(self) -> bool:
+        processor = self.touchid_processor
+        return (processor.gating_version, processor.gating_v2_config) != (
+            gating_version_for_model(self.touchid_classifier), self._touchid_live_v2_config(),
+        )
+
+    def _touchid_trained_v2_config(self):
+        """The loaded model's training gating-v2 configuration; None unless it is gated by v2."""
+        return trained_gating_v2_config_for_model(self.touchid_classifier)
+
+    def _touchid_live_v2_config(self):
+        """The training configuration with the user's overrides applied; None unless the loaded model is gated by v2."""
+        trained = self._touchid_trained_v2_config()
+        if trained is None:
+            return None
+        return apply_overrides(trained, self.touchid_config.gating_v2_overrides)
 
     def _touchid_new_processor(
         self, continue_from=None, idle_baseline=None, input_conditioning=RAW_INPUT,
@@ -736,6 +817,8 @@ class InferencePanelMixin:
             input_conditioning=input_conditioning,
             engine_config=engine_config,
             required_channels=required_channels_for_model(self.touchid_classifier),
+            gating_version=gating_version_for_model(self.touchid_classifier),
+            gating_v2_config=self._touchid_live_v2_config(),
         )
         if continue_from is not None and continue_from.engine_config == engine_config:
             processor.adopt_engine_state_from(continue_from)
@@ -785,14 +868,30 @@ class InferencePanelMixin:
         self.touchid_processor = self._touchid_new_processor(continue_from=self.touchid_processor)
         self._touchid_reset_region_coloring()
 
+    def _touchid_apply_sizing(self, attribute: str, value: float, spin) -> bool:
+        """Rebuild the processor at the new window/hop size; a size the gating refuses (v2:
+        window beyond expiry_s) is rolled back, reported and shown on ``spin``, never raised into Qt."""
+        previous = getattr(self.touchid_config, attribute)
+        setattr(self.touchid_config, attribute, value)
+        try:
+            self._rebuild_touchid_buffers()
+        except ValueError as exc:
+            setattr(self.touchid_config, attribute, previous)
+            spin.blockSignals(True)
+            spin.setValue(previous)
+            spin.blockSignals(False)
+            if hasattr(self, 'log_status'):
+                self.log_status(f'TouchID: {attribute} refused - {exc}')
+            return False
+        return True
+
     def on_touchid_window_changed(self, value):
-        self.touchid_config.window_size_s = float(value)
-        self._rebuild_touchid_buffers()
-        self.save_last_touchid_settings()
+        if self._touchid_apply_sizing('window_size_s', float(value), self.touchid_window_spin):
+            self.save_last_touchid_settings()
 
     def on_touchid_hop_changed(self, value):
-        self.touchid_config.hop_size_s = float(value)
-        self._rebuild_touchid_buffers()
+        if not self._touchid_apply_sizing('hop_size_s', float(value), self.touchid_hop_spin):
+            return
         self.touchid_timer.setInterval(max(1, int(self.touchid_config.hop_size_s * 1000)))
         self.save_last_touchid_settings()
 
@@ -828,9 +927,7 @@ class InferencePanelMixin:
             # live queue (if one exists yet) needs its k updated directly or
             # this spin box would silently do nothing until the next
             # discontinuity (sensor switch, new baseline) rebuilt the queue.
-            active_queue = getattr(self.touchid_processor, 'active_queue', None)
-            if active_queue is not None:
-                active_queue.k = float(value)
+            self.touchid_processor.set_gate_k(value)
             try:
                 save_idle_baseline(self.touchid_idle_baseline)
             except Exception as e:
@@ -844,11 +941,67 @@ class InferencePanelMixin:
         self.touchid_config.onset_skip_s = onset_skip_s
         # ActiveSampleQueue reads onset_skip_s live on each fresh onset, so
         # updating the live queue applies from the next touch without a rebuild.
-        self.touchid_processor.onset_skip_s = onset_skip_s
-        active_queue = getattr(self.touchid_processor, 'active_queue', None)
-        if active_queue is not None:
-            active_queue.onset_skip_s = onset_skip_s
+        self.touchid_processor.set_onset_skip_s(onset_skip_s)
         self.save_last_touchid_settings()
+
+    def _on_touchid_v2_field_edited(self, name, *_signal_args):
+        trained = self._touchid_trained_v2_config()
+        if trained is None:
+            return
+        overrides = {**self.touchid_config.gating_v2_overrides, name: self._touchid_v2_editor_value(name)}
+        changed = {field: value for field, value in overrides.items() if value != getattr(trained, field)}
+        self._touchid_apply_v2_overrides(changed)
+
+    def on_touchid_v2_reset_clicked(self):
+        self._touchid_apply_v2_overrides({})
+
+    def _touchid_apply_v2_overrides(self, overrides: dict):
+        """Rebuild the processor under ``overrides``; a combination the config or the gating
+        refuses is rolled back and reported, never left half-applied."""
+        previous = self.touchid_config.gating_v2_overrides
+        self.touchid_config.gating_v2_overrides = overrides
+        try:
+            self._rebuild_touchid_buffers()
+        except ValueError as exc:
+            self.touchid_config.gating_v2_overrides = previous
+            if hasattr(self, 'log_status'):
+                self.log_status(f'TouchID: gating v2 setting refused - {exc}')
+        else:
+            self.save_last_touchid_settings()
+        self._touchid_refresh_v2_group()
+
+    def _touchid_v2_editor_value(self, name):
+        editor = self.touchid_v2_editors[name]
+        return editor.isChecked() if isinstance(editor, QCheckBox) else editor.value()
+
+    def _touchid_refresh_v2_group(self):
+        """Show the gating-v2 group only for a v2 model, and bring its editors, the
+        differs-from-training indicator and the status line in line with the live config."""
+        trained = self._touchid_trained_v2_config()
+        self.touchid_v2_group.setVisible(trained is not None)
+        if trained is None:
+            return
+        live = self._touchid_live_v2_config()
+        self._touchid_show_v2_values(live)
+        self._touchid_show_v2_differences(live, trained)
+        gating = self.touchid_processor.gating
+        waiting = self.touchid_processor.gating_version == GATING_V2_VERSION and gating.idle_gate_waiting_for_baseline
+        self.touchid_v2_status_label.setText(_TOUCHID_V2_IDLE_BASELINE_NEEDED_TEXT if waiting else '')
+
+    def _touchid_show_v2_values(self, live):
+        for name, editor in self.touchid_v2_editors.items():
+            editor.blockSignals(True)
+            if isinstance(editor, QCheckBox):
+                editor.setChecked(getattr(live, name))
+            else:
+                editor.setValue(getattr(live, name))
+            editor.blockSignals(False)
+
+    def _touchid_show_v2_differences(self, live, trained):
+        changed = differing_fields(live, trained)
+        self.touchid_v2_reset_btn.setEnabled(bool(changed))
+        details = ', '.join(f'{name}={getattr(live, name)} (trained {getattr(trained, name)})' for name in changed)
+        self.touchid_v2_differs_label.setText(f'DIFFERS FROM TRAINING: {details}' if changed else '')
 
     def on_touchid_smoothed_toggled(self, state):
         self.touchid_show_smoothed = bool(state)
@@ -914,6 +1067,7 @@ class InferencePanelMixin:
         self._touchid_clear_inference_regions()
         self._touchid_reset_stream_display()
         self._update_touchid_idle_gate_label()
+        self._touchid_refresh_v2_group()
         self.save_last_touchid_settings()
 
     def _clear_touchid_stream_curves(self):
@@ -1089,7 +1243,8 @@ class InferencePanelMixin:
 
         self._touchid_load_classifier()
         self._touchid_refresh_model_status()
-        self._touchid_rebuild_processor_if_engine_config_changed()
+        self._touchid_rebuild_processor_if_model_binding_changed()
+        self._touchid_refresh_v2_group()
 
         if hasattr(self, 'log_status'):
             self.log_status(
@@ -1277,7 +1432,9 @@ class InferencePanelMixin:
 
         if render_tick:
             for window in ready_windows:
-                self._touchid_set_inference_region(window.window_ts, is_inferenced=True, span_id=window.frag_id)
+                self._touchid_set_inference_region(
+                    window.window_ts, span_id=window.frag_id, seam_idx=window.window.seam_idx,
+                )
         if ready_windows:
             # Submit the newest of this tick's windows, same policy as live
             # -- but unlike live, nothing here drops the rest going forward:
@@ -1428,23 +1585,34 @@ class InferencePanelMixin:
 
         raw_predictions = []
         smoothed_predictions = []
-        for window_ts, probs, smoothed_top_class, smoothed_top_conf in self.touchid_replay_results:
+        overlay_predictions = []
+        hop_samples = self._touchid_replay_hop_n
+        for window_id, result in enumerate(self.touchid_replay_results):
+            window_ts, probs, smoothed_top_class, smoothed_top_conf, seam_idx = result
             top_class, top_conf = max(probs.items(), key=lambda kv: kv[1])
-            start_s, end_s = float(window_ts[0]), float(window_ts[-1])
-            raw_predictions.append({
-                'start_s': start_s, 'end_s': end_s,
+            raw = {
+                'start_s': float(window_ts[0]), 'end_s': float(window_ts[-1]),
                 'class': top_class, 'confidence': float(top_conf), 'probs': probs,
-            })
+            }
+            raw_predictions.append(raw)
             smoothed_predictions.append({
-                'start_s': start_s, 'end_s': end_s,
+                'start_s': raw['start_s'], 'end_s': raw['end_s'],
                 'class': smoothed_top_class, 'confidence': float(smoothed_top_conf),
             })
+            # Overlay: only each window's first hop (its unique part, so tiles never
+            # overlap), tagged with the full window so hovering can show the rest.
+            full_stretches = window_stretches(window_ts, seam_idx)
+            for start_s, end_s in first_hop_tiles(window_ts, seam_idx, hop_samples):
+                overlay_predictions.append({
+                    **raw, 'start_s': start_s, 'end_s': end_s,
+                    'window_id': window_id, 'window_stretches': full_stretches,
+                })
         # The Analysis-tab overlay shows the raw per-window labels -- exactly
         # what each window's own classification produced, unaffected by the
         # smoother -- so it isn't itself smeared by majority-vote lag.
-        self.analysis_predicted_labels = raw_predictions
+        self.analysis_predicted_labels = overlay_predictions
         self._touchid_last_inference_snapshot = self._touchid_replay_snapshot
-        self._touchid_last_inference_predictions = raw_predictions
+        self._touchid_last_inference_predictions = overlay_predictions
         if hasattr(self, 'touchid_load_last_inference_btn'):
             self.touchid_load_last_inference_btn.setEnabled(bool(raw_predictions))
 
@@ -1578,6 +1746,7 @@ class InferencePanelMixin:
         self.touchid_idle_capture_n_samples = 0
         self.touchid_capture_idle_btn.setEnabled(True)
         self._update_touchid_idle_gate_label()
+        self._touchid_refresh_v2_group()
         if hasattr(self, 'log_status'):
             per_channel = ', '.join(
                 f'{col}={m:.1f}±{s:.2f}' for col, m, s in
@@ -1786,7 +1955,9 @@ class InferencePanelMixin:
         self._update_touchid_idle_gate_label()
 
         newest = ready_windows[-1]
-        self._touchid_set_inference_region(newest.window_ts, is_inferenced=True, span_id=newest.frag_id)
+        self._touchid_set_inference_region(
+            newest.window_ts, span_id=newest.frag_id, seam_idx=newest.window.seam_idx,
+        )
 
         if self.touchid_worker_busy:
             return
@@ -1795,6 +1966,9 @@ class InferencePanelMixin:
 
     def _touchid_submit_window(self, window):
         self.touchid_worker_busy = True
+        # One window is in flight at a time in replay (see _touchid_replay_tick), so
+        # its seams can ride alongside the result without going through the worker.
+        self._touchid_inflight_seam_idx = tuple(window.window.seam_idx)
         self.touchid_classify_worker.submit({
             'window': window.window,
             'classifier': self.touchid_classifier,
@@ -1847,7 +2021,9 @@ class InferencePanelMixin:
             # exactly what the classifier/smoother produced -- see
             # _touchid_finish_replay, which builds separate raw-window-level
             # and smoothed-N-window summaries from this.
-            self.touchid_replay_results.append((window_ts, probs, smoothed_top_class, smoothed_top_conf))
+            seam_idx = getattr(self, '_touchid_inflight_seam_idx', ())
+            self.touchid_replay_results.append(
+                (window_ts, probs, smoothed_top_class, smoothed_top_conf, seam_idx))
 
         if self.touchid_show_smoothed:
             display_probs = smoothed
@@ -1939,7 +2115,7 @@ class InferencePanelMixin:
             self.touchid_region_color_index = (self.touchid_region_color_index + 1) % len(PLOT_COLORS)
         return PLOT_COLORS[self.touchid_region_color_index]
 
-    def _touchid_set_inference_region(self, window_ts, is_inferenced: bool, span_id=None):
+    def _touchid_set_inference_region(self, window_ts, span_id=None, seam_idx=()):
         """Paint the "being inferenced" highlight over an inference window's
         real time span within the scrolling Signal Stream plot, only for
         windows that were actually run through the classifier (vs.
@@ -1949,9 +2125,9 @@ class InferencePanelMixin:
         the latest window happens to sit -- it ages out (removed) once its
         span has scrolled past the plot's rolling history window, same as the
         underlying curve data. See _touchid_region_color_for_span for how
-        span_id (a ReadyWindow.frag_id) maps to a color."""
-        if not is_inferenced:
-            return
+        span_id (a ReadyWindow.frag_id) maps to a color. A window made of several
+        stretches of the stream (``seam_idx`` non-empty, see LiveWindow) gets one region per
+        stretch, all in the window's colour, so the gaps between them stay unpainted."""
         if not hasattr(self, 'touchid_stream_plot_widget'):
             return
         if not hasattr(self, 'touchid_stream_inference_regions'):
@@ -1960,9 +2136,13 @@ class InferencePanelMixin:
         if self.touchid_stream_display_t0 is None or len(window_ts) == 0:
             return
 
-        start = float(window_ts[0]) - self.touchid_stream_display_t0
-        end = float(window_ts[-1]) - self.touchid_stream_display_t0
         color = self._touchid_region_color_for_span(span_id)
+        for stretch_ts in np.split(np.asarray(window_ts), list(seam_idx)):
+            start = float(stretch_ts[0]) - self.touchid_stream_display_t0
+            end = float(stretch_ts[-1]) - self.touchid_stream_display_t0
+            self._touchid_add_inference_region(start, end, color)
+
+    def _touchid_add_inference_region(self, start: float, end: float, color):
         region = pg.LinearRegionItem(
             values=(start, end),
             brush=pg.mkBrush(color[0], color[1], color[2], _TOUCHID_REGION_ALPHA),

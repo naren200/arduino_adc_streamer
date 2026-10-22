@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from core.piezo_engine.channel_names import FORCE_COLUMNS
 from core.piezo_engine.config import EngineConfig, EngineConfigMismatchError
+from core.texture_piezo.gating.v2.config import GatingV2Config
+from core.texture_piezo.application.gating_v2_settings import GATING_V2_VERSION, config_from_bundle_params
 from core.texture_piezo.application.live_channels import DEFAULT_CHANNELS, needs_force
 from core.texture_piezo.application.stream_processor import resolve_live_engine_config
 
@@ -39,6 +41,19 @@ def engine_config_for_model(model) -> EngineConfig:
 def required_channels_for_model(model) -> tuple[str, ...]:
     """The engine channels the model reads; every non-force channel when no model is loaded."""
     return DEFAULT_CHANNELS if model is None else tuple(model.required_channels)
+
+
+def gating_version_for_model(model) -> str:
+    """The gating version the live processors run for ``model``: its own, or "v1" without a model or for
+    a runtime that does not say (every hand-crafted-feature one)."""
+    return getattr(model, "gating_version", "v1")
+
+
+def trained_gating_v2_config_for_model(model) -> GatingV2Config | None:
+    """The gating-v2 configuration ``model`` was trained behind; None unless its gating version is v2."""
+    if gating_version_for_model(model) != GATING_V2_VERSION:
+        return None
+    return config_from_bundle_params(model.gating_v2_params)
 
 
 def require_engine_supports_model(model, engine_config: EngineConfig) -> None:

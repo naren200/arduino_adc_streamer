@@ -206,3 +206,15 @@ def load_runtime(model_type: str, artifacts, class_names: Sequence[str]):
     """
     return runtime_api().load_runtime(model_type, artifacts, tuple(class_names))
 
+
+
+def gating_version_of(runtime) -> str:
+    """The gating version ("v1", "v2", ...) the loaded runtime's model family was trained behind."""
+    return runtime.GATING_VERSION
+
+
+def gating_v2_params_of(runtime) -> dict:
+    """The loaded bundle's ``gating_params`` as a plain dict (``version``, ``idle_gate_enabled``, ``strength_gate_enabled``,
+    ``concat_enabled``, ``burst_min``, ``sustain_min``, ``block_s``, ``sustain_blocks``, ``expiry_s``);
+    callers check ``gating_version_of`` first (only a v2 runtime has them)."""
+    return runtime.bundle.gating_params.to_bundle_dict()

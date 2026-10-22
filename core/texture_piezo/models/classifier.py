@@ -16,9 +16,12 @@ from __future__ import annotations
 
 import logging
 
+from inference import texture_piezo_adapter
+
 from . import model_discovery
 from .model_discovery import ModelArtifacts
 from core.piezo_engine.live_window import LiveWindow
+from core.texture_piezo.application.gating_v2_settings import GATING_V2_VERSION
 from core.texture_piezo.application.inference_config import InferenceConfig, model_checkpoint_of, model_version_of
 
 
@@ -76,6 +79,18 @@ class TextureClassifier:
     def expected_ingest_blip_filter(self) -> bool | None:
         """Whether the model was trained on ingest-blip-filtered input; None when it does not say."""
         return getattr(self._runtime, "expected_ingest_blip_filter", None)
+
+    @property
+    def gating_version(self) -> str:
+        """The gating version the model was trained behind; selects the live gating strategy."""
+        return texture_piezo_adapter.gating_version_of(self._runtime)
+
+    @property
+    def gating_v2_params(self) -> dict | None:
+        """The bundle's training gating parameters when the model is gated by v2, else None."""
+        if self.gating_version != GATING_V2_VERSION:
+            return None
+        return texture_piezo_adapter.gating_v2_params_of(self._runtime)
 
     def predict_proba(self, window: LiveWindow) -> dict[str, float]:
         return self._runtime.predict_proba(window, self.class_names)

@@ -28,7 +28,7 @@ from core.texture_piezo.application.inference_config import InferenceConfig, pzt
 from core.texture_piezo.application.live_channels import named_engine_channels
 from core.texture_piezo.application.live_model import engine_config_for_model, required_channels_for_model
 from core.texture_piezo.application.stream_processor import TouchIdStreamProcessor
-from core.texture_piezo.gating.quality_gate import fit_idle_baseline
+from core.texture_piezo.gating.v1.quality_gate import fit_idle_baseline
 from core.texture_piezo.models import model_discovery
 from core.texture_piezo.models.classifier import TextureClassifier
 from core.texture_piezo.models.model_discovery import ModelArtifacts

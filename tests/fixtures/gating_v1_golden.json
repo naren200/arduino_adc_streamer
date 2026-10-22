@@ -1,0 +1,2079 @@
+{
+ "baseline_tick100": [
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 0.9868677675204784,
+   "last_ts": 1.4868027564685997,
+   "digest": "e6526e7e95f5f0c153ccce10da58d89004286f4958623f18b92f7276133349e7"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.0869847874138603,
+   "last_ts": 1.5869197763619816,
+   "digest": "c0c4f53c401df78fdedbf1dcd97620ac0dbfeda1bd9268661c68793c0baa0eb7"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.1871018073072421,
+   "last_ts": 1.6870367962553634,
+   "digest": "6b9323112bb6ab4ccd696a93d7276090bb758fd3d1afe8fc92d692eeca91fbb6"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.287218827200624,
+   "last_ts": 1.7871538161487452,
+   "digest": "45c7a8c250de0c4c83515c61a2ae3ae32dafa6b01769b06adc5f2b432aaa4f7a"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.387335847094006,
+   "last_ts": 1.887270836042127,
+   "digest": "4a8bbcc5296eb3cbac0a50d36e9746817143f3e0facd2408dfcf92092b51efca"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.4874528669873879,
+   "last_ts": 1.987387855935509,
+   "digest": "a1c60eaff60873b74b2f84d17380230458b1bb0b447e341104497194ecfb7592"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.5875698868807697,
+   "last_ts": 2.0875048758288908,
+   "digest": "d33c0b73329d10753b68471d9cfdd977784db10e25661ec1608cf3aaa7ae24dc"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.6876869067741516,
+   "last_ts": 2.187621895722273,
+   "digest": "8b3f2ea13dfae77e0f66fd47155dfcb6aaa5ab6091c6a1db7ad077b16e0edeee"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.7878039266675334,
+   "last_ts": 2.2877389156156545,
+   "digest": "e81733161c73845aa579077630a8adae9565d4a09bbc35777b8ac15894abcc1d"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.8879209465609152,
+   "last_ts": 2.3878559355090365,
+   "digest": "fec1181ea0e95990dc5e0621f20592214a12d44f033d43ffc6f4895e653c831a"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.988037966454297,
+   "last_ts": 2.487972955402418,
+   "digest": "d54c0424984fd6001b8f4ad72981c3536a40b4e8a0f370a5a6a1f27067d4c408"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.088154986347679,
+   "last_ts": 2.5880899752958,
+   "digest": "8e7be9a2f4fc2b5c27851267cdc88abaf1a8aefb2a4819e7229f30e1ebaa9de6"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.188272006241061,
+   "last_ts": 2.6882069951891823,
+   "digest": "a20c651d2464f0036672e575c10d47ba171f3212c941dc7de1d06bbe468cd161"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.2883890261344426,
+   "last_ts": 2.788324015082564,
+   "digest": "13ca207acf85c272cf1f397875debb55fac239d9823e369ef503ff43cd184927"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.3885060460278247,
+   "last_ts": 2.888441034975946,
+   "digest": "6db2e06eaac7da15ad1a0cc4fa206e79d173eb915a3508bb1936d4907de5d38f"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.4886230659212067,
+   "last_ts": 2.9885580548693276,
+   "digest": "2833e50edc6040ce3e1631c7d96ce90d20e0990e440f598c902983e770bb5540"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.5887400858145884,
+   "last_ts": 3.0886750747627096,
+   "digest": "06ad85cf1f81cf67f57b9e8af40063d86bd22f536100d076b108bb968dc590cb"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.6888571057079704,
+   "last_ts": 3.1887920946560913,
+   "digest": "50ffcf5087ddfff007f3b0b75e541b0fa8c3e79e913fae64848c88a7d6d1e846"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.788974125601352,
+   "last_ts": 3.2889091145494733,
+   "digest": "5ef9cd02a7b9cbc3bccd2b385c426f023ee0da5d8eb8a72d9d2e66f52b57ba1c"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.889091145494734,
+   "last_ts": 3.3890261344428554,
+   "digest": "a3f0b7995a195185e52235db63dc52f998cd769c1a990edb855279afdad746a0"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.9892081653881157,
+   "last_ts": 3.489143154336237,
+   "digest": "5738e5de1e1715e80f936feb2dfa9e2d1e3308d49c98819183fa8a8ad854f3d1"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.089325185281498,
+   "last_ts": 3.589260174229619,
+   "digest": "3f64e2bd56415c414b4d66ce6b1b366284e8d228e1026434c9fa3a4ae9adcaec"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.1894422051748794,
+   "last_ts": 3.6893771941230007,
+   "digest": "b549c8fe1509fc85237845935c7b0e5b69cde92b077555a1afbdf3d3ec66cd80"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.2895592250682615,
+   "last_ts": 3.7894942140163828,
+   "digest": "a75c1683f1f0ab2a788aba26c4704f438db73f60c73225052f672c89bbbca488"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.3896762449616435,
+   "last_ts": 3.8896112339097644,
+   "digest": "cc78e1ce7954e78d9680c349a325081fe88d43769d5ad3f7e0a98cd573e0b64e"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.418931218307112,
+   "last_ts": 3.9188662072552334,
+   "digest": "fe8dc2e00fb3d5cd658842f85aabb15237602a8f3bea72481d981c8e0cb3a05f"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 4.691197503575608,
+   "last_ts": 5.191132492523729,
+   "digest": "4e0394bd7dab1d1dab17d33560d15ee40e267f9999352f2022f62b7f24566ed5"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 4.79131452346899,
+   "last_ts": 5.291249512417111,
+   "digest": "6bd607114ff5663b4c7b8b15d4faddf4ebbabeb6323c80ad9c784c82136ffe45"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 4.891431543362372,
+   "last_ts": 5.391366532310492,
+   "digest": "726672ee153fbcf11de5c879027f5d6166e9feadb66ef224700f7e8a79251c48"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 4.991548563255753,
+   "last_ts": 5.491483552203874,
+   "digest": "8f48f8fc446b97c6b33c1fc1a4ad29914ae96e2451d5534b0d620681b8f246d0"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.091665583149135,
+   "last_ts": 5.591600572097256,
+   "digest": "ba70ca23c3352c444fcfbc5060a42e2a28a1a8c81ebe5fe83a9739f829098da0"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.191782603042517,
+   "last_ts": 5.691717591990638,
+   "digest": "66ac5af20c524a6587d4d165d10f8027a95669bbe697b094af43623e2e4e89f8"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.291899622935899,
+   "last_ts": 5.7918346118840205,
+   "digest": "8332c714b493957316d027c84e100445ce03e7358d73f1ae1c994d7deb1af8dd"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.39201664282928,
+   "last_ts": 5.891951631777402,
+   "digest": "79b75356ee151d4e88e8d040f1e080cab07cb1488c664ed5ef8d09dd616302f2"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.4921336627226625,
+   "last_ts": 5.992068651670784,
+   "digest": "062560627f2ac0e4eaca272c2967bcaa29fb33c2231cbd0aba9ad22843550ad2"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.5922506826160445,
+   "last_ts": 6.092185671564166,
+   "digest": "35de532f881999a93d187a53922b4e91d61b8a137a7ca75b25d85cccc08ddd63"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.692367702509427,
+   "last_ts": 6.192302691457548,
+   "digest": "8b6025fbc4a03c0be26ba3080beabf1dc650594e74386b615ba18eafed724d8f"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.771681185801586,
+   "last_ts": 6.271616174749707,
+   "digest": "3fd29f2db4eccd5f1da902e982499f1cf9775fb4c62110c8b13cf44cbcead7c2"
+  },
+  {
+   "frag_id": 2,
+   "n_samples": 770,
+   "first_ts": 7.073202444415551,
+   "last_ts": 7.573137433363671,
+   "digest": "017f45c7ea6167c4e83075b9ede72d93b462ecb3cbc687387682da504bc08770"
+  }
+ ],
+ "baseline_tick154": [
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 0.97191522558835,
+   "last_ts": 1.4718502145364711,
+   "digest": "616b458a13941652d8fb3af68db02a78c01eff661eaea8cca5d2706a08b697cb"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.072032245481732,
+   "last_ts": 1.571967234429853,
+   "digest": "a06a378ea87c10585e635d04b0d119b862877b24e99eca2972b3a30ed009a456"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.1721492653751138,
+   "last_ts": 1.6720842543232348,
+   "digest": "4b6a9c1a98eb416524db69064f9f4df7f999b1db1ccab076ae7b315969f0b948"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.2722662852684956,
+   "last_ts": 1.7722012742166167,
+   "digest": "e173a8a93c58701bd934c7fe9da8593f4ab61037bf6955443718fe181a4da682"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.3723833051618775,
+   "last_ts": 1.8723182941099987,
+   "digest": "e04c6b65119af1e867d0f18f13e6adc8998d97a4fb280adb105c5c339aacd162"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.4725003250552593,
+   "last_ts": 1.9724353140033806,
+   "digest": "ab1067c772d170b07b896b969ba7103b2cd1f28aefacd82a64714ee280428285"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.5726173449486411,
+   "last_ts": 2.072552333896762,
+   "digest": "b23f2c7323723ea33a4e5557520b0df48c30390edcc4d0fb2728725a795158d8"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.6727343648420232,
+   "last_ts": 2.1726693537901443,
+   "digest": "43e40c6948cb76eb8eb360877b500db8ba7770ace479d5354fa294fe5858bb7f"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.772851384735405,
+   "last_ts": 2.2727863736835263,
+   "digest": "e3847af23f22c0f0b04742dbebd0953d38527137191af124331b54355d778571"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.8729684046287869,
+   "last_ts": 2.372903393576908,
+   "digest": "8c401bf1d9b089dc880d120cbdef83eb4132dababb96bd0d01496bcd09bca9dd"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.9730854245221687,
+   "last_ts": 2.47302041347029,
+   "digest": "38dd2fe841d5458dd1333bc2da7b8b99f8542053416925308255b7de1200b066"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.073202444415551,
+   "last_ts": 2.5731374333636716,
+   "digest": "0cbe1b76acbef6c3a6255d782a1b1cdcacd6b2e15334e5be5e83edb413710e19"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.1733194643089324,
+   "last_ts": 2.6732544532570537,
+   "digest": "de6bb062e2951542f3c5eb0f2ad87fde8e44b527f2d656f1066f8843979c52aa"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.2734364842023145,
+   "last_ts": 2.7733714731504353,
+   "digest": "010815c1287eed59d45fcc9eae7e72fe6018110871584f21c6a1c22b2fc27fba"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.373553504095696,
+   "last_ts": 2.8734884930438174,
+   "digest": "fa99a4f238a12a6661add4d991663126a83afce70ea89437f30367266d8bd7e5"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.473670523989078,
+   "last_ts": 2.9736055129371994,
+   "digest": "8bc691c055b6b6c76224857cead228b8fce88a286850c18cf7bc52414edc759b"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.57378754388246,
+   "last_ts": 3.073722532830581,
+   "digest": "c9401a476851eda4854086c1f6d7e4918e22958ce6acf9e235f55873472adf23"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.673904563775842,
+   "last_ts": 3.173839552723963,
+   "digest": "76e4f93d917d379f11760f78ffb7f47ec165f9643260e259e247b871f519fb34"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.7740215836692235,
+   "last_ts": 3.2739565726173447,
+   "digest": "8d1e26afef1d12f557c541c1663d3795fdf00c43ccb7e8051d1fe8d5ed04666a"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.8741386035626055,
+   "last_ts": 3.374073592510727,
+   "digest": "e6dd5bbfd834e781a578c4c0aae78937ecfab2a54a9d2a70871afdeca5495c51"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.9742556234559876,
+   "last_ts": 3.4741906124041084,
+   "digest": "7dec190117ffff1660b205544bfe0d8e8ca0785f441bd4a43b6e23257fce2115"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.074372643349369,
+   "last_ts": 3.5743076322974905,
+   "digest": "56fc1e3255338c5ad7078a27b3a400afe50643ab540dd464ec4d24cd5219595b"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.1744896632427513,
+   "last_ts": 3.6744246521908726,
+   "digest": "09dc15824d002c8f7b3210e5ef276712880c66b20c2cac8d95b6c1e21def963a"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.274606683136133,
+   "last_ts": 3.774541672084254,
+   "digest": "e2cd0959b1ff16265e215c918f21eea4116ac991ee3063f74d3b72011be7804c"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.374723703029515,
+   "last_ts": 3.8746586919776362,
+   "digest": "ddc2e56e2700876bff411690b3b97c31d748a48015d607561a8b887812797c5a"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.4039786763749835,
+   "last_ts": 3.903913665323105,
+   "digest": "36efd858c21e66912416f2efe0ae8bf12dc6bbf05977cbc1800532a198641a76"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 4.676244961643479,
+   "last_ts": 5.1761799505916,
+   "digest": "440418bf48d4e9452c147b734336b4e89a8d48fa48937acf3fe70b0404b37a50"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 4.776361981536861,
+   "last_ts": 5.2762969704849825,
+   "digest": "daa402934029409b2e5f51f3883d02b1df8d372631edde35f23c1a0b058be23f"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 4.876479001430243,
+   "last_ts": 5.3764139903783645,
+   "digest": "04ea764642f1c2dee21ed973da9baa88ca2e34ae6c1600b460c0bcb211314f0e"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 4.976596021323624,
+   "last_ts": 5.476531010271746,
+   "digest": "f54f1d82844268339bf338f356d2feef7c70f46b7df796416ab75f48dcd11891"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.0767130412170065,
+   "last_ts": 5.576648030165128,
+   "digest": "c124a0f8848dc21aa2f396e7ae5608ad62db7f2df26ea17d54e454804a56f550"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.176830061110389,
+   "last_ts": 5.67676505005851,
+   "digest": "125830a9d9f495eb7ea019e3edc7e3539b38c1db64c98d7fd71171e9b297bb13"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.276947081003771,
+   "last_ts": 5.776882069951892,
+   "digest": "93659ed0e326e483ca6b361b24af730bb937382a43134e2c0ac4c80edb1f5b9c"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.377064100897153,
+   "last_ts": 5.876999089845273,
+   "digest": "7f49e51f301416cc83f65470fc81813d72c9e52f225b7b6e54621060c550f35a"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.477181120790534,
+   "last_ts": 5.977116109738655,
+   "digest": "0eb3b048c216b654824c3fc31e2dcb219c35fb76b8db88bde2620a16885cf6d0"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.577298140683916,
+   "last_ts": 6.077233129632037,
+   "digest": "14bb36c952ff98f58b6fd35d52e7495e0c9c553110ec497f30a898fdddb21867"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.677415160577298,
+   "last_ts": 6.177350149525419,
+   "digest": "7a1f685ba78d2eb1c6a9e45b9dfb576b7da8d8e76a6750f7f2e82c474d78a8ef"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.756728643869458,
+   "last_ts": 6.256663632817578,
+   "digest": "064464c0b8daacb078a6636fbbdb7e6b1f9282d17a80751fd8f9e04ce4ff1a9e"
+  },
+  {
+   "frag_id": 2,
+   "n_samples": 770,
+   "first_ts": 7.058249902483422,
+   "last_ts": 7.5581848914315435,
+   "digest": "c02afb9b1a7e1268abceedc745f5738821ac0738cf03a4dc5827c319ba01bb61"
+  }
+ ],
+ "baseline_tick777": [
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 0.9764659992198673,
+   "last_ts": 1.4764009881679885,
+   "digest": "40328b46064832fab0affbe0cf9c7683cc6d7f48b8dd956174af01ad21458496"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.0765830191132493,
+   "last_ts": 1.5765180080613703,
+   "digest": "5936b80deea077a9ca49d409bf4904487d9fb34d47c719a59382f9fff521ddcf"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.1767000390066311,
+   "last_ts": 1.6766350279547522,
+   "digest": "2202d359ded16d0d84d7dfc00724ee4971fcf757f29743dcc3351c14f0fbb7b5"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.276817058900013,
+   "last_ts": 1.7767520478481342,
+   "digest": "4ad76b1bb205701a95f43c9bb2a4b32801eb93d96eadf41c095dda2742ca9de3"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.3769340787933948,
+   "last_ts": 1.876869067741516,
+   "digest": "5e5e0d09220951fc838bda01998432b3e3740a6997b9b853915e952ec32581e2"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.4770510986867766,
+   "last_ts": 1.976986087634898,
+   "digest": "fb0b155e5faf75e9ea43db55e7ea4bf59ae255f48490dab26ac568740e6358d9"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.5771681185801585,
+   "last_ts": 2.0771031075282798,
+   "digest": "24fb5bb68d111ccc1c466580326d44457ff6f44649b9501dd38ba6ddd5d464bf"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.6772851384735405,
+   "last_ts": 2.177220127421662,
+   "digest": "c32c471620dc3c139757d40282c62c6a2ba37af56c92737a4c94e4950dd0ea3a"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.7774021583669224,
+   "last_ts": 2.2773371473150434,
+   "digest": "683f6462bbe1fe3b239caa0e04aed31f54bf6978518a52bbdd902f1633ad3332"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.8775191782603042,
+   "last_ts": 2.3774541672084255,
+   "digest": "5ba4fdf0c66e8916c9cb3f9f08b9bf3f81c5b076839e8ffe7964fa4a06faccd3"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 1.977636198153686,
+   "last_ts": 2.477571187101807,
+   "digest": "33a97c1afa89bb54cc47736fa34cd54aaa014aa7d4bfc98a349f19a1b982199a"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.077753218047068,
+   "last_ts": 2.577688206995189,
+   "digest": "b766ba6d4cc68f0d50b0690b38b21e7c91a1eebdf27d4f336c6c4d20c742d626"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.17787023794045,
+   "last_ts": 2.677805226888571,
+   "digest": "da0f6a54fefca0ae51f2e4173320cd90ec39bd0112915f88e7fa5242ea69bb99"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.2779872578338316,
+   "last_ts": 2.777922246781953,
+   "digest": "0ddb48fa65b3b602ea2e50a6a361c2a4d32be76cd3281255fbb4510f2ea1a89e"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.3781042777272137,
+   "last_ts": 2.878039266675335,
+   "digest": "1098c4829d3bb6e84520151f279ccca193b1b2434d103da412ae739c82ce6e64"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.4782212976205953,
+   "last_ts": 2.9781562865687166,
+   "digest": "3a7b4d370e301aff01f3a84dd8c621f29df41b983f3b11e02bc83e2408e404d7"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.5783383175139774,
+   "last_ts": 3.0782733064620986,
+   "digest": "f70aa10b12e67da5119461b13ed28297e740940cc1eb6474b18ec4ea87231b2a"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.678455337407359,
+   "last_ts": 3.1783903263554802,
+   "digest": "bca75a299531664920ea0f75904873871697b2bd8aa17cfe23ef3572675a183e"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.778572357300741,
+   "last_ts": 3.2785073462488623,
+   "digest": "13ed195bf3a94b44b6ff6f62fa1730a92127ddd93e7138d18404d0560e73d1ef"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.878689377194123,
+   "last_ts": 3.378624366142244,
+   "digest": "82266014e0305795f2de9de32fccbd58377082039237a07fc02611a355e132fe"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 2.9788063970875047,
+   "last_ts": 3.478741386035626,
+   "digest": "48e500df6db6b4e67730aaeb041d650741381cef4962b1a1cacafe7f2805daf3"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.078923416980887,
+   "last_ts": 3.5788584059290076,
+   "digest": "318b58b25d9952d25d5eb230a37c89568ea6d81d7fe29816195db94f2ff5efd1"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.1790404368742684,
+   "last_ts": 3.6789754258223897,
+   "digest": "39ee975ee033ea875139e1a153fa117bb14269cd01fe8178572b1473e3d3aaf4"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.2791574567676505,
+   "last_ts": 3.7790924457157717,
+   "digest": "de8e615dd36a2a35a674bfee851954b682018382366f5fddd4490e03ccd61f4b"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.379274476661032,
+   "last_ts": 3.8792094656091534,
+   "digest": "f836e931d1e109341307924a9dd85e171179845fa17ec932228a76edef2d0ee3"
+  },
+  {
+   "frag_id": 0,
+   "n_samples": 770,
+   "first_ts": 3.408529450006501,
+   "last_ts": 3.9084644389546224,
+   "digest": "f502e4c24f1f51f0f22124b5741439063c74e83de2a077f2915bd6ade603aa41"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 4.680795735274996,
+   "last_ts": 5.1807307242231175,
+   "digest": "21d062f9c36b28a5af43fa00da110b608241133f5642f0e529c20c8366ce169c"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 4.780912755168378,
+   "last_ts": 5.2808477441165,
+   "digest": "7b90ce93389eb2041018f8b08d43c65fe02fc75b8a6851d053602ac091bdd8a1"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 4.88102977506176,
+   "last_ts": 5.380964764009882,
+   "digest": "97bbc235205390b6df538ffebc2efb96b0448871d054d048a19908e6a84060d7"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 4.9811467949551425,
+   "last_ts": 5.481081783903264,
+   "digest": "f716548aecd3413f14a16e500bea9a06fc29ead529720aa628fbfc2fbe0b5fa8"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.0812638148485245,
+   "last_ts": 5.581198803796645,
+   "digest": "651667b13b54ab51427a5d142a79a8e1cb695d56bb9ac8485b31ba5df0ff93e4"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.181380834741906,
+   "last_ts": 5.681315823690027,
+   "digest": "5a87058f0eb45696f7de9116e1e1ee8e45efaea39de46cb494b4ebdab35ed438"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.281497854635288,
+   "last_ts": 5.781432843583409,
+   "digest": "80b9090d231fb077b7ec146997e09be8928db462476da4e5b34eb0a6345739ad"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.38161487452867,
+   "last_ts": 5.881549863476791,
+   "digest": "90f0c796a8dc1f594c1bb8f3b3dfbb99ac7c63025ff47a4a99f02bbd712f7c56"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.481731894422052,
+   "last_ts": 5.981666883370173,
+   "digest": "a4b45604b2a4f3acee6de06b0ee2f49d01953c7be1508d13f201bf015690055d"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.581848914315433,
+   "last_ts": 6.081783903263554,
+   "digest": "09d71d936baf4fcb35d86b85e15640a1d22750a363a9b72d92fbe689ae58dd7a"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.681965934208815,
+   "last_ts": 6.181900923156936,
+   "digest": "c1e5a091814e01f388a9d10e18af566dd1b83dcc2f433d635713d5cdc193c036"
+  },
+  {
+   "frag_id": 1,
+   "n_samples": 770,
+   "first_ts": 5.761279417500975,
+   "last_ts": 6.261214406449096,
+   "digest": "7c05a07ba26d178800cf842ed733323671441b4a907c252448cdaf8a75b66f59"
+  },
+  {
+   "frag_id": 2,
+   "n_samples": 770,
+   "first_ts": 7.062800676114939,
+   "last_ts": 7.562735665063061,
+   "digest": "63a5d24b107194afd4cdd4ae22bfef229599a581661cf3721b43eadc46b931a8"
+  }
+ ],
+ "fixed_grid_tick100": [
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.018853205044857626,
+   "last_ts": 0.5187881939929788,
+   "digest": "eaf2c866bb86512d0af81de3163d90388851bf469f71ea8cc7ee771ed7534fd0"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.1189702249382395,
+   "last_ts": 0.6189052138863607,
+   "digest": "ab0f9799c0cbbca7bfb16563298a9306e90b8e0002d10f12823933633c14c9ef"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.21908724483162137,
+   "last_ts": 0.7190222337797425,
+   "digest": "4d7b74eea08d5c68ab587170f3ad7e4591d230f8e95b3b594838dfd9e456d915"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.31920426472500324,
+   "last_ts": 0.8191392536731245,
+   "digest": "d7de30d1e575c30c40f69d47793184654f34e1fc7b53f2eb4b6ea0060f98b945"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.41932128461838514,
+   "last_ts": 0.9192562735665063,
+   "digest": "027b881eb5efb8888b7a86d999030c7d387443f75137b101077cf853c68afd10"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.519438304511767,
+   "last_ts": 1.0193732934598883,
+   "digest": "9c9092b398bd5e84f1548e3b61f153ac2ec9a814052a60f29c0fc285a79f1f6c"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.6195553244051488,
+   "last_ts": 1.11949031335327,
+   "digest": "8f65122d7b9f667fcfeb14f7e7fe768fa8a681c23d08db1c18c51ec3505f73b2"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.7196723442985308,
+   "last_ts": 1.219607333246652,
+   "digest": "04b04cafbe4d768df0ffa249e741996402f5236a87dd05ed54e1b664efdee069"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.8197893641919126,
+   "last_ts": 1.3197243531400338,
+   "digest": "f9a612a9019d5d1d628f6a73b96437c2f963ff00b8bf865d9dc0332e4f7f315a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.9199063840852945,
+   "last_ts": 1.4198413730334156,
+   "digest": "d40bb2a5d52c7f5ad824d04560280cc69ba7e262c2c50a66e181d48b88612b7a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.0200234039786764,
+   "last_ts": 1.5199583929267975,
+   "digest": "c9ae4bbc0440781c440c1b1d0fb2f5b9ffd646b506ca6591659aa45fdf57f466"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.1201404238720583,
+   "last_ts": 1.6200754128201793,
+   "digest": "ddf62a10358933527c8724165045770463acbeacbc1549f9ea6cde7fe48fcbef"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.22025744376544,
+   "last_ts": 1.7201924327135611,
+   "digest": "bb6d36745121636d576f103e77105adba49c8a8e565267b34cc2c0fbf445312c"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.320374463658822,
+   "last_ts": 1.8203094526069432,
+   "digest": "8c670131fe028a996bd30a162cf1be5a1ee9fc856fedc8b9ffa3e7ff884aa65a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.4204914835522038,
+   "last_ts": 1.920426472500325,
+   "digest": "355a57cfe009f9b0d2a9cd4d29fd6d203d70780cf4c427c6e8af1835b0624f5e"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.5206085034455856,
+   "last_ts": 2.0205434923937067,
+   "digest": "4d869b1208c63f837d43f59b4a45070737afea7f81469645091f299be7d1961a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.6207255233389675,
+   "last_ts": 2.1206605122870887,
+   "digest": "f93699522623d8e29464952f18adcb7941fe10418f2f34a7ac01036d5ac49bb3"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.7208425432323495,
+   "last_ts": 2.220777532180471,
+   "digest": "1f4843ba3229605b748b158af088a5aa69f7c9ba0c848a6eb95b10370cd58f8f"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.8209595631257314,
+   "last_ts": 2.3208945520738524,
+   "digest": "808e256029891d9839c044dd372694775577234cee844199233eff512368f96c"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.9210765830191132,
+   "last_ts": 2.4210115719672345,
+   "digest": "2e8bb86a9cdf659d98a362110b520308cbab3ea9ee2e4952c610298fad933972"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.0211936029124953,
+   "last_ts": 2.521128591860616,
+   "digest": "3c55c2b0ce4451a1faa9bd6e4cfc3bd63a6f476eb68d2d630564f267a327affe"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.121310622805877,
+   "last_ts": 2.621245611753998,
+   "digest": "7f9965f53802ecad251693e1c28c88deaa723755ed42f9ab201a2820fa48911e"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.221427642699259,
+   "last_ts": 2.72136263164738,
+   "digest": "aa24cd20084fd435fa103f3f91d6d4899deb0f839cb157ceb6fd3b5d86e42ab1"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.3215446625926406,
+   "last_ts": 2.821479651540762,
+   "digest": "daec0daf6a1a7be2ecd66946819086ea5dd615e49e04f542772cbfebe8a47fa4"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.4216616824860226,
+   "last_ts": 2.921596671434144,
+   "digest": "fc2e6f58156ae119bbeeba9ad8906de271f87d282c667278dc9eefd2dae0400a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.5217787023794043,
+   "last_ts": 3.0217136913275255,
+   "digest": "86609a79d3842560e946e2e995494b448263789b894bcc6964e8fe64b261d789"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.6218957222727863,
+   "last_ts": 3.1218307112209076,
+   "digest": "878c186c3dcc31d19ac51da6cd5677902cc081c74dd8440ec01e19db2185c699"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.722012742166168,
+   "last_ts": 3.2219477311142892,
+   "digest": "087dea7bb91fe133e25fdb81b5ed1876f0066f5caca7f2691f34052217b1fbcc"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.82212976205955,
+   "last_ts": 3.3220647510076713,
+   "digest": "c925289ba943a9d1088f299a8fc9ef6d35588b3e27462969896e678373bb5e3e"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.922246781952932,
+   "last_ts": 3.422181770901053,
+   "digest": "142c2b490b7081119bd27be738dffb7ca31748cf391a172e02a7174a4f1dffd9"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.0223638018463137,
+   "last_ts": 3.522298790794435,
+   "digest": "05ad0db6909d43aa06ebe7cbe554e7ce823ed13bf6c7cf9f9c6473861c90cf48"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.1224808217396958,
+   "last_ts": 3.622415810687817,
+   "digest": "633708d65448e0107333c6d0802ee27f9b2326c670df45a31ba7a98066158ccb"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.2225978416330774,
+   "last_ts": 3.7225328305811987,
+   "digest": "32da8eb95cf2be60378b7ba53021fe03dde505f790a4bcd0c390693fdd6d5d21"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.3227148615264595,
+   "last_ts": 3.8226498504745807,
+   "digest": "e57d93da0e27b67fe76ba903bde60d91886e80af023d0bac6a4a9d9731847b58"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.422831881419841,
+   "last_ts": 3.9227668703679623,
+   "digest": "9d9d4d8ab47ae548b4e900c363a38b544a208c50f68340bccd0d60488d8ee4fb"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.522948901313223,
+   "last_ts": 4.022883890261344,
+   "digest": "1ef973160be5d953810b2a0d1c4c5bcb8936c6e816716870f97517004a2b4000"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.623065921206605,
+   "last_ts": 4.123000910154726,
+   "digest": "f2eb2783959ced4b3f4fad2df78be52d5a6ace1107380e4b58879c7852d49d6d"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.723182941099987,
+   "last_ts": 4.223117930048108,
+   "digest": "caf3ddee7c9567d270444bda83a3625afdefdd1d268ab3f6197a50b720b717e7"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.823299960993369,
+   "last_ts": 4.32323494994149,
+   "digest": "0156b2038b8480ddeb522e7b018ad663b49bd70863f336f072032cd0c094a0a9"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.9234169808867505,
+   "last_ts": 4.423351969834872,
+   "digest": "bf32321f3ea8641a5015c8e4c7d55a9c207f0737f778ec59dd0e6ba5e955e1b4"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.023534000780132,
+   "last_ts": 4.523468989728253,
+   "digest": "7676920b18f1d920e201f2f216cc861e6df617acefcf446745c692a7183e165d"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.123651020673514,
+   "last_ts": 4.6235860096216355,
+   "digest": "555ec6dd45317962446a3835a9f6a256f98f3e42885e6cb0a49b9e627be783ab"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.223768040566896,
+   "last_ts": 4.7237030295150175,
+   "digest": "2e0651fb4959d2b50e6de3f8a5237aee7fc09a1bab0989d01401a0314aab9b51"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.323885060460278,
+   "last_ts": 4.8238200494084,
+   "digest": "132fe8a3d8e1331d749af4acb76229f32155dd535b8b960b9bd5a8e24988a75b"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.42400208035366,
+   "last_ts": 4.923937069301781,
+   "digest": "7304d0146592b42b512cca8a7727b0fab95876c739f476a8347b435fc72f18ce"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.524119100247042,
+   "last_ts": 5.024054089195163,
+   "digest": "8ea69ed9fa9a84ea282496a8a0aa9b6f2212832c61395a2c0be3a0889c094311"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.624236120140424,
+   "last_ts": 5.124171109088545,
+   "digest": "27efeb852b570967c1233346175a82b5b177ff191c84d1d46c956976a8264086"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.724353140033806,
+   "last_ts": 5.224288128981927,
+   "digest": "bfc716c6ce183654df018aa5af3f4f749c854a6fad3273b3c1e72d17c3214d84"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.824470159927188,
+   "last_ts": 5.324405148875309,
+   "digest": "d6971a9fb8811af71f87cf2ca6974823620d9da454de449e3b5613b3c4991368"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.924587179820569,
+   "last_ts": 5.42452216876869,
+   "digest": "93ee945815855b5630c10f12f0931176e97346e89b8e00c02be3875ccb5be224"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.024704199713951,
+   "last_ts": 5.524639188662072,
+   "digest": "9a6a848c1872bc8eac6fe10afe4ffff7859aaac9c760fdd6d0de2b4902673f18"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.124821219607333,
+   "last_ts": 5.624756208555454,
+   "digest": "7b58feb625e6c9cc229b465d6ab01863cfce3c458b014b4e810b42b6f15a7966"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.224938239500715,
+   "last_ts": 5.724873228448836,
+   "digest": "8e9d4c5743eccd657d18ed76178a4ed09913b655c2f90311c5eb3c69940fb0ad"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.325055259394097,
+   "last_ts": 5.824990248342218,
+   "digest": "3ae1b9d5685a21049bb94e97bc595804b7ceb4bc7f7dd4b216755195d2233339"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.425172279287478,
+   "last_ts": 5.9251072682356,
+   "digest": "b5fc9bbfc230c1fc2dcca733171b11ebef47a6de8a67fc5a74ba686d750d8291"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.52528929918086,
+   "last_ts": 6.025224288128982,
+   "digest": "65f11f2e566c805e48607bd48f040c44475f0cfe5698969dff51d897c363ad1b"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.6254063190742425,
+   "last_ts": 6.125341308022364,
+   "digest": "1112e68ac297e03e905379e5233f4d70b9ad380b30ed6e829a7a33c146ac6f09"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.7255233389676246,
+   "last_ts": 6.225458327915746,
+   "digest": "f246269724121e75f682ca1d9d3fac40da26911c55dfcb4797b67ad6214593b0"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.825640358861007,
+   "last_ts": 6.325575347809127,
+   "digest": "6e1455603748073b77bbaa38caf5fbc88e61efe4d41b55a98bf59ab3b3358fa3"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.925757378754388,
+   "last_ts": 6.425692367702509,
+   "digest": "b474a1e10ac9290fb04a42afe7485b4a73e8c2b27a2bb56e21dc2686849bc72e"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.02587439864777,
+   "last_ts": 6.525809387595891,
+   "digest": "ca24c015d2983bd2a99129795611e84a15dc2e975692f1f9baa032e6858d7508"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.125991418541152,
+   "last_ts": 6.625926407489273,
+   "digest": "9f6d8e0bd8f07c53fd227151b47005e8f5adaa8657d2504b781e908b49eee427"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.226108438434534,
+   "last_ts": 6.726043427382655,
+   "digest": "ea1af9d8f29d3767eed079615ac8d0a614240bdbee2e876e8705aa6c3923f17b"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.326225458327915,
+   "last_ts": 6.826160447276036,
+   "digest": "e5064b88436d5765f3cf6467948282bdfd8e4432cabf6238e87eef7d28bd6a9b"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.426342478221297,
+   "last_ts": 6.9262774671694185,
+   "digest": "c66fc481494c0bc5684af9bae64f1b46e881a095436b18ab896ee297c27873fa"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.526459498114679,
+   "last_ts": 7.026394487062801,
+   "digest": "a931308ca0a0c9f8e5fb1e2f387fbd22869d2cff9b1961b3d354295d991b4127"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.626576518008061,
+   "last_ts": 7.126511506956183,
+   "digest": "6b0ef63c13063f5b4e9667a80d4bc3e5a0969f91133ffe7a837a1a9407d22faf"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.726693537901443,
+   "last_ts": 7.226628526849564,
+   "digest": "af7a5f1cdc4100034e98b9bea8d60a6e75c174bd0e23ff7bb6633dc3ab99b3a7"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.826810557794825,
+   "last_ts": 7.326745546742946,
+   "digest": "c3af34305fbc38273ad32624e34fd06d521453d32110490170f588748e880bf9"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.926927577688207,
+   "last_ts": 7.426862566636328,
+   "digest": "aa227f494ad410dcb1c8cdd9a2ace049c9d3f8da7a5137ed0e72e4bb5346bf12"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.027044597581589,
+   "last_ts": 7.52697958652971,
+   "digest": "3c69b34995eae53e38f24706281d66505b8313fdcecba9a6d9c905071c041ebe"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.127161617474971,
+   "last_ts": 7.627096606423092,
+   "digest": "cfee713644d41bda92f62c13c2077aca21937304d5f801651f161db2e8e65ab2"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.227278637368352,
+   "last_ts": 7.727213626316473,
+   "digest": "a549c1b785203ca878b5c81118e3d3afcd2646a7fa3898679b56daf419d01fb7"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.327395657261734,
+   "last_ts": 7.827330646209855,
+   "digest": "2efb6dc139eb4ce0364aba06e2e78d9a5e038d73037e430261cb383f4f5c91be"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.427512677155116,
+   "last_ts": 7.927447666103237,
+   "digest": "0a372448f50256e787f7dbf39e793fa44f30e60cc7337c0c1a9be48a69f276c1"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.527629697048498,
+   "last_ts": 8.02756468599662,
+   "digest": "6d92f458f9e333199f7a70ff47602d8c562427d0ad94d4e6a02cb26c96ae113a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.62774671694188,
+   "last_ts": 8.127681705890001,
+   "digest": "81ec0e128a0fb4b5a1affbbd1b796515ea63e623d41435055d0986cf940cf869"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.727863736835261,
+   "last_ts": 8.227798725783384,
+   "digest": "c4dc549cc94b3f702284b304a79d2adb61e87553d92cabfafd590f9d574118ef"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.8279807567286435,
+   "last_ts": 8.327915745676766,
+   "digest": "1993ff3af609f85a91a8fa8d6145600e4dc276fb52348ebb47074586b64e48b4"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.9280977766220255,
+   "last_ts": 8.428032765570146,
+   "digest": "ff6f6f48ac54ad60468a193152766982539fdf68518f8e7aa789d4102f5a4044"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 8.028214796515407,
+   "last_ts": 8.528149785463528,
+   "digest": "c8937df88e88f5d083459346ab78bb330ec80df630b1ec000d72a603787fda44"
+  }
+ ],
+ "fixed_grid_tick154": [
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.018853205044857626,
+   "last_ts": 0.5187881939929788,
+   "digest": "eaf2c866bb86512d0af81de3163d90388851bf469f71ea8cc7ee771ed7534fd0"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.1189702249382395,
+   "last_ts": 0.6189052138863607,
+   "digest": "ab0f9799c0cbbca7bfb16563298a9306e90b8e0002d10f12823933633c14c9ef"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.21908724483162137,
+   "last_ts": 0.7190222337797425,
+   "digest": "4d7b74eea08d5c68ab587170f3ad7e4591d230f8e95b3b594838dfd9e456d915"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.31920426472500324,
+   "last_ts": 0.8191392536731245,
+   "digest": "d7de30d1e575c30c40f69d47793184654f34e1fc7b53f2eb4b6ea0060f98b945"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.41932128461838514,
+   "last_ts": 0.9192562735665063,
+   "digest": "027b881eb5efb8888b7a86d999030c7d387443f75137b101077cf853c68afd10"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.519438304511767,
+   "last_ts": 1.0193732934598883,
+   "digest": "9c9092b398bd5e84f1548e3b61f153ac2ec9a814052a60f29c0fc285a79f1f6c"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.6195553244051488,
+   "last_ts": 1.11949031335327,
+   "digest": "8f65122d7b9f667fcfeb14f7e7fe768fa8a681c23d08db1c18c51ec3505f73b2"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.7196723442985308,
+   "last_ts": 1.219607333246652,
+   "digest": "04b04cafbe4d768df0ffa249e741996402f5236a87dd05ed54e1b664efdee069"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.8197893641919126,
+   "last_ts": 1.3197243531400338,
+   "digest": "f9a612a9019d5d1d628f6a73b96437c2f963ff00b8bf865d9dc0332e4f7f315a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.9199063840852945,
+   "last_ts": 1.4198413730334156,
+   "digest": "d40bb2a5d52c7f5ad824d04560280cc69ba7e262c2c50a66e181d48b88612b7a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.0200234039786764,
+   "last_ts": 1.5199583929267975,
+   "digest": "c9ae4bbc0440781c440c1b1d0fb2f5b9ffd646b506ca6591659aa45fdf57f466"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.1201404238720583,
+   "last_ts": 1.6200754128201793,
+   "digest": "ddf62a10358933527c8724165045770463acbeacbc1549f9ea6cde7fe48fcbef"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.22025744376544,
+   "last_ts": 1.7201924327135611,
+   "digest": "bb6d36745121636d576f103e77105adba49c8a8e565267b34cc2c0fbf445312c"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.320374463658822,
+   "last_ts": 1.8203094526069432,
+   "digest": "8c670131fe028a996bd30a162cf1be5a1ee9fc856fedc8b9ffa3e7ff884aa65a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.4204914835522038,
+   "last_ts": 1.920426472500325,
+   "digest": "355a57cfe009f9b0d2a9cd4d29fd6d203d70780cf4c427c6e8af1835b0624f5e"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.5206085034455856,
+   "last_ts": 2.0205434923937067,
+   "digest": "4d869b1208c63f837d43f59b4a45070737afea7f81469645091f299be7d1961a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.6207255233389675,
+   "last_ts": 2.1206605122870887,
+   "digest": "f93699522623d8e29464952f18adcb7941fe10418f2f34a7ac01036d5ac49bb3"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.7208425432323495,
+   "last_ts": 2.220777532180471,
+   "digest": "1f4843ba3229605b748b158af088a5aa69f7c9ba0c848a6eb95b10370cd58f8f"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.8209595631257314,
+   "last_ts": 2.3208945520738524,
+   "digest": "808e256029891d9839c044dd372694775577234cee844199233eff512368f96c"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.9210765830191132,
+   "last_ts": 2.4210115719672345,
+   "digest": "2e8bb86a9cdf659d98a362110b520308cbab3ea9ee2e4952c610298fad933972"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.0211936029124953,
+   "last_ts": 2.521128591860616,
+   "digest": "3c55c2b0ce4451a1faa9bd6e4cfc3bd63a6f476eb68d2d630564f267a327affe"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.121310622805877,
+   "last_ts": 2.621245611753998,
+   "digest": "7f9965f53802ecad251693e1c28c88deaa723755ed42f9ab201a2820fa48911e"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.221427642699259,
+   "last_ts": 2.72136263164738,
+   "digest": "aa24cd20084fd435fa103f3f91d6d4899deb0f839cb157ceb6fd3b5d86e42ab1"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.3215446625926406,
+   "last_ts": 2.821479651540762,
+   "digest": "daec0daf6a1a7be2ecd66946819086ea5dd615e49e04f542772cbfebe8a47fa4"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.4216616824860226,
+   "last_ts": 2.921596671434144,
+   "digest": "fc2e6f58156ae119bbeeba9ad8906de271f87d282c667278dc9eefd2dae0400a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.5217787023794043,
+   "last_ts": 3.0217136913275255,
+   "digest": "86609a79d3842560e946e2e995494b448263789b894bcc6964e8fe64b261d789"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.6218957222727863,
+   "last_ts": 3.1218307112209076,
+   "digest": "878c186c3dcc31d19ac51da6cd5677902cc081c74dd8440ec01e19db2185c699"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.722012742166168,
+   "last_ts": 3.2219477311142892,
+   "digest": "087dea7bb91fe133e25fdb81b5ed1876f0066f5caca7f2691f34052217b1fbcc"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.82212976205955,
+   "last_ts": 3.3220647510076713,
+   "digest": "c925289ba943a9d1088f299a8fc9ef6d35588b3e27462969896e678373bb5e3e"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 2.922246781952932,
+   "last_ts": 3.422181770901053,
+   "digest": "142c2b490b7081119bd27be738dffb7ca31748cf391a172e02a7174a4f1dffd9"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.0223638018463137,
+   "last_ts": 3.522298790794435,
+   "digest": "05ad0db6909d43aa06ebe7cbe554e7ce823ed13bf6c7cf9f9c6473861c90cf48"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.1224808217396958,
+   "last_ts": 3.622415810687817,
+   "digest": "633708d65448e0107333c6d0802ee27f9b2326c670df45a31ba7a98066158ccb"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.2225978416330774,
+   "last_ts": 3.7225328305811987,
+   "digest": "32da8eb95cf2be60378b7ba53021fe03dde505f790a4bcd0c390693fdd6d5d21"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.3227148615264595,
+   "last_ts": 3.8226498504745807,
+   "digest": "e57d93da0e27b67fe76ba903bde60d91886e80af023d0bac6a4a9d9731847b58"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.422831881419841,
+   "last_ts": 3.9227668703679623,
+   "digest": "9d9d4d8ab47ae548b4e900c363a38b544a208c50f68340bccd0d60488d8ee4fb"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.522948901313223,
+   "last_ts": 4.022883890261344,
+   "digest": "1ef973160be5d953810b2a0d1c4c5bcb8936c6e816716870f97517004a2b4000"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.623065921206605,
+   "last_ts": 4.123000910154726,
+   "digest": "f2eb2783959ced4b3f4fad2df78be52d5a6ace1107380e4b58879c7852d49d6d"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.723182941099987,
+   "last_ts": 4.223117930048108,
+   "digest": "caf3ddee7c9567d270444bda83a3625afdefdd1d268ab3f6197a50b720b717e7"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.823299960993369,
+   "last_ts": 4.32323494994149,
+   "digest": "0156b2038b8480ddeb522e7b018ad663b49bd70863f336f072032cd0c094a0a9"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 3.9234169808867505,
+   "last_ts": 4.423351969834872,
+   "digest": "bf32321f3ea8641a5015c8e4c7d55a9c207f0737f778ec59dd0e6ba5e955e1b4"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.023534000780132,
+   "last_ts": 4.523468989728253,
+   "digest": "7676920b18f1d920e201f2f216cc861e6df617acefcf446745c692a7183e165d"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.123651020673514,
+   "last_ts": 4.6235860096216355,
+   "digest": "555ec6dd45317962446a3835a9f6a256f98f3e42885e6cb0a49b9e627be783ab"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.223768040566896,
+   "last_ts": 4.7237030295150175,
+   "digest": "2e0651fb4959d2b50e6de3f8a5237aee7fc09a1bab0989d01401a0314aab9b51"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.323885060460278,
+   "last_ts": 4.8238200494084,
+   "digest": "132fe8a3d8e1331d749af4acb76229f32155dd535b8b960b9bd5a8e24988a75b"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.42400208035366,
+   "last_ts": 4.923937069301781,
+   "digest": "7304d0146592b42b512cca8a7727b0fab95876c739f476a8347b435fc72f18ce"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.524119100247042,
+   "last_ts": 5.024054089195163,
+   "digest": "8ea69ed9fa9a84ea282496a8a0aa9b6f2212832c61395a2c0be3a0889c094311"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.624236120140424,
+   "last_ts": 5.124171109088545,
+   "digest": "27efeb852b570967c1233346175a82b5b177ff191c84d1d46c956976a8264086"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.724353140033806,
+   "last_ts": 5.224288128981927,
+   "digest": "bfc716c6ce183654df018aa5af3f4f749c854a6fad3273b3c1e72d17c3214d84"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.824470159927188,
+   "last_ts": 5.324405148875309,
+   "digest": "d6971a9fb8811af71f87cf2ca6974823620d9da454de449e3b5613b3c4991368"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 4.924587179820569,
+   "last_ts": 5.42452216876869,
+   "digest": "93ee945815855b5630c10f12f0931176e97346e89b8e00c02be3875ccb5be224"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.024704199713951,
+   "last_ts": 5.524639188662072,
+   "digest": "9a6a848c1872bc8eac6fe10afe4ffff7859aaac9c760fdd6d0de2b4902673f18"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.124821219607333,
+   "last_ts": 5.624756208555454,
+   "digest": "7b58feb625e6c9cc229b465d6ab01863cfce3c458b014b4e810b42b6f15a7966"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.224938239500715,
+   "last_ts": 5.724873228448836,
+   "digest": "8e9d4c5743eccd657d18ed76178a4ed09913b655c2f90311c5eb3c69940fb0ad"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.325055259394097,
+   "last_ts": 5.824990248342218,
+   "digest": "3ae1b9d5685a21049bb94e97bc595804b7ceb4bc7f7dd4b216755195d2233339"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.425172279287478,
+   "last_ts": 5.9251072682356,
+   "digest": "b5fc9bbfc230c1fc2dcca733171b11ebef47a6de8a67fc5a74ba686d750d8291"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.52528929918086,
+   "last_ts": 6.025224288128982,
+   "digest": "65f11f2e566c805e48607bd48f040c44475f0cfe5698969dff51d897c363ad1b"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.6254063190742425,
+   "last_ts": 6.125341308022364,
+   "digest": "1112e68ac297e03e905379e5233f4d70b9ad380b30ed6e829a7a33c146ac6f09"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.7255233389676246,
+   "last_ts": 6.225458327915746,
+   "digest": "f246269724121e75f682ca1d9d3fac40da26911c55dfcb4797b67ad6214593b0"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.825640358861007,
+   "last_ts": 6.325575347809127,
+   "digest": "6e1455603748073b77bbaa38caf5fbc88e61efe4d41b55a98bf59ab3b3358fa3"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 5.925757378754388,
+   "last_ts": 6.425692367702509,
+   "digest": "b474a1e10ac9290fb04a42afe7485b4a73e8c2b27a2bb56e21dc2686849bc72e"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.02587439864777,
+   "last_ts": 6.525809387595891,
+   "digest": "ca24c015d2983bd2a99129795611e84a15dc2e975692f1f9baa032e6858d7508"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.125991418541152,
+   "last_ts": 6.625926407489273,
+   "digest": "9f6d8e0bd8f07c53fd227151b47005e8f5adaa8657d2504b781e908b49eee427"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.226108438434534,
+   "last_ts": 6.726043427382655,
+   "digest": "ea1af9d8f29d3767eed079615ac8d0a614240bdbee2e876e8705aa6c3923f17b"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.326225458327915,
+   "last_ts": 6.826160447276036,
+   "digest": "e5064b88436d5765f3cf6467948282bdfd8e4432cabf6238e87eef7d28bd6a9b"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.426342478221297,
+   "last_ts": 6.9262774671694185,
+   "digest": "c66fc481494c0bc5684af9bae64f1b46e881a095436b18ab896ee297c27873fa"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.526459498114679,
+   "last_ts": 7.026394487062801,
+   "digest": "a931308ca0a0c9f8e5fb1e2f387fbd22869d2cff9b1961b3d354295d991b4127"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.626576518008061,
+   "last_ts": 7.126511506956183,
+   "digest": "6b0ef63c13063f5b4e9667a80d4bc3e5a0969f91133ffe7a837a1a9407d22faf"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.726693537901443,
+   "last_ts": 7.226628526849564,
+   "digest": "af7a5f1cdc4100034e98b9bea8d60a6e75c174bd0e23ff7bb6633dc3ab99b3a7"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.826810557794825,
+   "last_ts": 7.326745546742946,
+   "digest": "c3af34305fbc38273ad32624e34fd06d521453d32110490170f588748e880bf9"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 6.926927577688207,
+   "last_ts": 7.426862566636328,
+   "digest": "aa227f494ad410dcb1c8cdd9a2ace049c9d3f8da7a5137ed0e72e4bb5346bf12"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.027044597581589,
+   "last_ts": 7.52697958652971,
+   "digest": "3c69b34995eae53e38f24706281d66505b8313fdcecba9a6d9c905071c041ebe"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.127161617474971,
+   "last_ts": 7.627096606423092,
+   "digest": "cfee713644d41bda92f62c13c2077aca21937304d5f801651f161db2e8e65ab2"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.227278637368352,
+   "last_ts": 7.727213626316473,
+   "digest": "a549c1b785203ca878b5c81118e3d3afcd2646a7fa3898679b56daf419d01fb7"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.327395657261734,
+   "last_ts": 7.827330646209855,
+   "digest": "2efb6dc139eb4ce0364aba06e2e78d9a5e038d73037e430261cb383f4f5c91be"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.427512677155116,
+   "last_ts": 7.927447666103237,
+   "digest": "0a372448f50256e787f7dbf39e793fa44f30e60cc7337c0c1a9be48a69f276c1"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.527629697048498,
+   "last_ts": 8.02756468599662,
+   "digest": "6d92f458f9e333199f7a70ff47602d8c562427d0ad94d4e6a02cb26c96ae113a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.62774671694188,
+   "last_ts": 8.127681705890001,
+   "digest": "81ec0e128a0fb4b5a1affbbd1b796515ea63e623d41435055d0986cf940cf869"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.727863736835261,
+   "last_ts": 8.227798725783384,
+   "digest": "c4dc549cc94b3f702284b304a79d2adb61e87553d92cabfafd590f9d574118ef"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.8279807567286435,
+   "last_ts": 8.327915745676766,
+   "digest": "1993ff3af609f85a91a8fa8d6145600e4dc276fb52348ebb47074586b64e48b4"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 7.9280977766220255,
+   "last_ts": 8.428032765570146,
+   "digest": "ff6f6f48ac54ad60468a193152766982539fdf68518f8e7aa789d4102f5a4044"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 8.028214796515407,
+   "last_ts": 8.528149785463528,
+   "digest": "c8937df88e88f5d083459346ab78bb330ec80df630b1ec000d72a603787fda44"
+  }
+ ],
+ "fixed_grid_tick777": [
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.018853205044857626,
+   "last_ts": 0.5187881939929788,
+   "digest": "eaf2c866bb86512d0af81de3163d90388851bf469f71ea8cc7ee771ed7534fd0"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.1189702249382395,
+   "last_ts": 0.6189052138863607,
+   "digest": "ab0f9799c0cbbca7bfb16563298a9306e90b8e0002d10f12823933633c14c9ef"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.21908724483162137,
+   "last_ts": 0.7190222337797425,
+   "digest": "4d7b74eea08d5c68ab587170f3ad7e4591d230f8e95b3b594838dfd9e456d915"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.31920426472500324,
+   "last_ts": 0.8191392536731245,
+   "digest": "d7de30d1e575c30c40f69d47793184654f34e1fc7b53f2eb4b6ea0060f98b945"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.41932128461838514,
+   "last_ts": 0.9192562735665063,
+   "digest": "027b881eb5efb8888b7a86d999030c7d387443f75137b101077cf853c68afd10"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.519438304511767,
+   "last_ts": 1.0193732934598883,
+   "digest": "9c9092b398bd5e84f1548e3b61f153ac2ec9a814052a60f29c0fc285a79f1f6c"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.6195553244051488,
+   "last_ts": 1.11949031335327,
+   "digest": "8f65122d7b9f667fcfeb14f7e7fe768fa8a681c23d08db1c18c51ec3505f73b2"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.7196723442985308,
+   "last_ts": 1.219607333246652,
+   "digest": "04b04cafbe4d768df0ffa249e741996402f5236a87dd05ed54e1b664efdee069"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.8197893641919126,
+   "last_ts": 1.3197243531400338,
+   "digest": "f9a612a9019d5d1d628f6a73b96437c2f963ff00b8bf865d9dc0332e4f7f315a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 0.9199063840852945,
+   "last_ts": 1.4198413730334156,
+   "digest": "d40bb2a5d52c7f5ad824d04560280cc69ba7e262c2c50a66e181d48b88612b7a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.0200234039786764,
+   "last_ts": 1.5199583929267975,
+   "digest": "c9ae4bbc0440781c440c1b1d0fb2f5b9ffd646b506ca6591659aa45fdf57f466"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.1201404238720583,
+   "last_ts": 1.6200754128201793,
+   "digest": "ddf62a10358933527c8724165045770463acbeacbc1549f9ea6cde7fe48fcbef"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.22025744376544,
+   "last_ts": 1.7201924327135611,
+   "digest": "bb6d36745121636d576f103e77105adba49c8a8e565267b34cc2c0fbf445312c"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.320374463658822,
+   "last_ts": 1.8203094526069432,
+   "digest": "8c670131fe028a996bd30a162cf1be5a1ee9fc856fedc8b9ffa3e7ff884aa65a"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.4204914835522038,
+   "last_ts": 1.920426472500325,
+   "digest": "355a57cfe009f9b0d2a9cd4d29fd6d203d70780cf4c427c6e8af1835b0624f5e"
+  },
+  {
+   "frag_id": null,
+   "n_samples": 770,
+   "first_ts": 1.5206085034455856,
+   "last_ts": 2.0205434923937067,
+   "digest": "4d869b1208c63f837d43f59b4a45070737afea7f81469645091f299be7d1961a"
+  }
+ ]
+}

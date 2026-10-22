@@ -8,11 +8,12 @@ switching to the Analysis tab, or changing its controls, never blocks the UI.
 from __future__ import annotations
 
 from data_processing.analysis_workbench import prepare_analysis_data
+from data_processing.gating_preview import compute_gating_preview
 from data_processing.queued_background_worker import QueuedBackgroundWorker
 
 
 class AnalysisComputeWorker(QueuedBackgroundWorker):
-    """Runs prepare_analysis_data() in a dedicated thread.
+    """Runs prepare_analysis_data() (and the optional gating preview) in a dedicated thread.
 
     The queue is bounded to 1: a fresh submission evicts a still-pending
     one, so only the latest requested render is ever computed.
@@ -31,4 +32,10 @@ class AnalysisComputeWorker(QueuedBackgroundWorker):
             hpf_cutoff_hz=payload["hpf_cutoff_hz"],
             pzt_force_settings=payload["pzt_force_settings"],
         )
+        gating_request = payload.get("gating_request")
+        if gating_request is not None:
+            prepared.gating = compute_gating_preview(
+                payload["snapshot"], vref_voltage=payload["vref_voltage"], axis_mode=payload["axis_mode"],
+                **gating_request,
+            )
         return {"prepared": prepared, "auto_range": payload.get("auto_range", False)}

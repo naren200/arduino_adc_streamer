@@ -33,10 +33,15 @@ class LiveWindow:
     ``channels`` is copied into read-only arrays behind a read-only mapping, so a
     window can be shared between the app and a runtime without defensive copies.
     Channel names must be engine output names (``channel_names``); unknown names raise.
+
+    ``seam_idx`` marks a window built by concatenating non-adjacent stretches of the stream:
+    the sorted sample indices (each > 0) at which each further stretch begins. Empty means
+    one contiguous stretch.
     """
 
     channels: Mapping[str, np.ndarray]
     sample_rate_hz: float
+    seam_idx: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.channels:
@@ -53,6 +58,10 @@ class LiveWindow:
         rate = float(self.sample_rate_hz)
         if not math.isfinite(rate) or rate <= 0:
             raise ValueError(f"sample_rate_hz must be finite and > 0, got {self.sample_rate_hz!r}")
+        seams = tuple(int(index) for index in self.seam_idx)
+        if any(not 0 < index < next(iter(lengths.values())) for index in seams) or list(seams) != sorted(set(seams)):
+            raise ValueError(f"seam_idx must be strictly increasing sample indices inside the window, got {seams}")
+        object.__setattr__(self, "seam_idx", seams)
         object.__setattr__(self, "channels", MappingProxyType(frozen))
         object.__setattr__(self, "sample_rate_hz", rate)
 

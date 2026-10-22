@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 
 from core.texture_piezo.application.stream_processor import LIVE_ENGINE_CONFIG, TouchIdStreamProcessor
-from core.texture_piezo.gating.quality_gate import IdleBaseline
+from core.texture_piezo.gating.v1.quality_gate import IdleBaseline
 
 
 PZT_COLUMNS = [f"PZT3_{c}" for c in "BLCRT"]
@@ -247,13 +247,13 @@ class ChunkInvarianceTests(unittest.TestCase):
             pos += size
 
     def _assert_stores_equal(self, proc_whole, proc_split) -> None:
-        np.testing.assert_array_equal(proc_whole._store._store_raw, proc_split._store._store_raw)
-        assert proc_whole._store._store_channels.keys() == proc_split._store._store_channels.keys()
-        for name, values in proc_whole._store._store_channels.items():
-            np.testing.assert_array_equal(values, proc_split._store._store_channels[name])
-        np.testing.assert_array_equal(proc_whole._store._store_ts, proc_split._store._store_ts)
-        self.assertEqual(proc_whole._store._store_base_abs, proc_split._store._store_base_abs)
-        self.assertEqual(proc_whole._store._store_next_abs, proc_split._store._store_next_abs)
+        np.testing.assert_array_equal(proc_whole.gating.store._store_raw, proc_split.gating.store._store_raw)
+        assert proc_whole.gating.store._store_channels.keys() == proc_split.gating.store._store_channels.keys()
+        for name, values in proc_whole.gating.store._store_channels.items():
+            np.testing.assert_array_equal(values, proc_split.gating.store._store_channels[name])
+        np.testing.assert_array_equal(proc_whole.gating.store._store_ts, proc_split.gating.store._store_ts)
+        self.assertEqual(proc_whole.gating.store._store_base_abs, proc_split.gating.store._store_base_abs)
+        self.assertEqual(proc_whole.gating.store._store_next_abs, proc_split.gating.store._store_next_abs)
         # _chunk_cursor_abs is deliberately NOT compared here: it is reset to
         # _store_next_abs at whatever moment _ensure_active_queue first
         # constructs the ActiveSampleQueue (see stream_processor.py), which
@@ -289,8 +289,8 @@ class ChunkInvarianceTests(unittest.TestCase):
 
         # Guard against the comparisons above going vacuous: the differential
         # channels must actually carry signal for this test to mean anything.
-        self.assertGreater(np.abs(proc_whole._store._store_channels['shear_jerk_lr']).max(), 0)
-        self.assertGreater(np.abs(proc_whole._store._store_channels['shear_jerk_tb']).max(), 0)
+        self.assertGreater(np.abs(proc_whole.gating.store._store_channels['shear_jerk_lr']).max(), 0)
+        self.assertGreater(np.abs(proc_whole.gating.store._store_channels['shear_jerk_tb']).max(), 0)
 
         self._assert_stores_equal(proc_whole, proc_split)
 
@@ -319,8 +319,8 @@ class ChunkInvarianceTests(unittest.TestCase):
         sizes.append(total_n - sum(sizes))
         self._push_as_chunks(proc_split, fs, ts_all, raw_by_col, sizes)
 
-        self.assertGreater(np.abs(proc_whole._store._store_channels['shear_jerk_lr']).max(), 0)
-        self.assertGreater(np.abs(proc_whole._store._store_channels['shear_jerk_tb']).max(), 0)
+        self.assertGreater(np.abs(proc_whole.gating.store._store_channels['shear_jerk_lr']).max(), 0)
+        self.assertGreater(np.abs(proc_whole.gating.store._store_channels['shear_jerk_tb']).max(), 0)
 
         self._assert_stores_equal(proc_whole, proc_split)
 

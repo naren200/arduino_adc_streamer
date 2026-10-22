@@ -16,8 +16,9 @@ from pathlib import Path
 from core.texture_piezo.models import model_discovery
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 
-from core.texture_piezo.gating.quality_gate import DEFAULT_K
-from core.texture_piezo.gating.window_config import ONSET_SKIP_S
+from core.texture_piezo.application.gating_v2_settings import GATING_V2_FIELD_NAMES
+from core.texture_piezo.gating.v1.quality_gate import DEFAULT_K
+from core.texture_piezo.gating.v1.window_config import ONSET_SKIP_S
 
 from core.piezo_engine.channel_names import CHANNEL_LABELS
 
@@ -87,6 +88,8 @@ class InferenceConfig:
     # no entry. Switching `model_type` needs nothing else: the bundle is resolved from the selection by
     # discovery on each load.
     selections: dict[str, ModelSelection] = field(default_factory=_default_selections)
+    # Gating-v2 fields the user changed away from the loaded bundle's training values; field name -> value.
+    gating_v2_overrides: dict = field(default_factory=dict)
     # Set by load_touchid_settings when the saved model selection could not be
     # restored; empty when the selection was restored or nothing was saved.
     model_fallback_message: str = ""
@@ -191,6 +194,7 @@ def save_touchid_settings(config: InferenceConfig) -> Path:
             "confidence_threshold": config.confidence_threshold,
             "idle_gate_k": config.idle_gate_k,
             "onset_skip_s": config.onset_skip_s,
+            "gating_v2_overrides": dict(config.gating_v2_overrides),
             "model_type": config.model_type,
             "model_version": model_version_of(config),
             "model_checkpoint": model_checkpoint_of(config),
@@ -285,5 +289,9 @@ def load_touchid_settings(config: InferenceConfig | None = None) -> InferenceCon
             config.idle_gate_k = payload["idle_gate_k"]
         if "onset_skip_s" in payload:
             config.onset_skip_s = payload["onset_skip_s"]
+        if isinstance(payload.get("gating_v2_overrides"), dict):
+            config.gating_v2_overrides = {
+                name: value for name, value in payload["gating_v2_overrides"].items() if name in GATING_V2_FIELD_NAMES
+            }
         _restore_saved_model_selection(config, SavedModelSelection.from_payload(payload))
     return config

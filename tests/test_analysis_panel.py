@@ -43,14 +43,14 @@ class AnalysisPlotVisibilityTests(unittest.TestCase):
         self.harness.analysis_integration_plot = FakePlot()
         self.harness.analysis_derived_plot = FakePlot()
         self.harness.analysis_force_plot = FakePlot()
+        self.harness.analysis_burst_plot = FakePlot()
+        self.harness.analysis_rolling_plot = FakePlot()
+        self.harness.analysis_gate_plot = FakePlot()
         self.harness.analysis_plot_splitter = FakeSplitter()
 
     def test_hides_unrequested_empty_plots_and_collapses_their_space(self):
         self.harness._update_analysis_plot_visibility(
-            show_signal=True,
-            show_integration=False,
-            show_derived=False,
-            show_force=False,
+            {"signal": True, "integration": False, "derived": False, "force": False}
         )
 
         self.assertTrue(self.harness.analysis_signal_plot.visible)
@@ -58,21 +58,18 @@ class AnalysisPlotVisibilityTests(unittest.TestCase):
         self.assertFalse(self.harness.analysis_derived_plot.visible)
         self.assertFalse(self.harness.analysis_force_plot.visible)
         self.assertEqual(self.harness.analysis_plot_splitter.minimum_height, 250)
-        self.assertEqual(self.harness.analysis_plot_splitter.sizes, [250, 0, 0, 0])
+        self.assertEqual(self.harness.analysis_plot_splitter.sizes, [250, 0, 0, 0, 0, 0, 0])
 
     def test_shows_each_available_requested_plot(self):
         self.harness._update_analysis_plot_visibility(
-            show_signal=True,
-            show_integration=True,
-            show_derived=True,
-            show_force=True,
+            {"signal": True, "integration": True, "derived": True, "force": True}
         )
 
         self.assertTrue(self.harness.analysis_integration_plot.visible)
         self.assertTrue(self.harness.analysis_derived_plot.visible)
         self.assertTrue(self.harness.analysis_force_plot.visible)
         self.assertEqual(self.harness.analysis_plot_splitter.minimum_height, 750)
-        self.assertEqual(self.harness.analysis_plot_splitter.sizes, [250, 200, 200, 100])
+        self.assertEqual(self.harness.analysis_plot_splitter.sizes, [250, 200, 200, 100, 0, 0, 0])
 
 
 class DummySpin:
@@ -162,6 +159,16 @@ class AnalysisPanelHarness(AnalysisPanelMixin):
         self.analysis_baseline_removed_check = DummyCheck()
         self.analysis_shear_force_check = DummyCheck()
         self.analysis_normal_force_check = DummyCheck()
+        self.analysis_burst_check = DummyCheck()
+        self.analysis_burst_values_widget = FakePlot()
+        self.analysis_burst_block_spin = DummySpin()
+        self.analysis_burst_min_spin = DummySpin()
+        self.analysis_burst_sustain_min_spin = DummySpin()
+        self.analysis_burst_sustain_blocks_spin = DummySpin()
+        self.analysis_strength_gate_check = DummyCheck()
+        self.analysis_idle_gate_check = DummyCheck()
+        self.analysis_concat_check = DummyCheck()
+        self.analysis_expiry_spin = DummySpin()
 
         self.analysis_pzt_center_capacitance_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["center_capacitance_value"]))
         self.analysis_pzt_outer_capacitance_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["outer_capacitance_value"]))
@@ -304,6 +311,64 @@ class AnalysisBaselineRemovedOverlayRoundTripTests(unittest.TestCase):
             restored.load_last_analysis_settings()
 
             self.assertTrue(restored.analysis_baseline_removed_check.isChecked())
+
+    def test_burst_score_settings_default_off_and_survive_save_and_restore(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "last_used_analysis_settings.json"
+            harness = AnalysisPanelHarness(settings_path)
+            self.addCleanup(harness.shutdown_analysis_worker)
+            self.assertFalse(harness.analysis_state["gating_preview"]["enabled"])
+
+            harness.analysis_state["gating_preview"] = {
+                "enabled": True, "block_s": 0.2, "burst_min": 0.7, "sustain_min": 2, "sustain_blocks": 5,
+                "strength_enabled": True, "idle_enabled": False, "concat_enabled": False, "expiry_s": 4.0,
+            }
+            harness.save_last_analysis_settings()
+
+            restored = AnalysisPanelHarness(settings_path)
+            self.addCleanup(restored.shutdown_analysis_worker)
+            restored.load_last_analysis_settings()
+
+            self.assertTrue(restored.analysis_burst_check.isChecked())
+            self.assertEqual(restored.analysis_burst_block_spin.value(), 0.2)
+            self.assertEqual(restored.analysis_burst_min_spin.value(), 0.7)
+            self.assertEqual(restored.analysis_burst_sustain_min_spin.value(), 2)
+            self.assertEqual(restored.analysis_burst_sustain_blocks_spin.value(), 5)
+            self.assertFalse(restored.analysis_idle_gate_check.isChecked())
+            self.assertFalse(restored.analysis_concat_check.isChecked())
+            self.assertEqual(restored.analysis_expiry_spin.value(), 4.0)
+
+    def test_burst_score_defaults_are_the_chosen_values_and_latest_edits_survive_disable_and_restart(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "last_used_analysis_settings.json"
+            harness = AnalysisPanelHarness(settings_path)
+            self.addCleanup(harness.shutdown_analysis_worker)
+            harness.analysis_gate_plot = FakePlot()
+            harness.refresh_analysis_plot = lambda: None
+            defaults = harness.analysis_state["gating_preview"]
+            self.assertEqual(
+                (defaults["block_s"], defaults["burst_min"], defaults["sustain_min"], defaults["sustain_blocks"],
+                 defaults["expiry_s"]),
+                (0.04, 0.3, 3, 7, 3.0),
+            )
+            self.assertTrue(defaults["strength_enabled"] and defaults["idle_enabled"] and defaults["concat_enabled"])
+
+            harness.apply_gating_preview_state_to_widgets()
+            harness.analysis_burst_check.setChecked(True)
+            harness.analysis_burst_min_spin.setValue(0.55)
+            harness.analysis_burst_sustain_min_spin.setValue(4)
+            harness.on_gating_preview_settings_changed()
+            harness.analysis_burst_check.setChecked(False)
+            harness.on_gating_preview_settings_changed()
+
+            restored = AnalysisPanelHarness(settings_path)
+            self.addCleanup(restored.shutdown_analysis_worker)
+            restored.load_last_analysis_settings()
+
+            self.assertFalse(restored.analysis_burst_check.isChecked())
+            self.assertEqual(restored.analysis_burst_min_spin.value(), 0.55)
+            self.assertEqual(restored.analysis_burst_sustain_min_spin.value(), 4)
+            self.assertEqual(restored.analysis_burst_sustain_blocks_spin.value(), 7)
 
 
 if __name__ == "__main__":

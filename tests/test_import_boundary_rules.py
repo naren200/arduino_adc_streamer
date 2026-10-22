@@ -34,7 +34,7 @@ def _is_allowed(module: str) -> bool:
 def test_gating_imports_only_engine_stdlib_and_numpy():
     offenders = [
         f"{path.name}: {module}"
-        for path in GATING_DIR.glob("*.py")
+        for path in GATING_DIR.rglob("*.py")
         for module in _imported_modules(path)
         if not _is_allowed(module)
     ]

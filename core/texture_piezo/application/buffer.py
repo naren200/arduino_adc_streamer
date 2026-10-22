@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from core.texture_piezo.gating.time_window import hop_start_index, window_end_index
+from core.texture_piezo.gating.v1.time_window import hop_start_index, window_end_index
 
 
 class RollingBuffer:
@@ -25,6 +25,7 @@ class RollingBuffer:
         self._channel_order: list[str] | None = None
         self._samples: dict[str, np.ndarray] = {}
         self._timestamps: np.ndarray = np.empty(0)
+        self.dropped_count = 0  # samples advanced past so far: absolute index of the buffer's first sample
 
     def push(self, channel_samples: dict[str, np.ndarray], timestamps: np.ndarray) -> None:
         """Append newly arrived per-channel samples + their timestamps."""
@@ -66,5 +67,6 @@ class RollingBuffer:
         for name in self._channel_order:
             self._samples[name] = self._samples[name][advance_n:]
         self._timestamps = self._timestamps[advance_n:]
+        self.dropped_count += advance_n
 
         return window_adc, window_timestamps

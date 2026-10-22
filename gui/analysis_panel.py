@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import csv
 import json
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
+from PyQt6 import sip
 from PyQt6.QtCore import QEvent, Qt, QTimer
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
@@ -76,13 +78,31 @@ from data_processing.analysis_workbench import (
 from file_operations.export_metadata import build_analysis_export_metadata
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from core.texture_piezo.application.inference_config import InferenceConfig
+from gui.gating_preview_panel import GATING_PREVIEW_STATE_KEY, GatingPreviewPanelMixin
+from gui.window_overlay import window_id_at
 
 
 ANALYSIS_CHECKBOX_MIN_COLUMN_WIDTH = 130
 ANALYSIS_LABEL_UNDO_DEPTH = 20
+# (key, plot attribute, minimum height) in splitter order, top to bottom.
+ANALYSIS_PLOT_SPECS = (
+    ("signal", "analysis_signal_plot", 250),
+    ("integration", "analysis_integration_plot", 200),
+    ("derived", "analysis_derived_plot", 200),
+    ("force", "analysis_force_plot", 100),
+    ("burst", "analysis_burst_plot", 150),
+    ("rolling", "analysis_rolling_plot", 150),
+    ("gate", "analysis_gate_plot", 130),
+)
+ANALYSIS_WINDOW_HOVER_RGBA = (255, 255, 255, 110)
+ANALYSIS_FORCE_TRACES_ALWAYS_UNCHECKED = frozenset({"Force X [N]", "Force Z [N]"})
+ANALYSIS_BURST_DEBOUNCE_MS = 250
+ANALYSIS_BURST_STRONG_RGB =(220, 90, 40)
+ANALYSIS_BURST_WEAK_RGB = (150, 150, 150)
+ANALYSIS_BURST_GOOD_RGBA = (60, 180, 75, 60)
 
 
-class AnalysisPanelMixin:
+class AnalysisPanelMixin(GatingPreviewPanelMixin):
     """Mixin providing the offline Analysis tab and interactions."""
 
     def _init_analysis_state(self):
@@ -93,14 +113,15 @@ class AnalysisPanelMixin:
             "filter_enabled": False,
             "marker_enabled": True,
             "overlays": {
-                "shear": True,
-                "normal": True,
-                "integration": True,
+                "shear": False,
+                "normal": False,
+                "integration": False,
                 "shear_force": False,
                 "normal_force": False,
                 "baseline_removed": False,
             },
             "pzt_force": dict(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS),
+            GATING_PREVIEW_STATE_KEY: self._init_gating_preview_state(),
             "visible_labels": {},
             "visible_force_labels": {},
             "csv_path": "",
@@ -125,6 +146,8 @@ class AnalysisPanelMixin:
         self._analysis_label_text_items: list[pg.TextItem] = []
         self._analysis_label_items: list[dict] = []
         self.analysis_predicted_labels: list[dict] = []
+        self._analysis_hovered_window_id: int | None = None
+        self._analysis_hover_items: list[tuple] = []  # (plot, region)
         self.analysis_compute_worker = AnalysisComputeWorker()
         self.analysis_compute_worker.result_ready.connect(self._on_analysis_compute_result)
         self.analysis_compute_worker.error_occurred.connect(self._on_analysis_compute_error)
@@ -752,6 +775,7 @@ class AnalysisPanelMixin:
         self.analysis_save_images_btn.clicked.connect(self.save_analysis_plot_images)
         image_export_layout.addWidget(self.analysis_save_images_btn, 1, 0, 1, 4)
         settings_root.addWidget(image_export_group)
+        settings_root.addWidget(self.create_gating_preview_group())
         settings_root.addStretch()
 
         self.analysis_plot_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -778,21 +802,23 @@ class AnalysisPanelMixin:
         self.analysis_integration_plot.setXLink(self.analysis_signal_plot)
         self.analysis_derived_plot.setXLink(self.analysis_signal_plot)
         self.analysis_force_plot.setXLink(self.analysis_signal_plot)
+        self.create_gating_preview_plots(self.analysis_signal_plot)
         self.analysis_plot_splitter.addWidget(self.analysis_signal_plot)
         self.analysis_plot_splitter.addWidget(self.analysis_integration_plot)
         self.analysis_plot_splitter.addWidget(self.analysis_derived_plot)
         self.analysis_plot_splitter.addWidget(self.analysis_force_plot)
+        self.analysis_plot_splitter.addWidget(self.analysis_burst_plot)
+        self.analysis_plot_splitter.addWidget(self.analysis_rolling_plot)
+        self.analysis_plot_splitter.addWidget(self.analysis_gate_plot)
         self.analysis_plot_splitter.setStretchFactor(0, 5)
         self.analysis_plot_splitter.setStretchFactor(1, 4)
         self.analysis_plot_splitter.setStretchFactor(2, 4)
         self.analysis_plot_splitter.setStretchFactor(3, 2)
+        self.analysis_plot_splitter.setStretchFactor(4, 3)
+        self.analysis_plot_splitter.setStretchFactor(5, 3)
+        self.analysis_plot_splitter.setStretchFactor(6, 2)
         display_root.addWidget(self.analysis_plot_splitter)
-        self._update_analysis_plot_visibility(
-            show_signal=False,
-            show_integration=False,
-            show_derived=False,
-            show_force=False,
-        )
+        self._update_analysis_plot_visibility({})
 
         self.analysis_marker_vline = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#444444", width=1))
         self.analysis_signal_plot.addItem(self.analysis_marker_vline)
@@ -853,6 +879,7 @@ class AnalysisPanelMixin:
             self.analysis_zoom_combo.setCurrentIndex({"x": 0, "y": 1, "xy": 2}.get(state.get("zoom_mode", "x"), 0))
             self.analysis_filter_check.setChecked(bool(state.get("filter_enabled", False)))
             self.analysis_marker_check.setChecked(bool(state.get("marker_enabled", True)))
+            self.apply_gating_preview_state_to_widgets()
             overlays = state.get("overlays", {})
             self.analysis_shear_check.setChecked(bool(overlays.get("shear", False)))
             self.analysis_normal_check.setChecked(bool(overlays.get("normal", False)))
@@ -1171,6 +1198,10 @@ class AnalysisPanelMixin:
 
     def eventFilter(self, obj, event):
         checkbox_scroll = getattr(self, "_analysis_checkbox_scroll", None)
+        # This filter is app-wide, so it keeps firing after the Qt widget is destroyed
+        # (teardown, tab rebuild) while the Python wrapper still exists.
+        if checkbox_scroll is not None and sip.isdeleted(checkbox_scroll):
+            checkbox_scroll = self._analysis_checkbox_scroll = None
         is_checkbox_resize = (
             checkbox_scroll is not None
             and obj is checkbox_scroll.viewport()
@@ -1383,6 +1414,9 @@ class AnalysisPanelMixin:
             self.analysis_integration_plot.setMouseEnabled(x=mouse_x, y=mouse_y)
             self.analysis_derived_plot.setMouseEnabled(x=mouse_x, y=mouse_y)
             self.analysis_force_plot.setMouseEnabled(x=mouse_x, y=mouse_y)
+            self.analysis_burst_plot.setMouseEnabled(x=mouse_x, y=mouse_y)
+            self.analysis_rolling_plot.setMouseEnabled(x=mouse_x, y=mouse_y)
+            self.analysis_gate_plot.setMouseEnabled(x=mouse_x, y=mouse_y)
         self.save_last_analysis_settings()
 
     def on_analysis_marker_toggled(self, *_args):
@@ -1416,6 +1450,7 @@ class AnalysisPanelMixin:
             "integration_window_samples": int(getattr(self, "signal_integration_window_samples", 1) or 1),
             "hpf_cutoff_hz": float(getattr(self, "signal_integration_hpf_cutoff_hz", 0.0) or 0.0),
             "pzt_force_settings": self.analysis_state.get("pzt_force", {}),
+            "gating_request": self.gating_preview_request(),
             "auto_range": getattr(self, "_analysis_pending_auto_range", False),
         })
         self._analysis_pending_auto_range = False
@@ -1582,12 +1617,13 @@ class AnalysisPanelMixin:
             for trace in prepared.force_traces
             if trace.label in self.analysis_force_checks
         )
-        self._update_analysis_plot_visibility(
-            show_signal=bool(desired_signal),
-            show_integration=bool(desired_integration),
-            show_derived=bool(desired_derived),
-            show_force=visible_force,
-        )
+        self._update_analysis_plot_visibility({
+            "signal": bool(desired_signal),
+            "integration": bool(desired_integration),
+            "derived": bool(desired_derived),
+            "force": visible_force,
+            **self.render_gating_preview(prepared.gating),
+        })
 
         self.analysis_signal_plot.setLabel("left", "Signals", units="V")
         self.analysis_integration_plot.setLabel("left", "Integrated", units="V samples")
@@ -1598,6 +1634,9 @@ class AnalysisPanelMixin:
             (self.analysis_integration_plot, bool(desired_integration)),
             (self.analysis_derived_plot, bool(desired_derived)),
             (self.analysis_force_plot, bool(desired_force)),
+            (self.analysis_burst_plot, self.analysis_burst_plot.isVisible()),
+            (self.analysis_rolling_plot, self.analysis_rolling_plot.isVisible()),
+            (self.analysis_gate_plot, self.analysis_gate_plot.isVisible()),
         )
         bottom_plot = next((plot for plot, visible in reversed(stacked_plots) if visible), None)
         for plot, _visible in stacked_plots:
@@ -1635,22 +1674,14 @@ class AnalysisPanelMixin:
         )
         self._update_analysis_pzt_mux_timing_status_from_prepared(prepared.status)
 
-    def _update_analysis_plot_visibility(
-        self,
-        *,
-        show_signal: bool,
-        show_integration: bool,
-        show_derived: bool,
-        show_force: bool,
-    ):
-        """Show only Analysis plots that have requested, available traces."""
+    def _update_analysis_plot_visibility(self, visible_by_key: Mapping[str, bool]):
+        """Show only Analysis plots that have requested, available traces; a key missing from
+        ``visible_by_key`` means hidden."""
         saved = getattr(self, "_analysis_saved_view_ranges", {})
-        plot_states = (
-            ("signal", self.analysis_signal_plot, bool(show_signal), 250),
-            ("integration", self.analysis_integration_plot, bool(show_integration), 200),
-            ("derived", self.analysis_derived_plot, bool(show_derived), 200),
-            ("force", self.analysis_force_plot, bool(show_force), 100),
-        )
+        plot_states = [
+            (key, getattr(self, plot_attr), bool(visible_by_key.get(key, False)), minimum_height)
+            for key, plot_attr, minimum_height in ANALYSIS_PLOT_SPECS
+        ]
         for key, plot, visible, _minimum_height in plot_states:
             was_visible = plot.isVisible()
             plot.setVisible(visible)
@@ -1712,7 +1743,8 @@ class AnalysisPanelMixin:
         self.analysis_force_checks = {}
         for label in desired:
             check = QCheckBox(label)
-            check.setChecked(bool(saved_visibility.get(label, True)))
+            is_always_off = label in ANALYSIS_FORCE_TRACES_ALWAYS_UNCHECKED
+            check.setChecked(False if is_always_off else bool(saved_visibility.get(label, True)))
             check.stateChanged.connect(self.on_analysis_settings_changed)
             self.analysis_force_checks[label] = check
         self._relayout_analysis_checkboxes()
@@ -1909,6 +1941,8 @@ class AnalysisPanelMixin:
         self._analysis_label_dirty = False
         self.analysis_predicted_labels = []
         self._update_analysis_label_status()
+        if getattr(self, "analysis_burst_check", None) is not None and self.analysis_burst_check.isChecked():
+            self.refresh_analysis_plot()  # the preview's hand-label overlap line needs the new labels
 
     def _push_analysis_label_undo(self):
         self._analysis_label_undo_stack.append([dict(seg) for seg in self.analysis_label_segments])
@@ -2206,6 +2240,8 @@ class AnalysisPanelMixin:
             entry["plot"].removeItem(entry["region"])
             entry["plot"].removeItem(entry["text"])
         self._analysis_label_items = []
+        self._clear_analysis_window_highlight()
+        self._analysis_hovered_window_id = None
         # Legacy attrs kept for backward-compatible visibility toggling elsewhere.
         self._analysis_label_region_items = []
         self._analysis_label_text_items = []
@@ -2290,7 +2326,47 @@ class AnalysisPanelMixin:
         self.analysis_status_label.setText(elided)
         self.analysis_status_label.setToolTip(full_text)
 
+    def _update_analysis_window_hover(self, pos):
+        """Highlight every stretch of the predicted window under the cursor, so the
+        chunks of one (seam-concatenated) window can be told apart from its neighbours."""
+        window_id = None
+        if (
+            self.analysis_prepared is not None
+            and self.analysis_predicted_labels
+            and self.analysis_show_predicted_labels_check.isChecked()
+            and self.analysis_signal_plot.sceneBoundingRect().contains(pos)
+        ):
+            x = self.analysis_signal_plot.plotItem.vb.mapSceneToView(pos).x()
+            window_id = window_id_at(self.analysis_predicted_labels, self._analysis_label_x_to_seconds(x))
+        if window_id == self._analysis_hovered_window_id:
+            return
+        self._analysis_hovered_window_id = window_id
+        self._clear_analysis_window_highlight()
+        if window_id is None:
+            return
+        stretches = next(
+            p["window_stretches"] for p in self.analysis_predicted_labels if p["window_id"] == window_id
+        )
+        for plot in self._analysis_label_plots():
+            if not plot.isVisible():
+                continue
+            for start_s, end_s in stretches:
+                region = pg.LinearRegionItem(
+                    values=(self._analysis_label_seconds_to_x(start_s), self._analysis_label_seconds_to_x(end_s)),
+                    brush=pg.mkBrush(*ANALYSIS_WINDOW_HOVER_RGBA), pen=pg.mkPen(None), movable=False,
+                )
+                region.setZValue(-5)
+                plot.addItem(region)
+                self._analysis_hover_items.append((plot, region))
+
+    def _clear_analysis_window_highlight(self):
+        for plot, region in self._analysis_hover_items:
+            plot.removeItem(region)
+        self._analysis_hover_items = []
+
     def _on_analysis_mouse_moved(self, evt):
+        if self.analysis_prepared is not None:
+            self._update_analysis_window_hover(evt[0])
         if not bool(self.analysis_marker_check.isChecked()) or self.analysis_prepared is None:
             return
         pos = evt[0]

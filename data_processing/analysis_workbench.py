@@ -14,7 +14,7 @@ import json
 from dataclasses import dataclass, field
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import TYPE_CHECKING, Iterable, Mapping
 
 import numpy as np
 
@@ -43,8 +43,12 @@ from core.piezo_engine.timing import (
 from data_processing.signal_integrator import SignalIntegrator
 
 
+if TYPE_CHECKING:
+    from data_processing.gating_preview import GatingPreviewData
+
 ANALYSIS_TIMESTAMP_COLUMNS = {"timestamp", "timestamp_s"}
 ANALYSIS_FORCE_COLUMNS = {"force_x", "force_z", "force_x_n", "force_z_n"}
+ANALYSIS_TIMING_COLUMNS = {"sample_dt_us"}  # exported per-sample timing, not a signal
 
 
 @dataclass(slots=True)
@@ -98,6 +102,7 @@ class AnalysisPreparedData:
     x_label: str
     x_units: str
     status: str = ""
+    gating: GatingPreviewData | None = None  # set by AnalysisComputeWorker when the preview is enabled
 
 
 def reorder_circular_capture(
@@ -287,7 +292,7 @@ def load_exported_csv_snapshot(
 
     raw_data_columns = [
         name for name in fieldnames
-        if _column_key(name) not in ANALYSIS_TIMESTAMP_COLUMNS | ANALYSIS_FORCE_COLUMNS
+        if _column_key(name) not in ANALYSIS_TIMESTAMP_COLUMNS | ANALYSIS_FORCE_COLUMNS | ANALYSIS_TIMING_COLUMNS
     ]
     data_columns = _analysis_signal_columns_from_csv(raw_data_columns)
     if not data_columns:
@@ -428,6 +433,11 @@ def prepare_analysis_data(
         integration_window_samples=integration_window_samples,
         hpf_cutoff_hz=hpf_cutoff_hz,
     )
+    if (overlay_flags or {}).get("baseline_removed", False):
+        traces = replace_signals_with_baseline_removed(
+            snapshot, data, traces,
+            vref_voltage=vref_voltage, integration_window_samples=integration_window_samples,
+        )
     return AnalysisPreparedData(traces, force_traces, overlays, x_label, x_units, " | ".join(status_parts))
 
 
@@ -611,10 +621,7 @@ def build_overlay_traces(
     integration_window_samples: int,
     hpf_cutoff_hz: float,
 ) -> list[AnalysisTrace]:
-    if not any(
-        bool(overlay_flags.get(key, False))
-        for key in ("shear", "normal", "integration", "baseline_removed")
-    ):
+    if not any(bool(overlay_flags.get(key, False)) for key in ("shear", "normal", "integration")):
         return []
 
     visible_set = set(snapshot.channel_labels if visible_labels is None else visible_labels)
@@ -635,7 +642,7 @@ def build_overlay_traces(
             )
         )
 
-    if not any(bool(overlay_flags.get(key, False)) for key in ("shear", "normal", "baseline_removed")):
+    if not any(bool(overlay_flags.get(key, False)) for key in ("shear", "normal")):
         return overlays
 
     resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
@@ -649,22 +656,42 @@ def build_overlay_traces(
     # high-pass filter here washed out the slow shear response.
     overlay = JerkOverlayStage(max(1, int(integration_window_samples))).push(volts_by_position)
     trimmed_x = x[overlay.dropped_leading:]
-    if overlay_flags.get("baseline_removed", False):
-        for position in SHEAR_SENSOR_POSITIONS:
-            overlays.append(
-                AnalysisTrace(
-                    f"{position} Baseline Removed [V]",
-                    trimmed_x,
-                    np.asarray(overlay.baseline_removed[position], dtype=np.float64),
-                    "derived",
-                )
-            )
     if overlay_flags.get("shear", False):
         overlays.append(AnalysisTrace("Shear L/R Jerk [V]", trimmed_x, overlay.shear_jerk_lr, "derived"))
         overlays.append(AnalysisTrace("Shear T/B Jerk [V]", trimmed_x, overlay.shear_jerk_tb, "derived"))
     if overlay_flags.get("normal", False):
         overlays.append(AnalysisTrace("Normal Jerk [V]", trimmed_x, overlay.normal_jerk, "derived"))
     return overlays
+
+
+def replace_signals_with_baseline_removed(
+    snapshot: AnalysisSourceSnapshot,
+    data: np.ndarray,
+    traces: list[AnalysisTrace],
+    *,
+    vref_voltage: float,
+    integration_window_samples: int,
+) -> list[AnalysisTrace]:
+    """Swap each C/L/R/T/B raw signal trace for its baseline-removed version in place.
+
+    Keeps the trace label (so legend and colour are unchanged); the series starts
+    ``dropped_leading`` samples later because the running median needs a warm-up.
+    """
+    resolved_positions = _resolve_shear_position_channels_and_volts(snapshot, data, vref_voltage)
+    if resolved_positions is None:
+        return traces
+    position_channels, volts_by_position = resolved_positions
+    overlay = JerkOverlayStage(max(1, int(integration_window_samples))).push(volts_by_position)
+    position_by_label = {label: position for position, (_column, label) in position_channels.items()}
+    replaced = []
+    for trace in traces:
+        position = position_by_label.get(trace.label)
+        if position is None:
+            replaced.append(trace)
+            continue
+        values = np.asarray(overlay.baseline_removed[position], dtype=np.float64)
+        replaced.append(AnalysisTrace(trace.label, trace.x[overlay.dropped_leading:], values, trace.group))
+    return replaced
 
 
 def _resolve_shear_position_channels_and_volts(

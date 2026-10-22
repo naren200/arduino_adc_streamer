@@ -112,7 +112,7 @@ def test_the_processor_hand_over_takes_the_engine_state_but_not_the_windowing_st
     resized.adopt_engine_state_from(old)
     assert resized._derived_pipeline._engine.derived_channels is old._derived_pipeline._engine.derived_channels
     assert resized._derived_pipeline._engine._force is old._derived_pipeline._engine._force
-    assert resized._buffer is not old._buffer
+    assert resized.gating.buffer is not old.gating.buffer
     follow_up = resized.push_chunk(resized.filter_raw(_chunk(100, 5)), _stamps(100, n_samples), FS, now_t=0.8)
     assert follow_up == [] or all(window.window_adc.shape[0] > 0 for window in follow_up)
 

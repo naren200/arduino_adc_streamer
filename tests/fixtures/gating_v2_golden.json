@@ -1,0 +1,2846 @@
+{
+ "strength_concat_tick100": [
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1520,
+     2290
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "074ef76a78d9e3374cb268a04980573b017f244246dc28093c06b64d700ead73"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1674,
+     2444
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "4ab6b019dd1a8d0f83d841f7411c27254ab6968e3db54c1b1aebd20ee045a888"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1828,
+     2598
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "45b70c65c471642cb74feaaddcc59e8f64ad99008588c5fecbe6ee944d9d43b4"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1982,
+     2752
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "0f5156d9d7be087b1cacced159f8e9c098b65f1693771215dcb6e9cafc4ec65b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2136,
+     2906
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "8437f2f70a81d3708acab520b807e86df8c18f6bd83da5576c866f26f97acc3f"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2290,
+     3060
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "5753cef50fd8db21c9326ed76e2c02dc1d411dd2c75634c88c6f873717d6ef46"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2444,
+     3214
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "2b6c843d886aa5af113f295d9e1560418bb15b75dde59b115b25804388249d6b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2598,
+     3368
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "c5d0db915c59bef85620915cc3f8c3b5ca6ac30715f2501cf17d05bd82934a1e"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2752,
+     3522
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "ebaee951d0b6fb4586e9ffe38fc86c34752ac04f4ff95f2318b1fe0470293dff"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2906,
+     3676
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "1359af7317f4b3d2105c557bf5c1230bae118b97d867220c534184667e41975a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3060,
+     3830
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "691cb2a48c1a8df300bf4d0bb988b2e4cd849e486fbebaddcdcdbc370dbd3144"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3214,
+     3968
+    ],
+    [
+     4434,
+     4450
+    ]
+   ],
+   "seam_idx": [
+    754
+   ],
+   "n_samples": 770,
+   "digest": "1327295ff16eeeb9ec533e73b471b545e265aa5b10762cfb8d6d874ff2f84adf"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3368,
+     3968
+    ],
+    [
+     4434,
+     4604
+    ]
+   ],
+   "seam_idx": [
+    600
+   ],
+   "n_samples": 770,
+   "digest": "a20ca504d24ddefdb0d038018f8433bcb7f40a156d950ce154a21a4cb54ef72a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3522,
+     3968
+    ],
+    [
+     4434,
+     4758
+    ]
+   ],
+   "seam_idx": [
+    446
+   ],
+   "n_samples": 770,
+   "digest": "77c430913f48b3c181f46967cb75a870d3cf790e6a9c311fc76d73c5a9a30181"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3676,
+     3968
+    ],
+    [
+     4434,
+     4912
+    ]
+   ],
+   "seam_idx": [
+    292
+   ],
+   "n_samples": 770,
+   "digest": "15ed95540717890a01ef5327166d7201a819f0258e0b554443b9a72c80805088"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3830,
+     3968
+    ],
+    [
+     4434,
+     4960
+    ],
+    [
+     5302,
+     5408
+    ]
+   ],
+   "seam_idx": [
+    138,
+    664
+   ],
+   "n_samples": 770,
+   "digest": "b6b4c97b4ac723904d065e6bd66fd8caebd27ceb5f8a27c08aa6d5c58a7a076e"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4450,
+     4960
+    ],
+    [
+     5302,
+     5562
+    ]
+   ],
+   "seam_idx": [
+    510
+   ],
+   "n_samples": 770,
+   "digest": "0882eb29e360cce5da1871132a184fb0d5562dd6467cb8292ac5b5ad516f9584"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4604,
+     4960
+    ],
+    [
+     5302,
+     5716
+    ]
+   ],
+   "seam_idx": [
+    356
+   ],
+   "n_samples": 770,
+   "digest": "7bf348a3d0fe59a4d80ca8bfce7ad2691e469ad06f866d2be1cb49e5c92c81a4"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4758,
+     4960
+    ],
+    [
+     5302,
+     5766
+    ],
+    [
+     7286,
+     7390
+    ]
+   ],
+   "seam_idx": [
+    202,
+    666
+   ],
+   "n_samples": 770,
+   "digest": "1a930e4269bee4c3a6875c53d662e1c7467a2681d321a6ac04d5f80f93849e59"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4912,
+     4960
+    ],
+    [
+     5302,
+     5766
+    ],
+    [
+     7286,
+     7544
+    ]
+   ],
+   "seam_idx": [
+    48,
+    512
+   ],
+   "n_samples": 770,
+   "digest": "8546da0435b655f295297899de34eda01a393c60d00fb0956964f4e40ccd8737"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5408,
+     5766
+    ],
+    [
+     7286,
+     7698
+    ]
+   ],
+   "seam_idx": [
+    358
+   ],
+   "n_samples": 770,
+   "digest": "691b0aa097ef755fae37a9879ddf5de53f4d0121e0a9e9ff8e5f6c9ba27dbaef"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5562,
+     5766
+    ],
+    [
+     7286,
+     7852
+    ]
+   ],
+   "seam_idx": [
+    204
+   ],
+   "n_samples": 770,
+   "digest": "3b3f81b4591d06e914b8d30fd13e1c4cf8ef396ad95ec392f5c82865f22307bc"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5716,
+     5766
+    ],
+    [
+     7286,
+     8006
+    ]
+   ],
+   "seam_idx": [
+    50
+   ],
+   "n_samples": 770,
+   "digest": "ab93476b1697984ed02ff7af52f395bd2aa34b651589b8edeca1293754af82dc"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7390,
+     8160
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "6a047cf1417fa11184a42cbebf570219e40f35586f717820639c2a168d7938ff"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7544,
+     8314
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "84893aa4204ce8e7bee04d8b88b95a48157d68c639b01345e16d2db53834b95a"
+  }
+ ],
+ "strength_concat_tick154": [
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1520,
+     2290
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "074ef76a78d9e3374cb268a04980573b017f244246dc28093c06b64d700ead73"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1674,
+     2444
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "4ab6b019dd1a8d0f83d841f7411c27254ab6968e3db54c1b1aebd20ee045a888"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1828,
+     2598
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "45b70c65c471642cb74feaaddcc59e8f64ad99008588c5fecbe6ee944d9d43b4"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1982,
+     2752
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "0f5156d9d7be087b1cacced159f8e9c098b65f1693771215dcb6e9cafc4ec65b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2136,
+     2906
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "8437f2f70a81d3708acab520b807e86df8c18f6bd83da5576c866f26f97acc3f"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2290,
+     3060
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "5753cef50fd8db21c9326ed76e2c02dc1d411dd2c75634c88c6f873717d6ef46"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2444,
+     3214
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "2b6c843d886aa5af113f295d9e1560418bb15b75dde59b115b25804388249d6b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2598,
+     3368
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "c5d0db915c59bef85620915cc3f8c3b5ca6ac30715f2501cf17d05bd82934a1e"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2752,
+     3522
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "ebaee951d0b6fb4586e9ffe38fc86c34752ac04f4ff95f2318b1fe0470293dff"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2906,
+     3676
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "1359af7317f4b3d2105c557bf5c1230bae118b97d867220c534184667e41975a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3060,
+     3830
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "691cb2a48c1a8df300bf4d0bb988b2e4cd849e486fbebaddcdcdbc370dbd3144"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3214,
+     3968
+    ],
+    [
+     4434,
+     4450
+    ]
+   ],
+   "seam_idx": [
+    754
+   ],
+   "n_samples": 770,
+   "digest": "1327295ff16eeeb9ec533e73b471b545e265aa5b10762cfb8d6d874ff2f84adf"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3368,
+     3968
+    ],
+    [
+     4434,
+     4604
+    ]
+   ],
+   "seam_idx": [
+    600
+   ],
+   "n_samples": 770,
+   "digest": "a20ca504d24ddefdb0d038018f8433bcb7f40a156d950ce154a21a4cb54ef72a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3522,
+     3968
+    ],
+    [
+     4434,
+     4758
+    ]
+   ],
+   "seam_idx": [
+    446
+   ],
+   "n_samples": 770,
+   "digest": "77c430913f48b3c181f46967cb75a870d3cf790e6a9c311fc76d73c5a9a30181"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3676,
+     3968
+    ],
+    [
+     4434,
+     4912
+    ]
+   ],
+   "seam_idx": [
+    292
+   ],
+   "n_samples": 770,
+   "digest": "15ed95540717890a01ef5327166d7201a819f0258e0b554443b9a72c80805088"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3830,
+     3968
+    ],
+    [
+     4434,
+     4960
+    ],
+    [
+     5302,
+     5408
+    ]
+   ],
+   "seam_idx": [
+    138,
+    664
+   ],
+   "n_samples": 770,
+   "digest": "b6b4c97b4ac723904d065e6bd66fd8caebd27ceb5f8a27c08aa6d5c58a7a076e"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4450,
+     4960
+    ],
+    [
+     5302,
+     5562
+    ]
+   ],
+   "seam_idx": [
+    510
+   ],
+   "n_samples": 770,
+   "digest": "0882eb29e360cce5da1871132a184fb0d5562dd6467cb8292ac5b5ad516f9584"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4604,
+     4960
+    ],
+    [
+     5302,
+     5716
+    ]
+   ],
+   "seam_idx": [
+    356
+   ],
+   "n_samples": 770,
+   "digest": "7bf348a3d0fe59a4d80ca8bfce7ad2691e469ad06f866d2be1cb49e5c92c81a4"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4758,
+     4960
+    ],
+    [
+     5302,
+     5766
+    ],
+    [
+     7286,
+     7390
+    ]
+   ],
+   "seam_idx": [
+    202,
+    666
+   ],
+   "n_samples": 770,
+   "digest": "1a930e4269bee4c3a6875c53d662e1c7467a2681d321a6ac04d5f80f93849e59"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4912,
+     4960
+    ],
+    [
+     5302,
+     5766
+    ],
+    [
+     7286,
+     7544
+    ]
+   ],
+   "seam_idx": [
+    48,
+    512
+   ],
+   "n_samples": 770,
+   "digest": "8546da0435b655f295297899de34eda01a393c60d00fb0956964f4e40ccd8737"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5408,
+     5766
+    ],
+    [
+     7286,
+     7698
+    ]
+   ],
+   "seam_idx": [
+    358
+   ],
+   "n_samples": 770,
+   "digest": "691b0aa097ef755fae37a9879ddf5de53f4d0121e0a9e9ff8e5f6c9ba27dbaef"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5562,
+     5766
+    ],
+    [
+     7286,
+     7852
+    ]
+   ],
+   "seam_idx": [
+    204
+   ],
+   "n_samples": 770,
+   "digest": "3b3f81b4591d06e914b8d30fd13e1c4cf8ef396ad95ec392f5c82865f22307bc"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5716,
+     5766
+    ],
+    [
+     7286,
+     8006
+    ]
+   ],
+   "seam_idx": [
+    50
+   ],
+   "n_samples": 770,
+   "digest": "ab93476b1697984ed02ff7af52f395bd2aa34b651589b8edeca1293754af82dc"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7390,
+     8160
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "6a047cf1417fa11184a42cbebf570219e40f35586f717820639c2a168d7938ff"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7544,
+     8314
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "84893aa4204ce8e7bee04d8b88b95a48157d68c639b01345e16d2db53834b95a"
+  }
+ ],
+ "strength_concat_tick777": [
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1520,
+     2290
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "074ef76a78d9e3374cb268a04980573b017f244246dc28093c06b64d700ead73"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1674,
+     2444
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "4ab6b019dd1a8d0f83d841f7411c27254ab6968e3db54c1b1aebd20ee045a888"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1828,
+     2598
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "45b70c65c471642cb74feaaddcc59e8f64ad99008588c5fecbe6ee944d9d43b4"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1982,
+     2752
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "0f5156d9d7be087b1cacced159f8e9c098b65f1693771215dcb6e9cafc4ec65b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2136,
+     2906
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "8437f2f70a81d3708acab520b807e86df8c18f6bd83da5576c866f26f97acc3f"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2290,
+     3060
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "5753cef50fd8db21c9326ed76e2c02dc1d411dd2c75634c88c6f873717d6ef46"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2444,
+     3214
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "2b6c843d886aa5af113f295d9e1560418bb15b75dde59b115b25804388249d6b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2598,
+     3368
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "c5d0db915c59bef85620915cc3f8c3b5ca6ac30715f2501cf17d05bd82934a1e"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2752,
+     3522
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "ebaee951d0b6fb4586e9ffe38fc86c34752ac04f4ff95f2318b1fe0470293dff"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2906,
+     3676
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "1359af7317f4b3d2105c557bf5c1230bae118b97d867220c534184667e41975a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3060,
+     3830
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "691cb2a48c1a8df300bf4d0bb988b2e4cd849e486fbebaddcdcdbc370dbd3144"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3214,
+     3968
+    ],
+    [
+     4434,
+     4450
+    ]
+   ],
+   "seam_idx": [
+    754
+   ],
+   "n_samples": 770,
+   "digest": "1327295ff16eeeb9ec533e73b471b545e265aa5b10762cfb8d6d874ff2f84adf"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3368,
+     3968
+    ],
+    [
+     4434,
+     4604
+    ]
+   ],
+   "seam_idx": [
+    600
+   ],
+   "n_samples": 770,
+   "digest": "a20ca504d24ddefdb0d038018f8433bcb7f40a156d950ce154a21a4cb54ef72a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3522,
+     3968
+    ],
+    [
+     4434,
+     4758
+    ]
+   ],
+   "seam_idx": [
+    446
+   ],
+   "n_samples": 770,
+   "digest": "77c430913f48b3c181f46967cb75a870d3cf790e6a9c311fc76d73c5a9a30181"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3676,
+     3968
+    ],
+    [
+     4434,
+     4912
+    ]
+   ],
+   "seam_idx": [
+    292
+   ],
+   "n_samples": 770,
+   "digest": "15ed95540717890a01ef5327166d7201a819f0258e0b554443b9a72c80805088"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3830,
+     3968
+    ],
+    [
+     4434,
+     4960
+    ],
+    [
+     5302,
+     5408
+    ]
+   ],
+   "seam_idx": [
+    138,
+    664
+   ],
+   "n_samples": 770,
+   "digest": "b6b4c97b4ac723904d065e6bd66fd8caebd27ceb5f8a27c08aa6d5c58a7a076e"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4450,
+     4960
+    ],
+    [
+     5302,
+     5562
+    ]
+   ],
+   "seam_idx": [
+    510
+   ],
+   "n_samples": 770,
+   "digest": "0882eb29e360cce5da1871132a184fb0d5562dd6467cb8292ac5b5ad516f9584"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4604,
+     4960
+    ],
+    [
+     5302,
+     5716
+    ]
+   ],
+   "seam_idx": [
+    356
+   ],
+   "n_samples": 770,
+   "digest": "7bf348a3d0fe59a4d80ca8bfce7ad2691e469ad06f866d2be1cb49e5c92c81a4"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4758,
+     4960
+    ],
+    [
+     5302,
+     5766
+    ],
+    [
+     7286,
+     7390
+    ]
+   ],
+   "seam_idx": [
+    202,
+    666
+   ],
+   "n_samples": 770,
+   "digest": "1a930e4269bee4c3a6875c53d662e1c7467a2681d321a6ac04d5f80f93849e59"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4912,
+     4960
+    ],
+    [
+     5302,
+     5766
+    ],
+    [
+     7286,
+     7544
+    ]
+   ],
+   "seam_idx": [
+    48,
+    512
+   ],
+   "n_samples": 770,
+   "digest": "8546da0435b655f295297899de34eda01a393c60d00fb0956964f4e40ccd8737"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5408,
+     5766
+    ],
+    [
+     7286,
+     7698
+    ]
+   ],
+   "seam_idx": [
+    358
+   ],
+   "n_samples": 770,
+   "digest": "691b0aa097ef755fae37a9879ddf5de53f4d0121e0a9e9ff8e5f6c9ba27dbaef"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5562,
+     5766
+    ],
+    [
+     7286,
+     7852
+    ]
+   ],
+   "seam_idx": [
+    204
+   ],
+   "n_samples": 770,
+   "digest": "3b3f81b4591d06e914b8d30fd13e1c4cf8ef396ad95ec392f5c82865f22307bc"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5716,
+     5766
+    ],
+    [
+     7286,
+     8006
+    ]
+   ],
+   "seam_idx": [
+    50
+   ],
+   "n_samples": 770,
+   "digest": "ab93476b1697984ed02ff7af52f395bd2aa34b651589b8edeca1293754af82dc"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7390,
+     8160
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "6a047cf1417fa11184a42cbebf570219e40f35586f717820639c2a168d7938ff"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7544,
+     8314
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "84893aa4204ce8e7bee04d8b88b95a48157d68c639b01345e16d2db53834b95a"
+  }
+ ],
+ "strength_single_range_tick100": [
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1520,
+     2290
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "074ef76a78d9e3374cb268a04980573b017f244246dc28093c06b64d700ead73"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1674,
+     2444
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "4ab6b019dd1a8d0f83d841f7411c27254ab6968e3db54c1b1aebd20ee045a888"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1828,
+     2598
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "45b70c65c471642cb74feaaddcc59e8f64ad99008588c5fecbe6ee944d9d43b4"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1982,
+     2752
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "0f5156d9d7be087b1cacced159f8e9c098b65f1693771215dcb6e9cafc4ec65b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2136,
+     2906
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "8437f2f70a81d3708acab520b807e86df8c18f6bd83da5576c866f26f97acc3f"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2290,
+     3060
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "5753cef50fd8db21c9326ed76e2c02dc1d411dd2c75634c88c6f873717d6ef46"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2444,
+     3214
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "2b6c843d886aa5af113f295d9e1560418bb15b75dde59b115b25804388249d6b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2598,
+     3368
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "c5d0db915c59bef85620915cc3f8c3b5ca6ac30715f2501cf17d05bd82934a1e"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2752,
+     3522
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "ebaee951d0b6fb4586e9ffe38fc86c34752ac04f4ff95f2318b1fe0470293dff"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2906,
+     3676
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "1359af7317f4b3d2105c557bf5c1230bae118b97d867220c534184667e41975a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3060,
+     3830
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "691cb2a48c1a8df300bf4d0bb988b2e4cd849e486fbebaddcdcdbc370dbd3144"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7286,
+     8056
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "a08a1b408e82e368403023f11456cc7ba88aedcdf48fd64d1506078db30515a4"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7440,
+     8210
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "02f152f7cef2315df7146ed650ac1c254122d2e50ede8a0bd6fe583d8aa5332a"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7594,
+     8364
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "880dd70a4c9dc36c809deadf4496ef3273c58c020b70289a8ba7d7f2e87aa0f0"
+  }
+ ],
+ "strength_single_range_tick154": [
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1520,
+     2290
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "074ef76a78d9e3374cb268a04980573b017f244246dc28093c06b64d700ead73"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1674,
+     2444
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "4ab6b019dd1a8d0f83d841f7411c27254ab6968e3db54c1b1aebd20ee045a888"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1828,
+     2598
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "45b70c65c471642cb74feaaddcc59e8f64ad99008588c5fecbe6ee944d9d43b4"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1982,
+     2752
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "0f5156d9d7be087b1cacced159f8e9c098b65f1693771215dcb6e9cafc4ec65b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2136,
+     2906
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "8437f2f70a81d3708acab520b807e86df8c18f6bd83da5576c866f26f97acc3f"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2290,
+     3060
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "5753cef50fd8db21c9326ed76e2c02dc1d411dd2c75634c88c6f873717d6ef46"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2444,
+     3214
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "2b6c843d886aa5af113f295d9e1560418bb15b75dde59b115b25804388249d6b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2598,
+     3368
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "c5d0db915c59bef85620915cc3f8c3b5ca6ac30715f2501cf17d05bd82934a1e"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2752,
+     3522
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "ebaee951d0b6fb4586e9ffe38fc86c34752ac04f4ff95f2318b1fe0470293dff"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2906,
+     3676
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "1359af7317f4b3d2105c557bf5c1230bae118b97d867220c534184667e41975a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3060,
+     3830
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "691cb2a48c1a8df300bf4d0bb988b2e4cd849e486fbebaddcdcdbc370dbd3144"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7286,
+     8056
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "a08a1b408e82e368403023f11456cc7ba88aedcdf48fd64d1506078db30515a4"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7440,
+     8210
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "02f152f7cef2315df7146ed650ac1c254122d2e50ede8a0bd6fe583d8aa5332a"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7594,
+     8364
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "880dd70a4c9dc36c809deadf4496ef3273c58c020b70289a8ba7d7f2e87aa0f0"
+  }
+ ],
+ "strength_single_range_tick777": [
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1520,
+     2290
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "074ef76a78d9e3374cb268a04980573b017f244246dc28093c06b64d700ead73"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1674,
+     2444
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "4ab6b019dd1a8d0f83d841f7411c27254ab6968e3db54c1b1aebd20ee045a888"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1828,
+     2598
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "45b70c65c471642cb74feaaddcc59e8f64ad99008588c5fecbe6ee944d9d43b4"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1982,
+     2752
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "0f5156d9d7be087b1cacced159f8e9c098b65f1693771215dcb6e9cafc4ec65b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2136,
+     2906
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "8437f2f70a81d3708acab520b807e86df8c18f6bd83da5576c866f26f97acc3f"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2290,
+     3060
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "5753cef50fd8db21c9326ed76e2c02dc1d411dd2c75634c88c6f873717d6ef46"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2444,
+     3214
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "2b6c843d886aa5af113f295d9e1560418bb15b75dde59b115b25804388249d6b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2598,
+     3368
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "c5d0db915c59bef85620915cc3f8c3b5ca6ac30715f2501cf17d05bd82934a1e"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2752,
+     3522
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "ebaee951d0b6fb4586e9ffe38fc86c34752ac04f4ff95f2318b1fe0470293dff"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2906,
+     3676
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "1359af7317f4b3d2105c557bf5c1230bae118b97d867220c534184667e41975a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3060,
+     3830
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "691cb2a48c1a8df300bf4d0bb988b2e4cd849e486fbebaddcdcdbc370dbd3144"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7286,
+     8056
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "a08a1b408e82e368403023f11456cc7ba88aedcdf48fd64d1506078db30515a4"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7440,
+     8210
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "02f152f7cef2315df7146ed650ac1c254122d2e50ede8a0bd6fe583d8aa5332a"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7594,
+     8364
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "880dd70a4c9dc36c809deadf4496ef3273c58c020b70289a8ba7d7f2e87aa0f0"
+  }
+ ],
+ "strength_and_idle_concat_tick100": [
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1520,
+     2290
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "074ef76a78d9e3374cb268a04980573b017f244246dc28093c06b64d700ead73"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1674,
+     2444
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "4ab6b019dd1a8d0f83d841f7411c27254ab6968e3db54c1b1aebd20ee045a888"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1828,
+     2598
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "45b70c65c471642cb74feaaddcc59e8f64ad99008588c5fecbe6ee944d9d43b4"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1982,
+     2752
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "0f5156d9d7be087b1cacced159f8e9c098b65f1693771215dcb6e9cafc4ec65b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2136,
+     2906
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "8437f2f70a81d3708acab520b807e86df8c18f6bd83da5576c866f26f97acc3f"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2290,
+     3060
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "5753cef50fd8db21c9326ed76e2c02dc1d411dd2c75634c88c6f873717d6ef46"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2444,
+     3214
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "2b6c843d886aa5af113f295d9e1560418bb15b75dde59b115b25804388249d6b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2598,
+     3368
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "c5d0db915c59bef85620915cc3f8c3b5ca6ac30715f2501cf17d05bd82934a1e"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2752,
+     3522
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "ebaee951d0b6fb4586e9ffe38fc86c34752ac04f4ff95f2318b1fe0470293dff"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2906,
+     3676
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "1359af7317f4b3d2105c557bf5c1230bae118b97d867220c534184667e41975a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3060,
+     3830
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "691cb2a48c1a8df300bf4d0bb988b2e4cd849e486fbebaddcdcdbc370dbd3144"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3214,
+     3968
+    ],
+    [
+     4434,
+     4450
+    ]
+   ],
+   "seam_idx": [
+    754
+   ],
+   "n_samples": 770,
+   "digest": "1327295ff16eeeb9ec533e73b471b545e265aa5b10762cfb8d6d874ff2f84adf"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3368,
+     3968
+    ],
+    [
+     4434,
+     4604
+    ]
+   ],
+   "seam_idx": [
+    600
+   ],
+   "n_samples": 770,
+   "digest": "a20ca504d24ddefdb0d038018f8433bcb7f40a156d950ce154a21a4cb54ef72a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3522,
+     3968
+    ],
+    [
+     4434,
+     4758
+    ]
+   ],
+   "seam_idx": [
+    446
+   ],
+   "n_samples": 770,
+   "digest": "77c430913f48b3c181f46967cb75a870d3cf790e6a9c311fc76d73c5a9a30181"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3676,
+     3968
+    ],
+    [
+     4434,
+     4912
+    ]
+   ],
+   "seam_idx": [
+    292
+   ],
+   "n_samples": 770,
+   "digest": "15ed95540717890a01ef5327166d7201a819f0258e0b554443b9a72c80805088"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3830,
+     3968
+    ],
+    [
+     4434,
+     4928
+    ],
+    [
+     5302,
+     5440
+    ]
+   ],
+   "seam_idx": [
+    138,
+    632
+   ],
+   "n_samples": 770,
+   "digest": "331300f85f0222f5c8bdbdce1925ecd85cf11f88bf75e1c2e573a0ae4c371448"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4450,
+     4928
+    ],
+    [
+     5302,
+     5594
+    ]
+   ],
+   "seam_idx": [
+    478
+   ],
+   "n_samples": 770,
+   "digest": "579f42376502f01e3b9c7a0ee8b358d53d3fdc1213e12f3628151a1a6ea45ddf"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4604,
+     4928
+    ],
+    [
+     5302,
+     5748
+    ]
+   ],
+   "seam_idx": [
+    324
+   ],
+   "n_samples": 770,
+   "digest": "705f4788d0b33cfc9fd08c9f18fb78090e6076ad43ceda955a885705fa713f03"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4758,
+     4928
+    ],
+    [
+     5302,
+     5766
+    ],
+    [
+     7286,
+     7422
+    ]
+   ],
+   "seam_idx": [
+    170,
+    634
+   ],
+   "n_samples": 770,
+   "digest": "793bbd25159d9a72aacfc4d2e95987836323ec8f48d76b0db892a2ca2e5daa1a"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4912,
+     4928
+    ],
+    [
+     5302,
+     5766
+    ],
+    [
+     7286,
+     7576
+    ]
+   ],
+   "seam_idx": [
+    16,
+    480
+   ],
+   "n_samples": 770,
+   "digest": "e534118cb6e6a62644a5604ababc0d5274ddcace99ba2701d268932a8b9e498a"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5440,
+     5766
+    ],
+    [
+     7286,
+     7730
+    ]
+   ],
+   "seam_idx": [
+    326
+   ],
+   "n_samples": 770,
+   "digest": "fa0b4a1d32a68422086b3a4ba565c479e5c4b1a35574d0ef9166daae918954de"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5594,
+     5766
+    ],
+    [
+     7286,
+     7884
+    ]
+   ],
+   "seam_idx": [
+    172
+   ],
+   "n_samples": 770,
+   "digest": "546a02fc678fb12e4a124fd5c8c1d3077b1cab93add395ca2cc5e2e8420a9f0c"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5748,
+     5766
+    ],
+    [
+     7286,
+     8038
+    ]
+   ],
+   "seam_idx": [
+    18
+   ],
+   "n_samples": 770,
+   "digest": "ffd279684b190e6c2469203283b38c8ea3e76faf648e9d966e5bfbf32895bc4e"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7422,
+     8192
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "7e725fc373efb7428a4c5592556affb05b093bfcbc7b7f4fc20dae26d07bbe8b"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7576,
+     8346
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "a4185767ef3873db7b028a49e077450649f2d51711a5be3f44fe4508eeddc14f"
+  }
+ ],
+ "strength_and_idle_concat_tick154": [
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1520,
+     2290
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "074ef76a78d9e3374cb268a04980573b017f244246dc28093c06b64d700ead73"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1674,
+     2444
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "4ab6b019dd1a8d0f83d841f7411c27254ab6968e3db54c1b1aebd20ee045a888"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1828,
+     2598
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "45b70c65c471642cb74feaaddcc59e8f64ad99008588c5fecbe6ee944d9d43b4"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1982,
+     2752
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "0f5156d9d7be087b1cacced159f8e9c098b65f1693771215dcb6e9cafc4ec65b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2136,
+     2906
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "8437f2f70a81d3708acab520b807e86df8c18f6bd83da5576c866f26f97acc3f"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2290,
+     3060
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "5753cef50fd8db21c9326ed76e2c02dc1d411dd2c75634c88c6f873717d6ef46"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2444,
+     3214
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "2b6c843d886aa5af113f295d9e1560418bb15b75dde59b115b25804388249d6b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2598,
+     3368
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "c5d0db915c59bef85620915cc3f8c3b5ca6ac30715f2501cf17d05bd82934a1e"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2752,
+     3522
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "ebaee951d0b6fb4586e9ffe38fc86c34752ac04f4ff95f2318b1fe0470293dff"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2906,
+     3676
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "1359af7317f4b3d2105c557bf5c1230bae118b97d867220c534184667e41975a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3060,
+     3830
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "691cb2a48c1a8df300bf4d0bb988b2e4cd849e486fbebaddcdcdbc370dbd3144"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3214,
+     3968
+    ],
+    [
+     4434,
+     4450
+    ]
+   ],
+   "seam_idx": [
+    754
+   ],
+   "n_samples": 770,
+   "digest": "1327295ff16eeeb9ec533e73b471b545e265aa5b10762cfb8d6d874ff2f84adf"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3368,
+     3968
+    ],
+    [
+     4434,
+     4604
+    ]
+   ],
+   "seam_idx": [
+    600
+   ],
+   "n_samples": 770,
+   "digest": "a20ca504d24ddefdb0d038018f8433bcb7f40a156d950ce154a21a4cb54ef72a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3522,
+     3968
+    ],
+    [
+     4434,
+     4758
+    ]
+   ],
+   "seam_idx": [
+    446
+   ],
+   "n_samples": 770,
+   "digest": "77c430913f48b3c181f46967cb75a870d3cf790e6a9c311fc76d73c5a9a30181"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3676,
+     3968
+    ],
+    [
+     4434,
+     4912
+    ]
+   ],
+   "seam_idx": [
+    292
+   ],
+   "n_samples": 770,
+   "digest": "15ed95540717890a01ef5327166d7201a819f0258e0b554443b9a72c80805088"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3830,
+     3968
+    ],
+    [
+     4434,
+     4928
+    ],
+    [
+     5302,
+     5440
+    ]
+   ],
+   "seam_idx": [
+    138,
+    632
+   ],
+   "n_samples": 770,
+   "digest": "331300f85f0222f5c8bdbdce1925ecd85cf11f88bf75e1c2e573a0ae4c371448"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4450,
+     4928
+    ],
+    [
+     5302,
+     5594
+    ]
+   ],
+   "seam_idx": [
+    478
+   ],
+   "n_samples": 770,
+   "digest": "579f42376502f01e3b9c7a0ee8b358d53d3fdc1213e12f3628151a1a6ea45ddf"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4604,
+     4928
+    ],
+    [
+     5302,
+     5748
+    ]
+   ],
+   "seam_idx": [
+    324
+   ],
+   "n_samples": 770,
+   "digest": "705f4788d0b33cfc9fd08c9f18fb78090e6076ad43ceda955a885705fa713f03"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4758,
+     4928
+    ],
+    [
+     5302,
+     5766
+    ],
+    [
+     7286,
+     7422
+    ]
+   ],
+   "seam_idx": [
+    170,
+    634
+   ],
+   "n_samples": 770,
+   "digest": "793bbd25159d9a72aacfc4d2e95987836323ec8f48d76b0db892a2ca2e5daa1a"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4912,
+     4928
+    ],
+    [
+     5302,
+     5766
+    ],
+    [
+     7286,
+     7576
+    ]
+   ],
+   "seam_idx": [
+    16,
+    480
+   ],
+   "n_samples": 770,
+   "digest": "e534118cb6e6a62644a5604ababc0d5274ddcace99ba2701d268932a8b9e498a"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5440,
+     5766
+    ],
+    [
+     7286,
+     7730
+    ]
+   ],
+   "seam_idx": [
+    326
+   ],
+   "n_samples": 770,
+   "digest": "fa0b4a1d32a68422086b3a4ba565c479e5c4b1a35574d0ef9166daae918954de"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5594,
+     5766
+    ],
+    [
+     7286,
+     7884
+    ]
+   ],
+   "seam_idx": [
+    172
+   ],
+   "n_samples": 770,
+   "digest": "546a02fc678fb12e4a124fd5c8c1d3077b1cab93add395ca2cc5e2e8420a9f0c"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5748,
+     5766
+    ],
+    [
+     7286,
+     8038
+    ]
+   ],
+   "seam_idx": [
+    18
+   ],
+   "n_samples": 770,
+   "digest": "ffd279684b190e6c2469203283b38c8ea3e76faf648e9d966e5bfbf32895bc4e"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7422,
+     8192
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "7e725fc373efb7428a4c5592556affb05b093bfcbc7b7f4fc20dae26d07bbe8b"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7576,
+     8346
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "a4185767ef3873db7b028a49e077450649f2d51711a5be3f44fe4508eeddc14f"
+  }
+ ],
+ "strength_and_idle_concat_tick777": [
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1520,
+     2290
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "074ef76a78d9e3374cb268a04980573b017f244246dc28093c06b64d700ead73"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1674,
+     2444
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "4ab6b019dd1a8d0f83d841f7411c27254ab6968e3db54c1b1aebd20ee045a888"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1828,
+     2598
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "45b70c65c471642cb74feaaddcc59e8f64ad99008588c5fecbe6ee944d9d43b4"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     1982,
+     2752
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "0f5156d9d7be087b1cacced159f8e9c098b65f1693771215dcb6e9cafc4ec65b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2136,
+     2906
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "8437f2f70a81d3708acab520b807e86df8c18f6bd83da5576c866f26f97acc3f"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2290,
+     3060
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "5753cef50fd8db21c9326ed76e2c02dc1d411dd2c75634c88c6f873717d6ef46"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2444,
+     3214
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "2b6c843d886aa5af113f295d9e1560418bb15b75dde59b115b25804388249d6b"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2598,
+     3368
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "c5d0db915c59bef85620915cc3f8c3b5ca6ac30715f2501cf17d05bd82934a1e"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2752,
+     3522
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "ebaee951d0b6fb4586e9ffe38fc86c34752ac04f4ff95f2318b1fe0470293dff"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     2906,
+     3676
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "1359af7317f4b3d2105c557bf5c1230bae118b97d867220c534184667e41975a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3060,
+     3830
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "691cb2a48c1a8df300bf4d0bb988b2e4cd849e486fbebaddcdcdbc370dbd3144"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3214,
+     3968
+    ],
+    [
+     4434,
+     4450
+    ]
+   ],
+   "seam_idx": [
+    754
+   ],
+   "n_samples": 770,
+   "digest": "1327295ff16eeeb9ec533e73b471b545e265aa5b10762cfb8d6d874ff2f84adf"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3368,
+     3968
+    ],
+    [
+     4434,
+     4604
+    ]
+   ],
+   "seam_idx": [
+    600
+   ],
+   "n_samples": 770,
+   "digest": "a20ca504d24ddefdb0d038018f8433bcb7f40a156d950ce154a21a4cb54ef72a"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3522,
+     3968
+    ],
+    [
+     4434,
+     4758
+    ]
+   ],
+   "seam_idx": [
+    446
+   ],
+   "n_samples": 770,
+   "digest": "77c430913f48b3c181f46967cb75a870d3cf790e6a9c311fc76d73c5a9a30181"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3676,
+     3968
+    ],
+    [
+     4434,
+     4912
+    ]
+   ],
+   "seam_idx": [
+    292
+   ],
+   "n_samples": 770,
+   "digest": "15ed95540717890a01ef5327166d7201a819f0258e0b554443b9a72c80805088"
+  },
+  {
+   "frag_id": 0,
+   "ranges": [
+    [
+     3830,
+     3968
+    ],
+    [
+     4434,
+     4928
+    ],
+    [
+     5302,
+     5440
+    ]
+   ],
+   "seam_idx": [
+    138,
+    632
+   ],
+   "n_samples": 770,
+   "digest": "331300f85f0222f5c8bdbdce1925ecd85cf11f88bf75e1c2e573a0ae4c371448"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4450,
+     4928
+    ],
+    [
+     5302,
+     5594
+    ]
+   ],
+   "seam_idx": [
+    478
+   ],
+   "n_samples": 770,
+   "digest": "579f42376502f01e3b9c7a0ee8b358d53d3fdc1213e12f3628151a1a6ea45ddf"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4604,
+     4928
+    ],
+    [
+     5302,
+     5748
+    ]
+   ],
+   "seam_idx": [
+    324
+   ],
+   "n_samples": 770,
+   "digest": "705f4788d0b33cfc9fd08c9f18fb78090e6076ad43ceda955a885705fa713f03"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4758,
+     4928
+    ],
+    [
+     5302,
+     5766
+    ],
+    [
+     7286,
+     7422
+    ]
+   ],
+   "seam_idx": [
+    170,
+    634
+   ],
+   "n_samples": 770,
+   "digest": "793bbd25159d9a72aacfc4d2e95987836323ec8f48d76b0db892a2ca2e5daa1a"
+  },
+  {
+   "frag_id": 1,
+   "ranges": [
+    [
+     4912,
+     4928
+    ],
+    [
+     5302,
+     5766
+    ],
+    [
+     7286,
+     7576
+    ]
+   ],
+   "seam_idx": [
+    16,
+    480
+   ],
+   "n_samples": 770,
+   "digest": "e534118cb6e6a62644a5604ababc0d5274ddcace99ba2701d268932a8b9e498a"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5440,
+     5766
+    ],
+    [
+     7286,
+     7730
+    ]
+   ],
+   "seam_idx": [
+    326
+   ],
+   "n_samples": 770,
+   "digest": "fa0b4a1d32a68422086b3a4ba565c479e5c4b1a35574d0ef9166daae918954de"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5594,
+     5766
+    ],
+    [
+     7286,
+     7884
+    ]
+   ],
+   "seam_idx": [
+    172
+   ],
+   "n_samples": 770,
+   "digest": "546a02fc678fb12e4a124fd5c8c1d3077b1cab93add395ca2cc5e2e8420a9f0c"
+  },
+  {
+   "frag_id": 2,
+   "ranges": [
+    [
+     5748,
+     5766
+    ],
+    [
+     7286,
+     8038
+    ]
+   ],
+   "seam_idx": [
+    18
+   ],
+   "n_samples": 770,
+   "digest": "ffd279684b190e6c2469203283b38c8ea3e76faf648e9d966e5bfbf32895bc4e"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7422,
+     8192
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "7e725fc373efb7428a4c5592556affb05b093bfcbc7b7f4fc20dae26d07bbe8b"
+  },
+  {
+   "frag_id": 3,
+   "ranges": [
+    [
+     7576,
+     8346
+    ]
+   ],
+   "seam_idx": [],
+   "n_samples": 770,
+   "digest": "a4185767ef3873db7b028a49e077450649f2d51711a5be3f44fe4508eeddc14f"
+  }
+ ]
+}

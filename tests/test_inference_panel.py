@@ -10,8 +10,8 @@ from PyQt6.QtWidgets import QApplication
 
 from gui.inference_panel import InferencePanelMixin
 from core.texture_piezo.application.mode import TouchIdMode
-from core.texture_piezo.gating.segmentation import WARMUP_SAMPLES, ActiveSampleQueue
-from core.texture_piezo.gating.quality_gate import IdleBaseline
+from core.texture_piezo.gating.v1.segmentation import WARMUP_SAMPLES, ActiveSampleQueue
+from core.texture_piezo.gating.v1.quality_gate import IdleBaseline
 
 
 class FakeTabs:

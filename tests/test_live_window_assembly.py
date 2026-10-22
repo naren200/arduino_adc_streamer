@@ -20,10 +20,9 @@ from core.texture_piezo.application.live_channels import (
 from core.texture_piezo.application.live_model import (
     engine_config_for_model, ingest_filter_warning, required_channels_for_model,
 )
-from core.texture_piezo.application.stream_processor import (
-    LIVE_ENGINE_CONFIG, ContinuousSampleStore, TouchIdStreamProcessor,
-)
-from core.texture_piezo.gating.quality_gate import IdleBaseline
+from core.texture_piezo.application.sample_store import ContinuousSampleStore
+from core.texture_piezo.application.stream_processor import LIVE_ENGINE_CONFIG, TouchIdStreamProcessor
+from core.texture_piezo.gating.v1.quality_gate import IdleBaseline
 
 SENSOR_COLUMNS = [f"PZT5_{c}" for c in "BLCRT"]
 FS = 1000.0

@@ -13,6 +13,8 @@ from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS
 from data_processing.adc_mux_timing import calculate_adc_mux_timing_for_acquisition
 from data_processing.analysis_workbench import (
     AnalysisSourceSnapshot,
+    AnalysisTrace,
+    replace_signals_with_baseline_removed,
     ShearNormalForceSettings,
     _build_offline_stream_index_map,
     _load_filtered_snapshot,
@@ -603,6 +605,27 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             np.testing.assert_allclose(snapshot.timestamps_s, [0.0, 0.02])
             np.testing.assert_allclose(snapshot.force_x_n, [0.5, 0.6])
 
+    def test_load_exported_csv_snapshot_excludes_sample_dt_us_from_signals(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            csv_path = temp_path / "capture.csv"
+            metadata_path = temp_path / "capture_metadata.json"
+            csv_path.write_text(
+                "Timestamp,Sample_dt_us,CH1,CH2\n"
+                "00:00:00.010000,100,1,2\n"
+                "00:00:00.020000,100,3,4\n",
+                encoding="utf-8",
+            )
+            metadata_path.write_text(
+                json.dumps({"configuration": {"channels": [1, 2], "repeat_count": 1}}),
+                encoding="utf-8",
+            )
+
+            snapshot = load_exported_csv_snapshot(csv_path, metadata_path)
+
+            self.assertEqual(snapshot.channel_labels, ["CH1", "CH2"])
+            self.assertEqual(snapshot.data.shape, (2, 2))
+
     def test_load_exported_csv_snapshot_tolerates_legacy_col_placeholders_and_metadata_mismatch(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -817,13 +840,18 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             integration_window_samples=1,
             hpf_cutoff_hz=0.0,
         )
-        by_label = {trace.label: trace for trace in overlays}
-        self.assertEqual(
-            set(by_label),
-            {f"{position} Baseline Removed [V]" for position in ["C", "L", "R", "T", "B"]},
+        self.assertEqual(overlays, [])  # baseline removal replaces the raw trace, no extra plot
+        raw_traces = [
+            AnalysisTrace(label, np.arange(sample_count, dtype=np.float64), np.zeros(sample_count), "signal")
+            for label in ["C", "L", "R", "T", "B"]
+        ]
+        replaced = replace_signals_with_baseline_removed(
+            snapshot, snapshot.data, raw_traces, vref_voltage=3.3, integration_window_samples=1,
         )
+        by_label = {trace.label: trace for trace in replaced}
+        self.assertEqual(set(by_label), {"C", "L", "R", "T", "B"})
 
-        center_trace = by_label["C Baseline Removed [V]"]
+        center_trace = by_label["C"]
         # Once the expanding median has caught up with the level shift
         # (well before the pulse, after warmup), the drift is absorbed and
         # the residual sits near zero.
@@ -856,23 +884,18 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         )
         vref_voltage = 3.3
 
-        overlays = build_overlay_traces(
-            snapshot,
-            snapshot.data,
-            axis_mode="samples",
-            overlay_flags={"baseline_removed": True},
-            vref_voltage=vref_voltage,
-            integration_window_samples=1,
-            hpf_cutoff_hz=0.0,
+        raw_traces = [
+            AnalysisTrace(label, np.arange(4, dtype=np.float64), np.zeros(4), "signal")
+            for label in ["C", "L", "R", "T", "B"]
+        ]
+        replaced = replace_signals_with_baseline_removed(
+            snapshot, snapshot.data, raw_traces, vref_voltage=vref_voltage, integration_window_samples=1,
         )
-        by_label = {trace.label: trace for trace in overlays}
+        by_label = {trace.label: trace for trace in replaced}
 
         for index, position in enumerate(["C", "L", "R", "T", "B"]):
             volts = counts_to_volts(data[:, index], vref_voltage)
-            np.testing.assert_array_equal(
-                by_label[f"{position} Baseline Removed [V]"].y,
-                volts - _running_median(volts),
-            )
+            np.testing.assert_array_equal(by_label[position].y, volts - _running_median(volts))
 
     def test_force_based_shear_normal_traces_match_reference_integration(self):
         # C, L, R, T, B counts across 4 rows; L/R carry an opposite-sign shear

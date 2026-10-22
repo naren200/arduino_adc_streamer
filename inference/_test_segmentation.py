@@ -30,8 +30,8 @@ if str(_REPO_ROOT) not in sys.path:
 
 from core.texture_piezo.application.inference_config import InferenceConfig
 from core.texture_piezo.application.stream_processor import TouchIdStreamProcessor
-from core.texture_piezo.gating.quality_gate import fit_idle_baseline, idle_gap_chunks_cap, MICRO_CHUNK_S
-from core.texture_piezo.gating.segmentation import ActiveSampleQueue
+from core.texture_piezo.gating.v1.quality_gate import fit_idle_baseline, idle_gap_chunks_cap, MICRO_CHUNK_S
+from core.texture_piezo.gating.v1.segmentation import ActiveSampleQueue
 
 _TEXTURE_PIEZO_ROOT = _REPO_ROOT.parent / "texture_piezo" / "data" / "raw" / "sensor_v12d_7_26" / "ch5"
 

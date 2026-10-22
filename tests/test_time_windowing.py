@@ -4,9 +4,9 @@ import numpy as np
 
 from core.texture_piezo.application.buffer import RollingBuffer
 from core.texture_piezo.application.stream_processor import TouchIdStreamProcessor
-from core.texture_piezo.gating.quality_gate import IdleBaseline
-from core.texture_piezo.gating.segmentation import WARMUP_SAMPLES, ActiveSampleQueue
-from core.texture_piezo.gating.time_window import hop_start_index, padded_start_index, window_end_index
+from core.texture_piezo.gating.v1.quality_gate import IdleBaseline
+from core.texture_piezo.gating.v1.segmentation import WARMUP_SAMPLES, ActiveSampleQueue
+from core.texture_piezo.gating.v1.time_window import hop_start_index, padded_start_index, window_end_index
 
 WINDOW_SIZE_S = 0.1
 HOP_SIZE_S = 0.05
@@ -146,12 +146,12 @@ class TimelineBreakTests(unittest.TestCase):
         fs, n = 1000.0, 3000
         samples = {col: np.ones(n) for col in PZT_COLUMNS}
         processor.push_chunk(processor.filter_raw(samples), 5.0 + np.arange(n) / fs, fs, now_t=5.0)
-        self.assertGreater(len(processor._store._store_ts), 0)
+        self.assertGreater(len(processor.gating.store._store_ts), 0)
 
         processor.push_chunk(processor.filter_raw(samples), np.arange(n) / fs, fs, now_t=0.0)
 
-        self.assertLess(processor._store._store_ts[-1], 5.0)
-        self.assertTrue(np.all(np.diff(processor._store._store_ts) >= 0))
+        self.assertLess(processor.gating.store._store_ts[-1], 5.0)
+        self.assertTrue(np.all(np.diff(processor.gating.store._store_ts) >= 0))
 
 
 if __name__ == '__main__':

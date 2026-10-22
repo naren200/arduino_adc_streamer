@@ -15,12 +15,9 @@ Owns:
     derivation, warmup drop). Feeding it in small incremental chunks or
     fewer/larger ones produces IDENTICAL numbers, which is what makes
     sharing it between live, replay and training valid in the first place.
-  - The RollingBuffer pair (fixed-grid fallback path, used only when no idle
-    baseline has been captured yet -- see push_chunk).
-  - The continuous raw+derived sample store + its trim/slice logic, feeding
-    ActiveSampleQueue's index-only bookkeeping (used once a baseline exists).
-  - The ActiveSampleQueue lifecycle itself (lazy construction, micro-chunking,
-    fragment expiry).
+  - The GatingStrategy (gating_strategy.py) selected by ``gating_version`` via
+    gating_registry.get_gating: it owns the sample store, windowing state and
+    trim policy that turn derived samples into ReadyWindows.
 
 Does NOT own: classification (the caller submits ReadyWindows to whatever
 worker/synchronous path it likes), the "which of this tick's windows to
@@ -32,22 +29,22 @@ processor policy), or any GUI/plotting state.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 import numpy as np
 
-from .buffer import RollingBuffer
-
-from .live_channels import DEFAULT_CHANNELS, named_engine_channels, needs_force
+from .gating_registry import get_gating
+from .gating_strategy import (
+    DerivedChunk, GateKTunable, GatingParams, GatingStrategy, OnsetSkipTunable, ReadyWindow,
+)
+from .v1_gating import V1GatingOptions
+from .live_channels import DEFAULT_CHANNELS, needs_force
 
 from core.piezo_engine.channel_names import FORCE_COLUMNS
 from core.piezo_engine.config import EngineConfig, EngineConfigMismatchError, TimingMode, TimingPolicy
-from core.piezo_engine.live_window import LiveWindow
 from core.piezo_engine.pipeline import PiezoEnginePipeline, InputConditioning, RAW_INPUT
-from core.texture_piezo.gating.window_config import ONSET_SKIP_S
-from core.texture_piezo.gating.quality_gate import IdleBaseline, MICRO_CHUNK_S
-from core.texture_piezo.gating.segmentation import ActiveSampleQueue
-from core.texture_piezo.gating.time_window import first_index_at_or_after
+from core.texture_piezo.gating.v1.window_config import ONSET_SKIP_S
+from core.texture_piezo.gating.v1.quality_gate import IdleBaseline
+from core.texture_piezo.gating.v2.config import GatingV2Config
 
 # Engine for the live path when the loaded model declares no EngineConfig of its own
 # (every hand-crafted-feature runtime): continuous leak timing, no force stage -- those models read none.
@@ -59,88 +56,6 @@ def resolve_live_engine_config(bundle_config: EngineConfig | None = None) -> Eng
     """Loader hook: the EngineConfig the live path must run for a model bundle -- the
     bundle's own config, or the placeholder ``LIVE_ENGINE_CONFIG`` without one."""
     return LIVE_ENGINE_CONFIG if bundle_config is None else bundle_config
-
-
-class ContinuousSampleStore:
-    """Owns the continuous raw+derived sample store used once an idle
-    baseline exists (the ActiveSampleQueue path): the raw sweeps the idle gate
-    reads, one array per requested ENGINE channel name (what a model's window is
-    cut from), and the timestamps -- all parallel -- plus the 3 index trackers
-    (_store_base_abs/_store_next_abs/_chunk_cursor_abs) needed to translate
-    ActiveSampleQueue's absolute indices into slices of the (periodically
-    trimmed) arrays.
-
-    ``channel_names`` are engine channel names (``channel_names.py``); every one of them
-    is trimmed and sliced in lockstep, so padding/short-window logic, which only moves
-    absolute indices, treats force like every other channel."""
-
-    def __init__(self, pzt_columns: list[str], channel_names: Sequence[str] = DEFAULT_CHANNELS) -> None:
-        self.pzt_columns = list(pzt_columns)
-        self.channel_names = tuple(channel_names)
-        self.reset()
-
-    def reset(self) -> None:
-        """(Re)initialize the store to empty -- called on construction and
-        whenever the caller drops its ActiveSampleQueue (see
-        TouchIdStreamProcessor._store_reset)."""
-        self._store_raw = np.empty((0, len(self.pzt_columns)))  # the idle gate's input, sensor-column order
-        self._store_channels = {name: np.empty(0) for name in self.channel_names}
-        self._store_ts = np.empty(0)
-        self._store_base_abs = 0  # abs index of store[0]
-        self._store_next_abs = 0  # abs index just past the last appended sample
-        self._chunk_cursor_abs = 0  # abs index up to which micro-chunks have been pushed
-
-    def append(self, channel_samples: dict, derived: dict, timestamps: np.ndarray) -> None:
-        """Append this tick's newly-pushed raw+derived samples to the
-        continuous store, in lockstep, at the running absolute index
-        ActiveSampleQueue's yielded (start_idx, end_idx) pairs reference."""
-        raw = np.stack([channel_samples[col] for col in self.pzt_columns], axis=1)
-        named = named_engine_channels(self.pzt_columns, channel_samples, derived, self.channel_names)
-        self._store_raw = np.concatenate([self._store_raw, raw], axis=0)
-        for name, values in named.items():
-            self._store_channels[name] = np.concatenate([self._store_channels[name], values])
-        self._store_ts = np.concatenate([self._store_ts, np.asarray(timestamps, dtype=np.float64)])
-        self._store_next_abs += len(raw)
-
-    def trim(self, queue, window_size_s: float, span_stale_timeout_s: float) -> None:
-        """Drop the front of the continuous store once no live span
-        (finalized or open, per queue.oldest_referenced_idx) references it
-        anymore, keeping a window_size_s + span_stale_timeout_s safety
-        margin so a still-growing open span never has its start index
-        trimmed out from under it."""
-        if queue is None:
-            return
-        if len(self._store_ts) == 0:
-            return
-        margin_s = window_size_s + span_stale_timeout_s
-        oldest_referenced = queue.oldest_referenced_idx()
-        safe_abs = self._chunk_cursor_abs if oldest_referenced is None else min(
-            oldest_referenced, self._chunk_cursor_abs
-        )
-        safe_i = min(safe_abs - self._store_base_abs, len(self._store_ts) - 1)
-        if safe_i < 0:
-            return
-        trim_n = first_index_at_or_after(self._store_ts, self._store_ts[safe_i] - margin_s)
-        if trim_n <= 0:
-            return
-        trim_to_abs = self._store_base_abs + trim_n
-        self._store_raw = self._store_raw[trim_n:]
-        self._store_channels = {name: values[trim_n:] for name, values in self._store_channels.items()}
-        self._store_ts = self._store_ts[trim_n:]
-        self._store_base_abs = trim_to_abs
-
-    def slice(self, start_abs: int, end_abs: int):
-        """Slice the continuous store at an absolute (start_idx, end_idx)
-        pair from ActiveSampleQueue -- returns ``(channels, window_ts)`` where
-        ``channels`` maps each requested engine channel name to its samples -- or
-        None if the range has already been trimmed out (shouldn't happen given
-        trim()'s safety margin, but guarded rather than slicing garbage)."""
-        if start_abs < self._store_base_abs:
-            return None
-        start_i = start_abs - self._store_base_abs
-        end_i = end_abs - self._store_base_abs
-        channels = {name: values[start_i:end_i] for name, values in self._store_channels.items()}
-        return channels, self._store_ts[start_i:end_i]
 
 
 class DerivedChannelPipeline:
@@ -215,20 +130,6 @@ class DerivedChannelPipeline:
         return dict(result.raw), derived, timestamps[result.dropped_leading.total:]
 
 
-@dataclass
-class ReadyWindow:
-    """One classifier-ready window, plus the bookkeeping the caller needs to
-    paint it and submit it. ``window`` carries exactly the engine channels the
-    loaded model asked for, by name, at native length and the window's sample rate.
-    frag_id is None in the fixed-grid fallback branch (no fragment concept there --
-    see _touchid_region_color_for_span's docstring in gui/inference_panel.py for how
-    callers use this)."""
-
-    window: LiveWindow
-    window_ts: np.ndarray
-    frag_id: int | None
-
-
 class TouchIdStreamProcessor:
     """Feed it successive, causally-ordered chunks of raw PZT sweeps via
     push_chunk(); it returns whatever ReadyWindows became available this
@@ -245,6 +146,8 @@ class TouchIdStreamProcessor:
         input_conditioning: InputConditioning = RAW_INPUT,
         engine_config: EngineConfig = LIVE_ENGINE_CONFIG,
         required_channels: Sequence[str] = DEFAULT_CHANNELS,
+        gating_version: str = "v1",
+        gating_v2_config: GatingV2Config | None = None,
     ) -> None:
         self.pzt_columns = list(pzt_columns)
         self.required_channels = tuple(required_channels)
@@ -253,6 +156,8 @@ class TouchIdStreamProcessor:
         self.span_stale_timeout_s = float(span_stale_timeout_s)
         self.idle_baseline = idle_baseline
         self.onset_skip_s = float(onset_skip_s)
+        self.gating_version = gating_version
+        self.gating_v2_config = gating_v2_config
 
         # Causal derivation + raw despike + warmup-drop logic (see DerivedChannelPipeline).
         self._derived_pipeline = DerivedChannelPipeline(
@@ -266,16 +171,21 @@ class TouchIdStreamProcessor:
             )
 
         self._last_sweep_ts: float | None = None
-        self._reset_fixed_grid_buffers()
-        self._store_reset()
+        self.gating: GatingStrategy = get_gating(gating_version)(GatingParams(
+            pzt_columns=tuple(self.pzt_columns),
+            required_channels=self.required_channels,
+            window_size_s=self.window_size_s,
+            hop_size_s=self.hop_size_s,
+            idle_baseline=self.idle_baseline,
+            onset_skip_s=self.onset_skip_s,
+            v1_options=self._v1_options(),
+            v2_config=gating_v2_config,
+        ))
 
-    def _reset_fixed_grid_buffers(self) -> None:
-        """Fixed-grid fallback path (used only while idle_baseline is None): one
-        RollingBuffer over the requested engine channels, so a window's channels are
-        aligned by construction."""
-        self._buffer = RollingBuffer(
-            n_channels=len(self.required_channels), window_size_s=self.window_size_s, hop_size_s=self.hop_size_s,
-        )
+    def _v1_options(self) -> V1GatingOptions | None:
+        if self.gating_version != "v1":
+            return None
+        return V1GatingOptions(span_stale_timeout_s=self.span_stale_timeout_s)
 
     def _restart_windowing_if_timeline_broke(self, timestamps: np.ndarray) -> None:
         """Timestamp-range windowing is only valid on non-decreasing
@@ -284,8 +194,7 @@ class TouchIdStreamProcessor:
         windowing state over instead of mis-slicing across the break."""
         went_backwards = self._last_sweep_ts is not None and timestamps[0] < self._last_sweep_ts
         if went_backwards or np.any(np.diff(timestamps) < 0):
-            self._reset_fixed_grid_buffers()
-            self._store_reset()
+            self.gating.reset()
         self._last_sweep_ts = float(timestamps[-1])
 
     @property
@@ -299,26 +208,16 @@ class TouchIdStreamProcessor:
         _rebuild_touchid_buffers). The windowing/queue state is NOT taken over."""
         self._derived_pipeline.adopt_state_from(other._derived_pipeline)
 
-    def _store_reset(self) -> None:
-        """(Re)initialize the continuous raw+derived sample store (used only
-        once an idle baseline exists) and drop the ActiveSampleQueue built
-        on top of it -- it's rebuilt lazily (see _ensure_active_queue) once a
-        measured fs is available again."""
-        self._store = ContinuousSampleStore(pzt_columns=self.pzt_columns, channel_names=self.required_channels)
-        self.active_queue: ActiveSampleQueue | None = None
+    def set_onset_skip_s(self, onset_skip_s: float) -> None:
+        """Apply a new onset skip now: to this processor and to live gating state."""
+        self.onset_skip_s = float(onset_skip_s)
+        if isinstance(self.gating, OnsetSkipTunable):
+            self.gating.set_onset_skip_s(self.onset_skip_s)
 
-    def _ensure_active_queue(self) -> None:
-        """Lazily build the ActiveSampleQueue on the first tick samples
-        arrive after a baseline exists (it is rebuilt after _store_reset)."""
-        if self.active_queue is not None or self.idle_baseline is None:
-            return
-        self.active_queue = ActiveSampleQueue(
-            window_size_s=self.window_size_s,
-            hop_size_s=self.hop_size_s,
-            baseline=self.idle_baseline,
-            onset_skip_s=self.onset_skip_s,
-        )
-        self._store._chunk_cursor_abs = self._store._store_next_abs
+    def set_gate_k(self, k: float) -> None:
+        """Apply a new idle-gate multiplier to live gating state."""
+        if isinstance(self.gating, GateKTunable):
+            self.gating.set_gate_k(float(k))
 
     def filter_raw(self, channel_samples: dict) -> dict:
         """Causal median-N despike (the engine's CausalMedianN, the same stage
@@ -364,71 +263,4 @@ class TouchIdStreamProcessor:
             return []
         self._restart_windowing_if_timeline_broke(timestamps)
 
-        if self.idle_baseline is None:
-            return self._push_chunk_fixed_grid(channel_samples, derived, timestamps, fs)
-        return self._push_chunk_active_queue(channel_samples, derived, timestamps, fs, now_t)
-
-    def _push_chunk_fixed_grid(
-        self, channel_samples: dict, derived: dict, timestamps: np.ndarray, fs: float,
-    ) -> list[ReadyWindow]:
-        """No baseline captured yet -- classify every window on the plain
-        fixed window_size_s/hop_size_s grid unconditionally (matches
-        is_window_quality's old no-op-without-a-baseline behavior)."""
-        named = named_engine_channels(self.pzt_columns, channel_samples, derived, self.required_channels)
-        self._buffer.push(named, timestamps)
-        window = self._buffer.get_window()
-        if window is None:
-            return []
-        stacked, window_ts = window
-        live_window = LiveWindow.from_stacked(stacked, self.required_channels, fs)
-        return [ReadyWindow(window=live_window, window_ts=window_ts, frag_id=None)]
-
-    def _push_chunk_active_queue(
-        self, channel_samples: dict, derived: dict, timestamps: np.ndarray, fs: float, now_t: float,
-    ) -> list[ReadyWindow]:
-        """Baseline present: sample-accurate ActiveSampleQueue segmentation
-        (inference/segmentation.py) -- feed this tick's newly-derived samples
-        into the continuous store, then chunk/segment off of it instead of a
-        fixed hop grid.
-
-        Chunks any newly-appended continuous-store samples into 0.05s
-        micro-chunks, feeds them into the queue, drains whatever windows it
-        yields, and expires fragments too old to still matter. Idle is now
-        stripped out of a fragment before windowing (not rejected after), so
-        a returned window cannot straddle a genuine idle gap by
-        construction -- there is no post-hoc idle-fraction rejection step
-        anymore."""
-        store = self._store
-        store.append(channel_samples, derived, timestamps)
-        self._ensure_active_queue()
-        queue = self.active_queue
-        if queue is None:
-            return []
-
-        chunk_n = max(1, round(MICRO_CHUNK_S * fs))
-
-        while store._chunk_cursor_abs + chunk_n <= store._store_next_abs:
-            start_abs = store._chunk_cursor_abs
-            end_abs = start_abs + chunk_n
-            start_i = start_abs - store._store_base_abs
-            end_i = end_abs - store._store_base_abs
-            queue.push_micro_chunk(
-                (start_abs, end_abs), store._store_raw[start_i:end_i], store._store_ts[start_i], now_t,
-            )
-            store._chunk_cursor_abs = end_abs
-
-        windows = queue.ready_windows(
-            store._store_ts, store._store_base_abs, pad_short_spans=True,
-        )
-        queue.expire(now_t)
-
-        ready: list[ReadyWindow] = []
-        for start_abs, end_abs, frag_id in windows:
-            sliced = store.slice(start_abs, end_abs)
-            if sliced is None:
-                continue
-            channels, window_ts = sliced
-            ready.append(ReadyWindow(window=LiveWindow(channels, fs), window_ts=window_ts, frag_id=frag_id))
-
-        store.trim(queue, self.window_size_s, self.span_stale_timeout_s)
-        return ready
+        return self.gating.push(DerivedChunk(channel_samples, derived, timestamps, fs, now_t))
