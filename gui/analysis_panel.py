@@ -83,6 +83,7 @@ from data_processing.analysis_workbench import (
 from file_operations.export_metadata import build_analysis_export_metadata
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from core.texture_piezo.application.inference_config import InferenceConfig
+from core.texture_piezo.application.mode import TouchIdMode
 from core.texture_piezo.application.replay_setup import ReplaySetup
 from gui.gating_preview_panel import GatingPreviewPanelMixin
 from gui.window_overlay import window_id_at
@@ -104,6 +105,10 @@ ANALYSIS_PLOT_SPECS = (
 ANALYSIS_WINDOW_HOVER_RGB = (0, 150, 170)  # not a class color, and visible on the white plot
 ANALYSIS_WINDOW_HOVER_ALPHA = 120
 ANALYSIS_FORCE_TRACES_ALWAYS_UNCHECKED = frozenset({"Force X [N]", "Force Z [N]"})
+
+
+def _span_duration_s(span_s: tuple[float, float]) -> float:
+    return float(span_s[1] - span_s[0])
 
 
 class AnalysisPanelMixin(GatingPreviewPanelMixin):
@@ -1182,9 +1187,10 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
 
     def _install_analysis_window_status(self):
         snapshot = self.analysis_snapshot
-        view_start_s, view_end_s = snapshot.view_range_s or (0.0, snapshot.span_s)
+        span_duration_s = _span_duration_s(snapshot.span_s)
+        view_start_s, view_end_s = snapshot.view_range_s or (snapshot.span_s[0], snapshot.span_s[1])
         self._analysis_loaded_status = (
-            f"Analysis loaded: view {view_start_s:.0f}-{view_end_s:.0f} s of {snapshot.span_s:.0f} s "
+            f"Analysis loaded: view {view_start_s:.0f}-{view_end_s:.0f} s of {span_duration_s:.0f} s "
             f"({snapshot.sweep_count} sweeps resident, {ANALYSIS_BASELINES_NOTE})"
         )
         self._update_analysis_window_controls()
@@ -1212,8 +1218,10 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
     def _analysis_moved_view_start_s(self, direction: int) -> float | None:
         """Clamped view start after a move, or None when moving is not possible."""
         source = self.analysis_window_source
-        if source is None or self._analysis_source_loading or source.span_s <= WINDOW_VIEW_S:
+        if source is None or self._analysis_source_loading or _span_duration_s(source.span_s) <= WINDOW_VIEW_S:
             return None
+        if getattr(self, "touchid_mode", TouchIdMode.NORMAL) is TouchIdMode.REPLAYING:
+            return None  # a replay is bound to the window it started on
         current = self._analysis_view_start_s()
         target = float(source.clamp_view_start(current + direction * WINDOW_STEP_S))
         return target if target != current else None
@@ -1227,7 +1235,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
         view_range = snapshot.view_range_s if snapshot is not None else None
         text = ""
         if view_range:
-            text = f"View {view_range[0]:.1f}-{view_range[1]:.1f} s of {snapshot.span_s:.1f} s"
+            text = f"View {view_range[0]:.1f}-{view_range[1]:.1f} s of {_span_duration_s(snapshot.span_s):.1f} s"
         self.analysis_view_range_label.setText(text)
 
     def on_analysis_move_view(self, direction: int):
@@ -1244,22 +1252,29 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
             "view_start_s": new_start_s,
         })
 
+    def _analysis_stacked_plots(self) -> tuple:
+        return (
+            self.analysis_signal_plot,
+            self.analysis_integration_plot,
+            self.analysis_derived_plot,
+            self.analysis_force_plot,
+        )
+
     def _apply_analysis_window_limits(self, force_view_range: bool):
         """Confine pan/zoom to the resident data and the 60 s view cap (time axis only;
         the sample-index axis is window-local and left unrestricted)."""
         snapshot = self.analysis_snapshot
         prepared = self.analysis_prepared
-        if snapshot is None or prepared is None or prepared.x_units != "s":
+        if snapshot is None or prepared is None:
+            return
+        if prepared.x_units != "s":
+            for plot in self._analysis_stacked_plots():
+                plot.setLimits(xMin=None, xMax=None, maxXRange=None)  # drop time-axis limits
             return
         if snapshot.resident_range_s is None or snapshot.view_range_s is None:
             return
         resident_start, resident_end = snapshot.resident_range_s
-        for plot in (
-            self.analysis_signal_plot,
-            self.analysis_integration_plot,
-            self.analysis_derived_plot,
-            self.analysis_force_plot,
-        ):
+        for plot in self._analysis_stacked_plots():
             plot.setLimits(xMin=resident_start, xMax=resident_end, maxXRange=WINDOW_VIEW_S)
         if force_view_range:
             self.analysis_signal_plot.setXRange(*snapshot.view_range_s, padding=0)
@@ -2031,7 +2046,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
     def _analysis_label_trace_duration_s(self) -> float:
         if self.analysis_prepared is None or self.analysis_snapshot is None:
             return 0.0
-        return float(self.analysis_snapshot.span_s)
+        return _span_duration_s(self.analysis_snapshot.span_s)
 
     def _analysis_label_csv_path(self) -> str:
         return str(self.analysis_state.get("csv_path", "")).strip()

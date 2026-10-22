@@ -305,19 +305,16 @@ class AnalysisBaselineRemovedOverlayRoundTripTests(unittest.TestCase):
             self.assertTrue(restored.analysis_baseline_removed_check.isChecked())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class FakeWindowSource:
     """Satisfies the AnalysisWindowSource contract with a fixed span."""
 
     def __init__(self, span_s):
         self.source_id = "fake"
-        self.span_s = float(span_s)
+        self.span_s = (0.0, float(span_s))
 
     def clamp_view_start(self, view_start_s):
-        return min(max(0.0, view_start_s), max(0.0, self.span_s - 60.0))
+        return min(max(0.0, view_start_s), max(0.0, self.span_s[1] - 60.0))
 
 
 class StubLoadWorker:
@@ -338,7 +335,7 @@ def make_window_snapshot(span_s, view_start_s):
     view_end_s = min(view_start_s + 60.0, span_s)
     resident = (max(0.0, view_start_s - 20.0), min(view_end_s + 20.0, span_s))
     return SimpleNamespace(
-        span_s=span_s, view_range_s=(view_start_s, view_end_s), resident_range_s=resident,
+        span_s=(0.0, span_s), view_range_s=(view_start_s, view_end_s), resident_range_s=resident,
         sweep_count=10, samples_per_sweep=5,
     )
 
@@ -427,3 +424,30 @@ class AnalysisWindowNavigationTests(unittest.TestCase):
         self.load(span_s=300.0, view_start_s=40.0)
         self.panel.analysis_prepared = SimpleNamespace(x_units="s")
         self.assertEqual(self.panel._analysis_label_trace_duration_s(), 300.0)
+
+    def test_buttons_disabled_while_touchid_replays_the_window(self):
+        from core.texture_piezo.application.mode import TouchIdMode
+
+        self.load(span_s=300.0, view_start_s=80.0)
+        self.panel.touchid_mode = TouchIdMode.REPLAYING
+        self.panel._update_analysis_window_controls()
+        self.assertEqual(self.enabled(), (False, False))
+
+    def test_sample_axis_drops_time_limits(self):
+        plots = [pg.PlotWidget() for _ in range(4)]
+        (self.panel.analysis_signal_plot, self.panel.analysis_integration_plot,
+         self.panel.analysis_derived_plot, self.panel.analysis_force_plot) = plots
+        self.load(span_s=300.0, view_start_s=100.0)
+        self.panel.analysis_prepared = SimpleNamespace(x_units="s")
+        self.panel._apply_analysis_window_limits(force_view_range=False)
+
+        self.panel.analysis_prepared = SimpleNamespace(x_units="")
+        self.panel._apply_analysis_window_limits(force_view_range=False)
+
+        limits = plots[0].getViewBox().state["limits"]
+        self.assertEqual(limits["xLimits"], [None, None])
+        self.assertEqual(limits["xRange"], [None, None])
+
+
+if __name__ == "__main__":
+    unittest.main()
