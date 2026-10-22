@@ -78,7 +78,8 @@ from data_processing.analysis_workbench import (
 from file_operations.export_metadata import build_analysis_export_metadata
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from core.texture_piezo.application.inference_config import InferenceConfig
-from gui.gating_preview_panel import GATING_PREVIEW_STATE_KEY, GatingPreviewPanelMixin
+from core.texture_piezo.application.replay_setup import ReplaySetup
+from gui.gating_preview_panel import GatingPreviewPanelMixin
 from gui.window_overlay import window_id_at
 
 
@@ -96,10 +97,6 @@ ANALYSIS_PLOT_SPECS = (
 )
 ANALYSIS_WINDOW_HOVER_RGBA = (255, 255, 255, 110)
 ANALYSIS_FORCE_TRACES_ALWAYS_UNCHECKED = frozenset({"Force X [N]", "Force Z [N]"})
-ANALYSIS_BURST_DEBOUNCE_MS = 250
-ANALYSIS_BURST_STRONG_RGB =(220, 90, 40)
-ANALYSIS_BURST_WEAK_RGB = (150, 150, 150)
-ANALYSIS_BURST_GOOD_RGBA = (60, 180, 75, 60)
 
 
 class AnalysisPanelMixin(GatingPreviewPanelMixin):
@@ -121,7 +118,6 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
                 "baseline_removed": False,
             },
             "pzt_force": dict(ANALYSIS_PZT_FORCE_DEFAULT_SETTINGS),
-            GATING_PREVIEW_STATE_KEY: self._init_gating_preview_state(),
             "visible_labels": {},
             "visible_force_labels": {},
             "csv_path": "",
@@ -146,6 +142,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
         self._analysis_label_text_items: list[pg.TextItem] = []
         self._analysis_label_items: list[dict] = []
         self.analysis_predicted_labels: list[dict] = []
+        self.analysis_predicted_setup: ReplaySetup | None = None  # the TouchID setup that produced them
         self._analysis_hovered_window_id: int | None = None
         self._analysis_hover_items: list[tuple] = []  # (plot, region)
         self.analysis_compute_worker = AnalysisComputeWorker()
@@ -879,7 +876,6 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
             self.analysis_zoom_combo.setCurrentIndex({"x": 0, "y": 1, "xy": 2}.get(state.get("zoom_mode", "x"), 0))
             self.analysis_filter_check.setChecked(bool(state.get("filter_enabled", False)))
             self.analysis_marker_check.setChecked(bool(state.get("marker_enabled", True)))
-            self.apply_gating_preview_state_to_widgets()
             overlays = state.get("overlays", {})
             self.analysis_shear_check.setChecked(bool(overlays.get("shear", False)))
             self.analysis_normal_check.setChecked(bool(overlays.get("normal", False)))
@@ -1450,7 +1446,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
             "integration_window_samples": int(getattr(self, "signal_integration_window_samples", 1) or 1),
             "hpf_cutoff_hz": float(getattr(self, "signal_integration_hpf_cutoff_hz", 0.0) or 0.0),
             "pzt_force_settings": self.analysis_state.get("pzt_force", {}),
-            "gating_request": self.gating_preview_request(),
+            "gate_replay_setup": self.gating_preview_request(),
             "auto_range": getattr(self, "_analysis_pending_auto_range", False),
         })
         self._analysis_pending_auto_range = False
@@ -1903,23 +1899,22 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
             )
         self._render_label_regions()
 
-    def _analysis_label_x_to_seconds(self, x_value: float) -> float:
+    def _analysis_x_units_per_second(self) -> float:
+        """Plot x units per capture second: the sample rate on a sample-index axis, else 1."""
         prepared = self.analysis_prepared
         if prepared is not None and prepared.x_units == "samples":
             snapshot = self.analysis_snapshot
             fs = float(snapshot.sample_rate_hz) if snapshot is not None else 0.0
             if fs > 0:
-                return float(x_value) / fs
-        return float(x_value)
+                return fs
+        return 1.0
 
-    def _analysis_label_seconds_to_x(self, seconds: float) -> float:
-        prepared = self.analysis_prepared
-        if prepared is not None and prepared.x_units == "samples":
-            snapshot = self.analysis_snapshot
-            fs = float(snapshot.sample_rate_hz) if snapshot is not None else 0.0
-            if fs > 0:
-                return float(seconds) * fs
-        return float(seconds)
+    def _analysis_label_x_to_seconds(self, x_value: float) -> float:
+        return float(x_value) / self._analysis_x_units_per_second()
+
+    def _analysis_label_seconds_to_x(self, seconds):
+        """Seconds (a scalar or an array) in plot x units."""
+        return seconds * self._analysis_x_units_per_second()
 
     def _analysis_label_trace_duration_s(self) -> float:
         prepared = self.analysis_prepared
@@ -1942,7 +1937,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
         self.analysis_predicted_labels = []
         self._update_analysis_label_status()
         if getattr(self, "analysis_burst_check", None) is not None and self.analysis_burst_check.isChecked():
-            self.refresh_analysis_plot()  # the preview's hand-label overlap line needs the new labels
+            self.refresh_analysis_plot()  # the preview's hand-label overlap line and baseline need the new labels
 
     def _push_analysis_label_undo(self):
         self._analysis_label_undo_stack.append([dict(seg) for seg in self.analysis_label_segments])

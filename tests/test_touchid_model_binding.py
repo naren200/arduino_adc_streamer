@@ -53,7 +53,7 @@ class TouchIdModelBindingTests(unittest.TestCase):
     def test_replay_processor_uses_the_model_config_too(self):
         runtime = runtime_with_blip_window(5)
         harness = self.make_harness(runtime)
-        replay = harness._touchid_new_processor(idle_baseline=None)
+        replay = harness._touchid_new_processor()
         self.assertEqual(replay.engine_config.blip_window_samples, 5)
 
     def test_without_a_model_the_default_force_less_config_runs(self):

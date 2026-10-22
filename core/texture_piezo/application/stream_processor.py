@@ -28,7 +28,7 @@ processor policy), or any GUI/plotting state.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
@@ -171,6 +171,7 @@ class TouchIdStreamProcessor:
             )
 
         self._last_sweep_ts: float | None = None
+        self._derived_observer: Callable[[DerivedChunk], None] | None = None
         self.gating: GatingStrategy = get_gating(gating_version)(GatingParams(
             pzt_columns=tuple(self.pzt_columns),
             required_channels=self.required_channels,
@@ -181,6 +182,11 @@ class TouchIdStreamProcessor:
             v1_options=self._v1_options(),
             v2_config=gating_v2_config,
         ))
+
+    def set_derived_observer(self, observer: Callable[[DerivedChunk], None] | None) -> None:
+        """Hand every non-empty derived chunk to ``observer`` just before gating sees it, so a viewer
+        can read the engine channels the replay itself derived; None detaches it."""
+        self._derived_observer = observer
 
     def _v1_options(self) -> V1GatingOptions | None:
         if self.gating_version != "v1":
@@ -263,4 +269,7 @@ class TouchIdStreamProcessor:
             return []
         self._restart_windowing_if_timeline_broke(timestamps)
 
-        return self.gating.push(DerivedChunk(channel_samples, derived, timestamps, fs, now_t))
+        chunk = DerivedChunk(channel_samples, derived, timestamps, fs, now_t)
+        if self._derived_observer is not None:
+            self._derived_observer(chunk)
+        return self.gating.push(chunk)

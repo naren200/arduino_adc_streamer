@@ -18,6 +18,11 @@ from core.texture_piezo.gating.v2.ranges import IndexRange
 from .gating_strategy import ReadyWindow
 
 
+STRENGTH_LANE = "strength"
+IDLE_LANE = "idle"
+COMBINED_LANE = "combined"
+
+
 @dataclass(frozen=True)
 class GateTick:
     """What one push decided: the good ranges each named lane newly reported (absolute

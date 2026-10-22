@@ -55,7 +55,7 @@ from core.texture_piezo.application.quality_gate_settings import load_idle_basel
 from core.texture_piezo.application.replay_driver import ReplayDriver
 from core.texture_piezo.application.replay_fastforward import ReplayFastForward
 from core.texture_piezo.application.replay_setup import (
-    BASELINE_FROM_FILE_LABEL, ReplaySetup, resolve_replay_baseline,
+    BASELINE_FROM_FILE_LABEL, ReplaySetup, ResolvedBaseline, resolve_replay_baseline,
 )
 from core.texture_piezo.application.smoothing import WindowedVoteSmoother, is_guilty_candidate
 from core.texture_piezo.gating.v1.quality_gate import IDLE_CAPTURE_DURATION_S, fit_idle_baseline
@@ -250,6 +250,8 @@ class InferencePanelMixin:
         # is still that exact object (see on_touchid_load_last_inference_clicked).
         self._touchid_last_inference_snapshot = None
         self._touchid_last_inference_predictions: list[dict] = []
+        self._touchid_last_inference_setup: ReplaySetup | None = None
+        self._touchid_replay_setup_used: ReplaySetup | None = None
 
         # Whether a replay skips its per-tick animation to run at full
         # speed -- see inference/replay_fastforward.py.
@@ -813,14 +815,26 @@ class InferencePanelMixin:
             input_conditioning=input_conditioning,
         )
 
-    def _touchid_new_processor(
-        self, continue_from=None, idle_baseline=None, input_conditioning=RAW_INPUT,
-    ) -> TouchIdStreamProcessor:
+    def _touchid_new_processor(self, continue_from=None) -> TouchIdStreamProcessor:
         """A fresh processor at the current config/idle baseline, built through ReplaySetup (the one
         construction path live and replay share). ``continue_from`` (the previous processor) carries
         its engine state forward -- see _rebuild_touchid_buffers for why a window/hop resize is not a
         discontinuity in the raw sample stream, unlike a sensor switch or a new idle baseline."""
-        return self._touchid_replay_setup(idle_baseline, input_conditioning).new_processor(continue_from)
+        return self._touchid_replay_setup().new_processor(continue_from)
+
+    def _touchid_replay_setup_for(self, snapshot) -> ReplaySetup:
+        """The exact setup a replay of ``snapshot`` would run under right now: the TouchID settings, the
+        baseline resolved for this source (see resolve_replay_baseline) and the source's own input
+        conditioning. Raises ValueError if the source lacks a configured PZT column."""
+        return self._touchid_resolved_replay(snapshot)[0]
+
+    def _touchid_resolved_replay(self, snapshot) -> tuple[ReplaySetup, ResolvedBaseline]:
+        channel_indices = [snapshot.channel_labels.index(col) for col in self.touchid_config.pzt_columns]
+        resolved = self._touchid_resolve_replay_baseline(snapshot, channel_indices, float(snapshot.sample_rate_hz))
+        # The snapshot loader records whether it already applied the median; the engine runs it
+        # only if not (no stamp means raw).
+        conditioning = input_conditioning_from_record(snapshot.metadata.get(INPUT_CONDITIONING_METADATA_KEY))
+        return self._touchid_replay_setup(resolved.baseline, conditioning), resolved
 
     def _touchid_reset_read_cursor(self):
         """Reset update_touchid_display's absolute sweep read cursor
@@ -1316,9 +1330,11 @@ class InferencePanelMixin:
             QMessageBox.warning(self, 'TouchID', 'Loaded source has no samples.')
             return
 
-        resolved = self._touchid_resolve_replay_baseline(snapshot, channel_indices, fs)
-        if not self._touchid_confirm_replay_baseline(resolved):
-            return
+        setup, resolved = self._touchid_resolved_replay(snapshot)
+        if setup.is_missing_required_baseline:
+            if not self._touchid_confirm_replay_without_baseline():
+                return
+            setup, resolved = self._touchid_resolved_replay(snapshot)  # accepting may have switched the idle gate off
 
         self.touchid_mode = TouchIdMode.REPLAYING
         self.touchid_replay_results = []
@@ -1337,14 +1353,8 @@ class InferencePanelMixin:
         # baseline is used only for this replay -- it is never persisted, so
         # it can't clobber the live-captured global baseline.
         self._touchid_replay_idle_baseline = resolved.baseline
-        # The snapshot loader records whether it already applied the median;
-        # the engine runs it only if not (no stamp means raw).
-        replay_conditioning = input_conditioning_from_record(
-            snapshot.metadata.get(INPUT_CONDITIONING_METADATA_KEY),
-        )
-        self.touchid_processor = self._touchid_new_processor(
-            idle_baseline=resolved.baseline, input_conditioning=replay_conditioning,
-        )
+        self._touchid_replay_setup_used = setup.with_detached_baseline()
+        self.touchid_processor = setup.new_processor()
         if resolved.source == BASELINE_FROM_FILE_LABEL:
             self._touchid_announce_file_label_baseline(resolved.baseline)
         self._touchid_reset_region_coloring()
@@ -1378,19 +1388,9 @@ class InferencePanelMixin:
                 f"TouchID: replay using idle baseline fit from this file's 'baseline' label ({duration_s:.1f}s)"
             )
 
-    def _touchid_replay_needs_missing_baseline(self, resolved) -> bool:
-        """The gate would run without a baseline: v1 then windows on a plain fixed grid, v2 waits with
-        its idle gate unconstrained."""
-        if resolved.baseline is not None:
-            return False
-        live_v2 = self._touchid_live_v2_config()
-        return live_v2 is None or live_v2.idle_gate_enabled
-
-    def _touchid_confirm_replay_baseline(self, resolved) -> bool:
+    def _touchid_confirm_replay_without_baseline(self) -> bool:
         """False when the user declined to replay without the idle gate the model needs. Accepting
         switches a v2 model's Idle gate off through the override editors, so it persists."""
-        if not self._touchid_replay_needs_missing_baseline(resolved):
-            return True
         answer = QMessageBox.question(
             self, 'TouchID', 'No idle baseline exists. Continue without the idle gate?',
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
@@ -1463,16 +1463,22 @@ class InferencePanelMixin:
             return
 
         self.analysis_predicted_labels = self._touchid_last_inference_predictions
+        self.analysis_predicted_setup = self._touchid_last_inference_setup
         if hasattr(self, 'visualization_tabs') and hasattr(self, 'analysis_tab_index'):
             self.visualization_tabs.setCurrentIndex(self.analysis_tab_index)
         if hasattr(self, 'analysis_inner_tabs'):
             self.analysis_inner_tabs.setCurrentIndex(0)
         self._touchid_show_predicted_labels_exclusively()
+        self._touchid_refresh_analysis_gate_banners()
         if hasattr(self, 'log_status'):
             self.log_status(
                 f'TouchID: reloaded {len(self._touchid_last_inference_predictions)} cached '
                 'predictions onto analysis source'
             )
+
+    def _touchid_refresh_analysis_gate_banners(self):
+        if hasattr(self, 'refresh_gating_preview_banners'):
+            self.refresh_gating_preview_banners()
 
     def _touchid_show_predicted_labels_exclusively(self):
         """Show the predicted-labels overlay and hide the manual-labels
@@ -1600,6 +1606,8 @@ class InferencePanelMixin:
         self.analysis_predicted_labels = overlay_predictions
         self._touchid_last_inference_snapshot = self._touchid_replay_snapshot
         self._touchid_last_inference_predictions = overlay_predictions
+        self._touchid_last_inference_setup = self._touchid_replay_setup_used
+        self.analysis_predicted_setup = self._touchid_replay_setup_used
         if hasattr(self, 'touchid_load_last_inference_btn'):
             self.touchid_load_last_inference_btn.setEnabled(bool(raw_predictions))
 
@@ -1617,6 +1625,7 @@ class InferencePanelMixin:
         self.touchid_stop_replay_btn.setEnabled(False)
 
         self._touchid_show_predicted_labels_exclusively()
+        self._touchid_refresh_analysis_gate_banners()
 
         self.touchid_mode = TouchIdMode.NORMAL
         self.touchid_replay_results = []

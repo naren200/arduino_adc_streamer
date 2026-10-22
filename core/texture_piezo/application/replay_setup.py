@@ -9,7 +9,7 @@ exactly when they would build processors that window identically.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Sequence
 
 import numpy as np
@@ -67,6 +67,21 @@ class ReplaySetup:
         return isinstance(other, ReplaySetup) and self._identity() == other._identity()
 
     __hash__ = None
+
+    @property
+    def is_missing_required_baseline(self) -> bool:
+        """The gate needs an idle baseline and has none: v1 then windows on a plain fixed grid, v2 waits
+        with its idle gate unconstrained."""
+        if self.idle_baseline is not None:
+            return False
+        return self.gating_v2_config is None or self.gating_v2_config.idle_gate_enabled
+
+    def with_detached_baseline(self) -> ReplaySetup:
+        """The same setup holding its own copy of the baseline: a live baseline's gate k is edited in
+        place, which must not change a setup kept for a worker thread or for later comparison."""
+        if self.idle_baseline is None:
+            return self
+        return replace(self, idle_baseline=replace(self.idle_baseline))
 
     def new_processor(self, continue_from: TouchIdStreamProcessor | None = None) -> TouchIdStreamProcessor:
         """A fresh processor under this setup. ``continue_from`` carries the previous processor's engine

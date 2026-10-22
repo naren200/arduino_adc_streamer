@@ -102,3 +102,40 @@ def test_no_application_module_outside_the_adapter_names_a_texture_piezo_module(
         if re.search(rf"(?<![A-Za-z0-9_]){name}(?![A-Za-z0-9_])", path.read_text(encoding="utf-8"))
     ]
     assert not offenders
+
+
+VIEW_DIRS = ("gui", "data_processing")
+# Gate stages, queues and strategies: a viewer reads their decisions from the replay's trace instead.
+FORBIDDEN_FOR_VIEWS = {
+    "core.texture_piezo.gating.v1.segmentation",
+    "core.texture_piezo.gating.v2.combiner",
+    "core.texture_piezo.gating.v2.good_queue",
+    "core.texture_piezo.gating.v2.idle_stage",
+    "core.texture_piezo.application.gating_registry",
+    "core.texture_piezo.application.v1_gating",
+    "core.texture_piezo.application.v2_gating",
+}
+STRONG_SIGNAL_MODULE = "core.texture_piezo.gating.v2.strong_signal"
+STRONG_SIGNAL_HELPERS = {"block_length_samples", "block_burst_scores", "is_strong_block"}
+
+
+def _view_imports(path: Path) -> list[tuple[str, str | None]]:
+    """(module, imported name) pairs; name is None for a plain ``import module``."""
+    pairs = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            pairs.extend((alias.name, None) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            pairs.extend((node.module, alias.name) for alias in node.names)
+    return pairs
+
+
+def test_views_read_gating_only_through_the_replay_trace_and_setup_modules():
+    offenders = []
+    for directory in VIEW_DIRS:
+        for path in (REPO_ROOT / directory).rglob("*.py"):
+            for module, name in _view_imports(path):
+                is_stage_helper_only = module == STRONG_SIGNAL_MODULE and name in STRONG_SIGNAL_HELPERS
+                if (module in FORBIDDEN_FOR_VIEWS or module == STRONG_SIGNAL_MODULE) and not is_stage_helper_only:
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}: {module}.{name}")
+    assert not offenders

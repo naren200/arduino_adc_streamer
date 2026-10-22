@@ -22,13 +22,10 @@ from core.texture_piezo.gating.v2.strong_signal import StrongSignalStage
 
 from . import gating_v2_events as events
 from .gating_strategy import DerivedChunk, GatingParams, ReadyWindow
-from .gating_trace import GateTick, TraceObserver
+from .gating_trace import COMBINED_LANE, IDLE_LANE, STRENGTH_LANE, GateTick, TraceObserver
 from .sample_store import ContinuousSampleStore
 
 NORMAL_JERK_CHANNEL = "normal_jerk"
-STRENGTH_LANE = "strength"
-IDLE_LANE = "idle"
-COMBINED_LANE = "combined"
 
 
 class V2Gating:

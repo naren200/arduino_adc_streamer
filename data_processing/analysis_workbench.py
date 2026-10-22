@@ -44,7 +44,7 @@ from data_processing.signal_integrator import SignalIntegrator
 
 
 if TYPE_CHECKING:
-    from data_processing.gating_preview import GatingPreviewData
+    from data_processing.gate_replay import GateReplayResult
 
 ANALYSIS_TIMESTAMP_COLUMNS = {"timestamp", "timestamp_s"}
 ANALYSIS_FORCE_COLUMNS = {"force_x", "force_z", "force_x_n", "force_z_n"}
@@ -102,7 +102,7 @@ class AnalysisPreparedData:
     x_label: str
     x_units: str
     status: str = ""
-    gating: GatingPreviewData | None = None  # set by AnalysisComputeWorker when the preview is enabled
+    gating: GateReplayResult | None = None  # set by AnalysisComputeWorker when the gate preview is enabled
 
 
 def reorder_circular_capture(
