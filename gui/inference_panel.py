@@ -1342,6 +1342,7 @@ class InferencePanelMixin:
             setup, resolved = self._touchid_resolved_replay(snapshot)  # accepting may have switched the idle gate off
 
         self.touchid_mode = TouchIdMode.REPLAYING
+        self._touchid_refresh_analysis_window_controls()
         self.touchid_replay_results = []
         self.touchid_run_on_source_btn.setEnabled(False)
         self.touchid_stop_replay_btn.setEnabled(True)
@@ -1463,6 +1464,11 @@ class InferencePanelMixin:
             and self._touchid_last_inference_window_key is not None
             and snapshot.window_key() == self._touchid_last_inference_window_key
         )
+
+    def _touchid_refresh_analysis_window_controls(self):
+        """Replay locks the window navigation, so its buttons re-evaluate on mode changes."""
+        if hasattr(self, '_update_analysis_window_controls'):
+            self._update_analysis_window_controls()
 
     def touchid_on_analysis_window_changed(self):
         """Called after a new Analysis snapshot is installed: predictions from a
@@ -1656,6 +1662,7 @@ class InferencePanelMixin:
         self._touchid_refresh_analysis_gate_banners()
 
         self.touchid_mode = TouchIdMode.NORMAL
+        self._touchid_refresh_analysis_window_controls()
         self.touchid_replay_results = []
         # Discontinuous stream after a replay -- rebuild a fresh live
         # processor, same reasoning as a sensor switch, so live streaming
