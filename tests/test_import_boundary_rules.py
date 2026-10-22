@@ -42,7 +42,7 @@ def test_gating_imports_only_engine_stdlib_and_numpy():
 
 
 ADAPTER = REPO_ROOT / "inference" / "texture_piezo_adapter.py"
-EXCLUDED_TOP_LEVEL_DIRS = {"Legacy", "tests", "token_dont_read_ai", ".venv", "venv", "node_modules", ".git"}
+EXCLUDED_TOP_LEVEL_DIRS = {"Legacy", "tests", "token_dont_read_ai", ".venv", "venv", "node_modules", ".git", ".claude"}
 # Top-level modules of texture_piezo/src: importing any of them outside the adapter is a violation.
 TEXTURE_PIEZO_MODULES = {
     "touchid_inference", "engine_adapter", "data", "model", "train", "evaluate", "datasets", "artifacts",
