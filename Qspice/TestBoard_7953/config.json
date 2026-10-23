@@ -1,0 +1,121 @@
+{
+  "_notes": [
+    "Model of ONE ADS7953 (16-channel mux + 12-bit SAR ADC) of TestBoard_7953 with its shared OPA365 buffer between MXO and AINP. The second ADC pair is not modelled: while it is clocked this ADC is parked on VMID (channel 15).",
+    "Sourced: ADS7953 datasheet SLAS605C (15 pF input capacitance, input leakage vs temperature from Figure 43, 325 ns minimum acquisition, 5 ns aperture delay, MXO settles ~600 ns before sampling, mux changes at the 2nd SCLK falling edge, track opens at the 14th rising edge); repository docs TESTBOARD_7953_CAPTURE_TIMING_REPORT.md (20 MHz, 16-clock frames, 470 kohm bias on ADC2, channel 15 = VMID, 29 frame slots per sweep) and the 16,889 sweeps/s measurement in the TestBoard_7953 README.",
+    "PLACEHOLDERS (not in any supplied document): mux Ron, pin/feedthrough capacitance, MXO capacitance, the R/C between buffer and AINP (datasheet typical-application values), VMID channel network, supply voltage, switching delays, frame gap (derived from the measured sweep rate)."
+  ],
+
+  "circuit": {
+    "vdd_v": 3.3,
+    "vref_v": 2.5,
+    "vmid_v": 1.25,
+    "r_bias_ohm": 470000.0,
+    "c_mxo_pF": 10.0,
+    "r_out_ohm": 100.0,
+    "c_ain_pF": 150.0,
+    "r_vmid_series_ohm": 100.0,
+    "c_vmid_ch15_pF": 150.0,
+    "initial_sensor_node_v": 1.25
+  },
+
+  "sensor_defaults": {
+    "_note": "SM311 = PZT-5H class (Steminc table: d33 600 pC/N, eps33T/eps0 3500). 0.7 x 0.7 x 0.25 mm as on TestBoard_ADC124; confirm for this board. loss_model none = ideal Cp with a 10 Gohm insulation leak.",
+    "width_mm": 0.7,
+    "length_mm": 0.7,
+    "thickness_mm": 0.25,
+    "eps33_r": 3500.0,
+    "d33_pC_per_N": 600.0,
+    "force_gain": 1.0,
+    "r_insulation_ohm": 1e10,
+    "loss_model": "none",
+    "tan_delta": 0.025,
+    "tan_delta_ref_hz": 1000.0
+  },
+  "sensor_overrides": {},
+
+  "forces": [
+    {"address": 2, "t_start_us": 20.0, "rise_us": 40.0, "width_us": 150.0, "fall_us": 40.0, "amp_N": 0.06},
+    {"address": 4, "t_start_us": 90.0, "rise_us": 40.0, "width_us": 150.0, "fall_us": 40.0, "amp_N": 0.10}
+  ],
+
+  "parasitics": {
+    "_note": "PLACEHOLDER layout parasitics.",
+    "sensor_trace_r_ohm": 1.0,
+    "sensor_trace_c_pF": 3.0,
+    "c_coupling_adjacent_pF": 0.2
+  },
+
+  "adc": {
+    "_note": "ADS7953. c_sample_pF is from the datasheet; the leakage is the datasheet Figure 43 curve (AINP leakage vs temperature, VA = VBD = 5 V) read by eye (about +/-1 nA), interpolated log-linearly in temperature and linearly in pin voltage (0, 1.25, 2.5 V), and applied as a current to ground at every channel pin and at AINP. Above 110 C the top curve is extrapolated with its last slope (about 59 nA at 125 C, close to the 61 nA in the electrical characteristics). The other values are placeholders (charge injection 0 = not specified).",
+    "ron_ohm": 200.0,
+    "roff_ohm": 1e12,
+    "cs_off_pF": 1.0,
+    "c_feedthrough_pF": 0.1,
+    "qinj_pC": 0.0,
+    "qinj_src_fraction": 0.0,
+    "leak_curve_nA": {
+      "temps_c": [-40, -25, -10, 5, 20, 35, 50, 65, 80, 95, 110],
+      "v_0": [1.2, 1.5, 1.9, 2.4, 3.2, 4.2, 5.8, 8.0, 11.0, 15.0, 20.0],
+      "v_1_25": [1.4, 1.8, 2.4, 3.2, 4.5, 6.5, 9.5, 13.5, 19.0, 27.0, 36.0],
+      "v_2_5": [1.6, 2.1, 2.9, 4.1, 6.2, 9.0, 12.5, 17.5, 24.0, 33.0, 44.0]
+    },
+    "temperature_c": 25.0,
+    "leak_scale": 1.0,
+    "c_sample_pF": 15.0,
+    "r_track_ohm": 200.0,
+    "mux_on_delay_ns": 10.0,
+    "mux_off_delay_ns": 2.0,
+    "mux_edge_ns": 2.0,
+    "sh_edge_ns": 1.0
+  },
+
+  "opamp": {
+    "_note": "OPA365 behavioral model from datasheet SBOS365G (typ, 25 C).",
+    "gbw_hz": 50e6,
+    "aol": 1e6,
+    "slew_v_per_us": 25.0,
+    "vos_uV": 100.0,
+    "ib_pA": 0.2,
+    "cdiff_pF": 6.0,
+    "ccm_pF": 2.0,
+    "ro_ohm": 30.0,
+    "rail_margin_mV": 10.0
+  },
+
+  "timing": {
+    "_note": "One SPI frame = adc_word_clocks SCLK cycles + frame_gap. Per the ADS7953 datasheet and the repository capture-timing report: CS falling holds the sample, the mux changes at the 2nd SCLK falling edge (first_clock_delay + 1.5 clocks after CS falls), tracking opens at the 14th rising edge (first_clock_delay + 13 clocks). A manual command in frame k reaches the mux in frame k+1 and its sample is held at the CS fall of frame k+repeat+1, so a sensor is connected repeat frames and sampled (frame - mux delay) after it is connected. Sweep = other_adc_frames parked on VMID, then this ADC's stream of n*repeat+2 frames (n*(repeat+2) with a VMID visit after every channel). frame_gap_ns 1200 gives the ~2 us frame spacing implied by 16,889 sweeps/s over 29 frame slots; replace with a measured value.",
+    "scan_order": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+    "repeat": 1,
+    "vmid_between_channels": false,
+    "vmid_frames_between": 2,
+    "other_adc_frames": 12,
+    "sweep_gap_us": 0.0,
+    "spi_clk_hz": 20000000.0,
+    "adc_word_clocks": 16,
+    "frame_gap_ns": 1200.0,
+    "first_clock_delay_ns": 25.0,
+    "t_start_us": 10.0,
+    "num_cycles": 6,
+    "tail_us": 10.0,
+    "run_duration_s": null
+  },
+
+  "simulation": {
+    "max_step_ns": 5.0
+  },
+
+  "scenarios": {
+    "two_pulses": {
+      "description": "Force pulses on sensors 2 and 4 (soft 40 us edges), 6 sweeps.",
+      "overrides": {}
+    },
+    "baseline": {
+      "description": "No force, 5 ms of continuous scanning: the baseline of every channel (about 20 s at 5 ns).",
+      "overrides": {"forces": [], "timing.run_duration_s": 0.005}
+    },
+    "repeat_3_vmid_between": {
+      "description": "Manual repeat 3 with a VMID visit after every channel (firmware boot style), two pulses.",
+      "overrides": {"timing.repeat": 3, "timing.vmid_between_channels": true, "timing.num_cycles": 3}
+    }
+  }
+}

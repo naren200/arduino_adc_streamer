@@ -65,4 +65,4 @@ def format_number(value: float | int) -> str:
     a = abs(value)
     if 1e-3 <= a < 1e6:
         return f"{value:.10g}"
-    return f"{value:.6g}"
+    return f"{value:.6g}".replace("e+0", "e").replace("e+", "e").replace("e-0", "e-")   # 1.6e+07 -> 1.6e7

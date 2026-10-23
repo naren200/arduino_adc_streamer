@@ -512,6 +512,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ================================================================== settings files
     def save_settings(self) -> None:
+        self._commit_pending_edits()
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save settings", str(SIM_DIR / f"{self.model.id}_settings.json"),
                                                         "Settings (*.json)")
         if not path:
@@ -583,6 +584,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return [n for n in sorted(self.viz["nodes"]) if n in existing]
 
     def update_estimate(self) -> None:
+        self._commit_pending_edits()
         try:
             prepared = runner.prepare(self.model, self.cfg)
         except Exception as exc:
@@ -600,9 +602,20 @@ class MainWindow(QtWidgets.QMainWindow):
             t += f", \u2248 {est['points'] / 1e6:.2f} M time points, run time \u2248 {when}, result file \u2248 {est['bytes'] / 1e6:.0f} MB"
         return "Estimate: " + t
 
+    def _commit_pending_edits(self) -> None:
+        """Apply a value that was typed but not confirmed.
+
+        A line edit only commits on Enter or when it loses focus, and the toolbar / F5 do not take focus, so a value typed right
+        before pressing Run would otherwise be ignored and the run would use the old parameter.
+        """
+        w = QtWidgets.QApplication.focusWidget()
+        if isinstance(w, (QtWidgets.QLineEdit, QtWidgets.QAbstractSpinBox)) and self.isAncestorOf(w):
+            w.clearFocus()
+
     def run(self) -> None:
         if self.worker is not None or self.model is None:
             return
+        self._commit_pending_edits()
         try:
             prepared = runner.prepare(self.model, self.cfg)
             qspice = runner.find_qspice(self.qspice_path or None)
@@ -708,27 +721,34 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.result is not None:
             self._replot()
 
-    def _title(self) -> str:
-        if not self.viz["annotate"]:
-            return ""
-        parts = []
+    def _changes_text(self, cfg: dict) -> str:
+        """Short description of the parameters of `cfg` that differ from the model defaults."""
         label = {}
         for tab in ("components", "system", "simulation"):
             for grp in self.model.manifest.get(tab, []):
                 for it in grp["items"]:
                     label[it["path"]] = (it["label"], it.get("unit", ""))
-        for p in self._modified_paths():
-            if p in label:
-                value = get_path(self.result.cfg if self.result else self.cfg, p, None)
+        parts = []
+        for p in self.model.all_paths():
+            if p in label and get_path(cfg, p, None) != get_path(self.defaults, p, None):
+                value = get_path(cfg, p, None)
                 text = "" if value is None else (format_number(value) if not isinstance(value, (list, bool, str)) else str(value))
                 parts.append(f"{label[p][0]} = {text} {label[p][1]}".strip())
         for tbl in self.model.manifest.get("tables", []):
-            if get_path(self.cfg, tbl["path"], None) != get_path(self.defaults, tbl["path"], None):
-                parts.append(f"{tbl['title']}: {len(get_path(self.cfg, tbl['path'], []))} row(s)")
+            if get_path(cfg, tbl["path"], None) != get_path(self.defaults, tbl["path"], None):
+                parts.append(f"{tbl['title']}: {len(get_path(cfg, tbl['path'], []))} row(s)")
         if not parts:
-            return f"{self.model.name} \u2013 model defaults"
-        shown = parts[:6] + ([f"+{len(parts) - 6} more"] if len(parts) > 6 else [])
-        return f"{self.model.name} \u2013 changed: " + "; ".join(shown)
+            return "model defaults"
+        return "; ".join(parts[:6] + ([f"+{len(parts) - 6} more"] if len(parts) > 6 else []))
+
+    def _title(self) -> str:
+        if not self.viz["annotate"]:
+            return ""
+        cfg = self.result.cfg if self.result else self.cfg
+        title = f"{self.model.name} – {self._changes_text(cfg)}"
+        if self.reference and self.viz["show_ref"]:
+            title += f"   |   dashed = reference: {self.reference['desc']}"
+        return title
 
     def _replot(self) -> None:
         r = self.result
@@ -758,17 +778,27 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_status(f"Not in the last run (press Run to include them): {', '.join(missing)}")
 
     def hold_reference(self) -> None:
+        self._commit_pending_edits()
         r = self.result
         if r is None:
             return
+        if self.reference is not None:
+            answer = QtWidgets.QMessageBox.question(
+                self, "Replace the reference?",
+                f"A reference is already held ({self.reference['desc']}).\n\nReplace it with the current run "
+                f"({self._changes_text(r.cfg)})?\n\nChoose No to keep comparing new runs against the original reference.",
+                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+                QtWidgets.QMessageBox.StandardButton.No)
+            if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+                return
         traces = {}
         t = r.qraw.time
         for node in self.viz["nodes"]:
             if r.qraw.has(node):
-                traces[node] = envelope(t, r.column(node), float(t[0]), float(t[-1]), n_buckets=4000)
-        self.reference = {"traces": traces}
+                traces[node] = tuple(np.array(a) for a in envelope(t, r.column(node), float(t[0]), float(t[-1]), n_buckets=4000))
+        self.reference = {"traces": traces, "desc": self._changes_text(r.cfg)}
         self.act_clear_ref.setEnabled(True)
-        self._set_status(f"Reference held ({len(traces)} node(s)); change parameters and press Run to compare")
+        self._set_status(f"Reference held ({len(traces)} node(s)): {self.reference['desc']}. Change parameters and press Run to compare")
         self._replot()
 
     def clear_reference(self) -> None:

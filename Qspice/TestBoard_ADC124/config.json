@@ -81,14 +81,16 @@
   },
 
   "timing": {
-    "_note": "Per sensor, from the MUX address command: t_sensor_settle, then the ADC word of t_conversion (tracking for adc_acquisition_ns, hold = sample instant, then conversion), then t_after_conversion (other MUXes are sampled and data is sent; this sensor stays connected), then a VMID visit of t_vmid_settle (no conversion) and t_vmid_park (parked on VMID while the other mux groups are sampled; PLACEHOLDER value), then the next sensor. Sensor connected dwell = settle + conversion + after_conversion. ADC defaults are the ADC124S101 16 MHz word from the capture-timing report.",
+    "_note": "Per sensor visit, from the MUX address command: all n_mux muxes switch together and share t_sensor_settle; the ADC then converts the muxes one after the other, one SPI word (adc_word_clocks clocks at adc_spi_clk_hz) each. The simulated mux is the first one: its sample is held adc_acquisition_clocks after the settle time, and it waits (n_mux - 1) words on the channel while the others are converted. Connected time per visit = settle + n_mux words (5 us with 4 muxes at 16 MHz). Then, with vmid_visit_after_each, a VMID visit of t_vmid_settle + t_vmid_park, otherwise one VMID park per sweep. ADC124S101: 16-clock word, 3 acquisition clocks.",
     "scan_order": [0, 1, 2, 3, 4, 5, 6],
     "vmid_visit_after_each": true,
     "t_start_us": 20.0,
     "t_sensor_settle_us": 1.0,
-    "adc_acquisition_ns": 187.5,
-    "t_conversion_us": 1.0,
-    "t_after_conversion_us": 5.0,
+    "repeat": 1,
+    "n_mux": 4,
+    "adc_spi_clk_hz": 16000000.0,
+    "adc_word_clocks": 16,
+    "adc_acquisition_clocks": 3,
     "t_vmid_settle_us": 5.0,
     "t_vmid_park_us": 7.0,
     "sampling_rate_hz": null,
@@ -112,7 +114,7 @@
       "overrides": {"forces": [], "timing.run_duration_s": 0.06}
     },
     "baseline_vmid1ms": {
-      "description": "Same as baseline but with a 1 ms VMID settle (t_vmid_settle_us = 1000), 100 ms run (~14 scan cycles of ~7.1 ms), full 5 ns resolution. Each sensor is connected only 7 us per ~7.1 ms, so the bias network refreshes it far less often.",
+      "description": "Same as baseline but with a 1 ms VMID settle (t_vmid_settle_us = 1000), 100 ms run (~14 scan cycles of ~7.1 ms), full 5 ns resolution. Each sensor is connected only 5 us per ~7.1 ms, so the bias network refreshes it far less often.",
       "overrides": {"forces": [], "timing.run_duration_s": 0.1, "timing.t_vmid_settle_us": 1000.0, "simulation.periodic_min_cycles": 1}
     }
   }

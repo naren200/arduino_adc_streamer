@@ -15,8 +15,8 @@ With no force on any sensor, where does the `AIN_B4` baseline of each sensor cha
 | MUX | TMUX1308A at 3.3 V: Ron 120 Ω, CS(off) 2.0 pF, CD(off) 7.0 pF, CON 11.0 pF, Qinj -0.8 pC, leakage 1.0 nA (S→D, same sign on all channels) and 1.0 nA (D), ton 25 ns | datasheet SCDS477A typical values |
 | Buffer | OPA365 behavioral: GBW 50 MHz, slew 25 V/µs, Ro 30 Ω, Ibias 0.2 pA | datasheet SBOS365G typical values |
 | Bias / output | R13 = 470 kΩ to VMID (1.65 V), R21 = 33 Ω, C29 = 470 pF, VMID channel 100 Ω + 150 pF | schematic |
-| Timing per address | settle 1.0 µs, ADC word 1.0 µs (hold at +187.5 ns after settle), after-conversion 5.0 µs, VMID settle 5 µs, VMID park 7.0 µs | user; park time is a placeholder |
-| Scan | 7 addresses, 19 µs each, one cycle = 133 µs | derived |
+| Timing per address | settle 1 µs, ADC word 1 µs (hold 187.5 ns after settle), after-conversion 5 µs (other muxes read; sensor stays connected): **7 µs connected**, then VMID settle 5 µs + park 7 µs | user; park time is a placeholder; saved results predate the 4-mux timing model (see README) |
+| Scan | 7 addresses, one cycle = 133 µs | derived |
 | Simulator | QSPICE, transient, 5 ns maximum step | |
 
 No force is applied. Sensor nodes start at VMID (initial condition). One ADC-hold sample per address per scan cycle is taken from `AIN_B4`; the table below lists the offset of that sample from VMID.

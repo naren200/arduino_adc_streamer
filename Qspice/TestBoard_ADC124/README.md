@@ -49,23 +49,40 @@ One report per result (Markdown with figures and tables), written by `python bui
 
 ## Timing of one sensor visit (all in `config.json` → `timing`)
 
+The board has several muxes (default 4) that all switch to the next channel at the same time and share one settle wait. The ADC then
+reads them one after the other. Only one mux is simulated: the first one read. The ADC word time and the time the simulated mux waits on
+its channel while the others are converted are **derived** from the number of muxes and the SPI clock:
+
 ```text
-address command ► settle ► ADC word (track 187.5 ns → HOLD = sample, then conversion) ► after-conversion ► VMID settle ► VMID park ► next address
-                  1 µs     t_conversion_us = 1 µs                                        5 µs              5 µs         7 µs (placeholder)
-                  |<------ sensor stays connected: settle + conversion + after (7 µs) ------>|<-- parked on VMID, no conversion -->|
+address command ► settle ► word 1 (this mux: 3-clock track → HOLD = sample, then convert) ► word 2 ► word 3 ► word 4 ► VMID settle ► VMID park ► next address
+                  1 µs     1 µs                                                           1 µs     1 µs     1 µs     5 µs         7 µs (placeholder)
+                  |<------------- sensor stays connected: settle + n_mux words = 5 µs ---------------------->|<-- on VMID, no conversion -->|
 ```
+
+- ADC word = `adc_word_clocks` / `adc_spi_clk_hz` = 16 / 16 MHz = **1 µs** (this is the conversion time of the simulated mux).
+- Hold (sample instant) = settle + `adc_acquisition_clocks` / clock = 1 µs + 3 / 16 MHz = 1.1875 µs after the command.
+- Wait on the channel while the other muxes are read = (`n_mux` − 1) × `repeat` × word = **3 µs** (repeat 1).
+- With `repeat` > 1 the retained sample of the simulated mux is held after settle + (`repeat` − 1) words + acquisition (3.1875 µs for repeat 3), and the connected time becomes settle + `n_mux` × `repeat` words (13 µs for repeat 3). Firmware order per the capture-timing report: each mux input is read `repeat` words in a row.
+- Connected time per visit = settle + `n_mux` × word = **5 µs** (it was 7 µs with the old fixed *after-conversion* parameter, 1 + 1 + 5).
+
+Without the VMID visit (`vmid_visit_after_each = false`) the sequence is: sensor 0 (5 µs), sensor 1 (5 µs) … last sensor (5 µs), then one VMID park of
+`t_vmid_park_us`; the cycle is 7 × 5 + 7 = 42 µs instead of 119 µs.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `t_sensor_settle_us` | 1 | Wait after the address command before the ADC starts tracking. |
-| `adc_acquisition_ns` | 187.5 | ADC tracking window; the **sample instant** is `settle + acquisition` after the command (ADC124S101 at 16 MHz, 3 SCLK). |
-| `t_conversion_us` | 1 | Full ADC word starting at the end of settle (3 acquisition + 13 conversion clocks at 16 MHz). |
-| `t_after_conversion_us` | 5 | The 3 other muxes of the group are read; **this sensor stays connected**. |
+| `t_sensor_settle_us` | 1 | Settle wait shared by all muxes after the address command, before the ADC starts. |
+| `repeat` | 1 | **Repeats**: the ADC reads each mux input this many words in a row (mux 1 × repeat, then mux 2 × repeat, …); only the last repeat is kept. Each extra repeat adds `n_mux` words to the connected time. |
+| `n_mux` | 4 | Number of muxes switched together and read one after the other by the ADC. |
+| `adc_spi_clk_hz` | 16 MHz | ADC SPI clock; sets the ADC word time. |
+| `adc_word_clocks` | 16 | SCLK clocks per ADC word (ADC124S101: 3 acquisition + 13 conversion). |
+| `adc_acquisition_clocks` | 3 | Track clocks before the hold; the **sample instant** is `settle + acquisition`. |
 | `t_vmid_settle_us` | 5 | VMID-channel settle (separate variable). No conversion, like the current firmware; the model samples the end of it only as a ghosting diagnostic. |
 | `sampling_rate_hz` | not set | Optional per-sensor revisit rate. When set, the VMID park time is derived from it (error if the rate is too high for the other timing). |
-| `t_vmid_park_us` | 7 | **Placeholder.** Extra time parked on VMID while the other mux groups are sampled and data is sent. Replace with the real value. With `vmid_visit_after_each = false` it extends the sensor dwell instead. |
+| `t_vmid_park_us` | 7 | **Placeholder.** Time parked on VMID while the other mux groups are sampled and data is sent. Replace with the real value. With `vmid_visit_after_each = true` it follows the VMID settle after every address; with `false` the sensors follow each other directly and the mux parks on VMID **once per sweep**, after the last address. |
 
-The old `sample_lead_ns` key is gone: the sample instant is now the ADC hold above.
+The former `t_conversion_us`, `adc_acquisition_ns` and `t_after_conversion_us` keys are replaced by the derived values above. The saved results and
+reports in `results/` and `reports/` were generated **before** this change (7 µs connected per visit); rerun the scenarios to get results for the new
+default (5 µs connected), which changes the numbers (for example the charge-sharing and R13 recharge per visit).
 
 ## What is modelled
 

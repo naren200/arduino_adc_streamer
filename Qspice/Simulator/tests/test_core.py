@@ -169,3 +169,122 @@ def test_periodic_mode_run_and_control_nodes(tmp_path):
     both_on = np.sum((c2 > 0.5) & (c7 > 0.5))
     assert both_on == 0  # break-before-make: S2 and the VMID channel are never on together
     raw.close()
+
+
+@pytest.mark.parametrize("vmid_visit", [True, False])
+def test_vmid_channel_is_off_during_the_first_sensor_visit(vmid_visit):
+    """Regression: the initial VMID park must end at the first address command (it used to ramp down slowly)."""
+    model = model_loader.load_model(QSPICE_DIR / "TestBoard_ADC124")
+    bm = model.adapter.bm
+    cfg = model.default_config()
+    cfg["timing"]["vmid_visit_after_each"] = vmid_visit
+    slots, _, _ = bm.build_schedule(cfg)
+    c7 = bm.control_pwl(cfg, slots)[7]
+    t = np.array([p[0] for p in c7])
+    v = np.array([p[1] for p in c7])
+    assert np.all(np.diff(t) >= 0)
+    first_start, first_end = slots[0]["t0"], slots[0]["t1"]
+    probes = np.linspace(first_start + 1e-6, first_end - 1e-6, 20)
+    assert np.interp(probes, t, v).max() == 0.0
+
+
+def test_without_vmid_visit_a_discharged_sensor_charges_slowly_through_r13(tmp_path):
+    qspice = _qspice_or_skip()
+    model = model_loader.load_model(QSPICE_DIR / "TestBoard_ADC124")
+    cfg = model.default_config()
+    cfg["forces"] = []
+    cfg["circuit"]["initial_sensor_node_v"] = 0.0
+    cfg["timing"]["vmid_visit_after_each"] = False
+    cfg["timing"]["num_cycles"] = 1
+    prepared = runner.prepare(model, cfg)
+    raw = runner.run_netlist(prepared.netlist, ["s2", "c7"], tmp_path, qspice)
+    t, s2, c7 = raw.time, raw.column("s2"), raw.column("c7")
+    visit_end = 20e-6 + 3 * 5e-6                    # sensor 2 is connected from 30 us to 35 us (5 us each, no park between sensors)
+    assert c7[(t > 21e-6) & (t < visit_end)].max() < 1e-3          # VMID channel stays off during the whole scan
+    assert np.interp(visit_end, t, s2) < 1.0                       # tau = R13*(Cp+C_D) ~ 38 us: far from VMID after 5 us
+    assert np.interp(visit_end, t, s2) > 0.1
+    raw.close()
+
+
+def test_stale_locked_result_file_is_never_used(tmp_path):
+    """Regression: a result file still held open by another process made QSPICE fail and the old data was shown as new."""
+    qspice = _qspice_or_skip()
+    model = model_loader.load_model(QSPICE_DIR / "TestBoard_ADC124")
+    cfg = model.default_config()
+    cfg["timing"]["num_cycles"] = 1
+    prepared = runner.prepare(model, cfg)
+    first = runner.run_netlist(prepared.netlist, ["ain"], tmp_path, qspice)
+    n_first = first.n_points
+    cfg["timing"]["num_cycles"] = 2
+    prepared2 = runner.prepare(model, cfg)
+    # `first` still maps its file, exactly like a window that keeps showing the previous result
+    second = runner.run_netlist(prepared2.netlist, ["ain"], tmp_path, qspice)
+    assert second.n_points > n_first * 1.5
+    assert second.path != first.path
+    first.close()
+    second.close()
+
+
+def test_without_vmid_visit_sensors_stay_connected_only_busy_time_and_park_once_per_sweep():
+    model = model_loader.load_model(QSPICE_DIR / "TestBoard_ADC124")
+    bm = model.adapter.bm
+    cfg = model.default_config()
+    cfg["timing"]["vmid_visit_after_each"] = False
+    cfg["timing"]["num_cycles"] = 2
+    slots, _, _ = bm.build_schedule(cfg)
+    t = cfg["timing"]
+    busy = bm.adc_timing(t)["busy"]
+    sensors = [s for s in slots if s["kind"] == "sensor"]
+    vmid = [s for s in slots if s["kind"] == "vmid"]
+    assert all(s["t1"] - s["t0"] == pytest.approx(busy) for s in sensors)       # not extended by the park time
+    assert len(vmid) == 2                                                          # one park per sweep
+    assert vmid[0]["t1"] - vmid[0]["t0"] == pytest.approx(t["t_vmid_park_us"] * 1e-6)
+    assert vmid[0]["t0"] == pytest.approx(sensors[6]["t1"])                        # right after the last address
+    cycle = slots[8]["t0"] - slots[0]["t0"]                                     # 7 sensors + 1 park per cycle
+    assert cycle == pytest.approx(7 * busy + t["t_vmid_park_us"] * 1e-6)
+    cfg["timing"]["sampling_rate_hz"] = 10000.0
+    slots, _, _ = bm.build_schedule(cfg)
+    assert slots[8]["t0"] - slots[0]["t0"] == pytest.approx(1e-4, rel=1e-9)
+
+
+def test_mux_group_timing_is_derived_from_mux_count_and_spi_clock():
+    model = model_loader.load_model(QSPICE_DIR / "TestBoard_ADC124")
+    bm = model.adapter.bm
+    t = model.default_config()["timing"]
+    d = bm.adc_timing(t)                                   # defaults: 4 muxes, 16 MHz, 16-clock word, 3-clock acquisition
+    assert d["word"] == pytest.approx(1e-6) and d["acq"] == pytest.approx(187.5e-9)
+    assert d["wait_others"] == pytest.approx(3e-6) and d["busy"] == pytest.approx(5e-6)
+    t["n_mux"] = 1
+    assert bm.adc_timing(t)["busy"] == pytest.approx(2e-6) and bm.adc_timing(t)["wait_others"] == 0.0
+    t["n_mux"], t["adc_spi_clk_hz"] = 4, 8e6                # half the clock: 2 us words
+    d = bm.adc_timing(t)
+    assert d["word"] == pytest.approx(2e-6) and d["busy"] == pytest.approx(9e-6) and d["acq"] == pytest.approx(375e-9)
+    cfg = model.default_config()
+    cfg["timing"]["n_mux"], cfg["timing"]["adc_spi_clk_hz"] = 4, 8e6
+    cfg["timing"]["num_cycles"] = 1
+    slots, _, _ = bm.build_schedule(cfg)
+    assert slots[0]["t1"] - slots[0]["t0"] == pytest.approx(9e-6)
+    assert slots[0]["t_sample"] - slots[0]["t0"] == pytest.approx(1e-6 + 375e-9)   # hold = settle + acquisition clocks
+    cfg["timing"]["n_mux"] = 0
+    with pytest.raises(ValueError, match="n_mux"):
+        bm.build_schedule(cfg)
+
+
+def test_adc124_repeats_extend_the_connected_time_and_the_retained_hold():
+    model = model_loader.load_model(QSPICE_DIR / "TestBoard_ADC124")
+    bm = model.adapter.bm
+    cfg = model.default_config()
+    assert cfg["timing"]["repeat"] == 1                                       # default
+    t = cfg["timing"]
+    t["repeat"] = 3
+    d = bm.adc_timing(t)                                                      # 4 muxes x 3 words in a row, 16 MHz
+    assert d["busy"] == pytest.approx(1e-6 + 12e-6)                           # settle + n_mux * repeat * word
+    assert d["hold_offset"] == pytest.approx(1e-6 + 2e-6 + 187.5e-9)          # settle + (repeat - 1) words + acquisition
+    assert d["wait_others"] == pytest.approx(9e-6)                            # (n_mux - 1) * repeat words
+    t["num_cycles"] = 1
+    slots, _, _ = bm.build_schedule(cfg)
+    assert slots[0]["t1"] - slots[0]["t0"] == pytest.approx(13e-6)
+    assert slots[0]["t_sample"] - slots[0]["t0"] == pytest.approx(3.1875e-6)
+    t["repeat"] = 0
+    with pytest.raises(ValueError, match="repeat"):
+        bm.adc_timing(t)

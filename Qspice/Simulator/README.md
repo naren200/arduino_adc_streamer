@@ -1,6 +1,6 @@
 # Qspice Simulator
 
-A GUI front end for QSPICE circuit models. Load a model (for example [TestBoard_ADC124](../TestBoard_ADC124/README.md)), change
+A GUI front end for QSPICE circuit models. Pick a model in the toolbar ([TestBoard_ADC124](../TestBoard_ADC124/README.md) and [TestBoard_7953](../TestBoard_7953/README.md) are included), change
 component, system and simulation parameters, choose which nodes to display, run QSPICE, look at the node waveforms, save the image and
 run again with different parameters. Any folder that follows the [model contract](#adding-a-model) shows up in the model list.
 
@@ -26,7 +26,7 @@ Models are looked up in `Qspice/*/` plus the folders in `--models` and `QSPICE_M
 | Tab | What you do there |
 | --- | --- |
 | **Model** | Pick the model (also in the toolbar), read its description, set the QSPICE path, add another model folder, reset every parameter to the model defaults, reload the model files after editing them. |
-| **Components** | Edit component parameters (sensor material and size, bias network, mux leakage / capacitances / charge injection, op-amp, parasitics). Values accept engineering notation (`1e10`, `470k`, `1.5n`, `2meg`). Changed values are highlighted, the ↺ button resets one value, the filter box finds a parameter by name. |
+| **Components** | Edit component parameters (sensor material and size, bias network, mux leakage / capacitances / charge injection, op-amp, parasitics). A typed value is applied on Enter, when you leave the field, and also when you press Run (F5), Hold as reference, Save settings or Update estimate. Values accept engineering notation (`1e10`, `470k`, `1.5n`, `2meg`). Changed values are highlighted, the ↺ button resets one value, the filter box finds a parameter by name. |
 | **System** | System-level parameters of the scan: scan order, settle / acquisition / conversion / VMID times and the per-sensor sampling rate (when set, the park time is derived from it). The *Derived values* box shows the resulting cycle time, sampling rate, sensor capacitance and sensitivity. |
 | **Simulation** | Input profile (table of force pulses: sensor, start, rise, hold, fall, amplitude), preset scenarios, measurement time (run duration or number of scan cycles), solver step. *Update estimate* predicts number of time points, run time and result size. |
 | **Visualization** | Tick the nodes to display (grouped by plot panel; *Other nodes* lists every node found in the netlist), layout (stacked per group / one plot per node / single overlay), time window, line width, sample markers, reference overlay, title annotation. |
@@ -40,7 +40,7 @@ Toolbar: **Run** (F5), **Stop** (Esc), **Save image…** (PNG or SVG), **Export 
 2. Change parameters, for example *Components → Off-state S→D leakage per channel*.
 3. Pick the nodes on the Visualization tab and press **Run**. Only the selected nodes are saved by QSPICE, which keeps long runs small.
 4. Zoom with the mouse wheel / drag; the plot re-decimates (min/max envelope), so spikes survive even with tens of millions of points.
-5. **Save image…**, or **Hold as reference**, change a parameter and **Run** again to compare against the dashed reference.
+5. **Save image…**, or **Hold as reference**, change a parameter and **Run** again to compare against the dashed reference. The reference stays until you clear it or confirm a replacement (pressing *Hold as reference* again asks first), so any number of runs with different settings can be compared against the same original reference; the plot title shows the changed parameters of the current run and of the reference.
 6. Changing the node selection after a run re-plots instantly when the nodes were saved; otherwise press Run again.
 
 Long simulations: QSPICE does about 60 000 time points per second. A 60 ms run at the model's 5 ns step is ~12 M points (~4 minutes,
@@ -116,7 +116,7 @@ Simulator/
 ## Tests
 
 ```bash
-python -m pytest Qspice/Simulator/tests          # 20 tests; the QSPICE and GUI-run tests are skipped when QSPICE is missing
+python -m pytest Qspice/Simulator/tests          # 41 tests; the QSPICE and GUI-run tests are skipped when QSPICE is missing
 ```
 
 They cover parameter parsing, netlist handling, decimation, model discovery, a real QSPICE run, the effect of a changed leakage on the

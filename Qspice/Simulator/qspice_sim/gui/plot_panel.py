@@ -137,6 +137,13 @@ class PlotPanel(QtWidgets.QWidget):
                 if any(t.node == mk.node for t in members):
                     sp = pg.ScatterPlotItem(mk.x, mk.y, size=6, pen=pg.mkPen("k", width=0.8), brush=pg.mkBrush("#ffffff"), name=mk.label)
                     plot.addItem(sp)
+            lo = min(float(np.min(t.v)) for t in members if len(t.v))
+            hi = max(float(np.max(t.v)) for t in members if len(t.v))
+            if hi - lo <= 1e-12 * max(1.0, abs(hi)):
+                # every trace is constant (for example the force with no input): a fixed range around the value instead
+                # of the huge auto range pyqtgraph picks for a flat line
+                half = 0.5 if hi == 0 else 0.1 * abs(hi)
+                plot.setYRange(lo - half, hi + half, padding=0)
             self._panels.append({"plot": plot, "curves": curves})
         t_all_min = min(float(t.t[0]) for t in traces if len(t.t))
         t_all_max = max(float(t.t[-1]) for t in traces if len(t.t))

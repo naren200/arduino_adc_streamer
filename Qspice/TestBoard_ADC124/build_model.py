@@ -55,36 +55,63 @@ def sensor_params(cfg: dict, addr: int) -> dict:
     return {"cp": cp, "d33": d33, "rp": rp, "rins": p["r_insulation_ohm"]}
 
 
+def adc_timing(t: dict) -> dict:
+    """ADC / mux-group timing derived from the number of muxes and the SPI clock (all in seconds).
+
+    All muxes switch together and share the settle time. The ADC then converts the muxes one after the other, one SPI word
+    (adc_word_clocks SCLK cycles) each; the simulated mux is the first one. Its sample is held adc_acquisition_clocks after
+    the settle time, and it waits (n_mux - 1) words on the channel while the other muxes are converted. With timing.repeat > 1
+    every mux input is read that many times in a row before the muxes switch (only the last repeat is kept).
+    """
+    f = float(t["adc_spi_clk_hz"])
+    n_mux = int(t["n_mux"])
+    if f <= 0:
+        raise ValueError("timing.adc_spi_clk_hz must be positive")
+    if n_mux < 1:
+        raise ValueError("timing.n_mux must be at least 1")
+    if t["adc_acquisition_clocks"] > t["adc_word_clocks"]:
+        raise ValueError("timing.adc_acquisition_clocks must not exceed adc_word_clocks")
+    rep = int(t.get("repeat", 1))
+    if rep < 1:
+        raise ValueError("timing.repeat must be at least 1")
+    word = t["adc_word_clocks"] / f
+    acq = t["adc_acquisition_clocks"] / f
+    settle = t["t_sensor_settle_us"] * MICRO
+    # Firmware order (capture-timing report): each mux input is read `repeat` words in a row, then the next input. Only the last
+    # repeat is kept, so the simulated (first) mux is held after (repeat - 1) extra words, and every extra repeat adds one word per mux.
+    return {"word": word, "acq": acq, "n_mux": n_mux, "repeat": rep, "wait_others": (n_mux - 1) * rep * word, "settle": settle,
+            "hold_offset": settle + (rep - 1) * word + acq, "busy": settle + n_mux * rep * word}
+
+
 def build_schedule(cfg: dict) -> tuple[list[dict], float, bool]:
     """Return (slots, t_stop, periodic). Each slot = address connected from t0 to t1.
 
-    Sensor slot: settle + ADC word + after-conversion, sampled (ADC hold) at t0 + settle + acquisition.
-    VMID slot: t_vmid_settle then t_vmid_park (other mux groups sampled), no conversion; sampled at the end of
-    t_vmid_settle as a ghosting diagnostic only. With no VMID visit the park time just extends the sensor dwell.
+    Sensor slot: settle + n_mux * repeat ADC words, the retained sample is held at t0 + settle + (repeat - 1) words + acquisition.
+    With a VMID visit after every sensor: VMID slot = t_vmid_settle then t_vmid_park (other mux groups sampled), no
+    conversion; sampled at the end of t_vmid_settle as a ghosting diagnostic only. Without it the sensors follow each
+    other directly and the mux parks on VMID once per sweep, for t_vmid_park, after the last address.
     If timing.sampling_rate_hz is set, t_vmid_park_us is derived from it. If timing.run_duration_s is set, num_cycles is derived from it. Runs of simulation.periodic_min_cycles or more
     cycles use periodic PULSE control sources (no tail) so very long runs stay small.
     """
     t = cfg["timing"]
     mux = cfg["mux"]
     us = MICRO
-    settle = t["t_sensor_settle_us"] * us
-    acq = t["adc_acquisition_ns"] * NANO
-    conv = t["t_conversion_us"] * us
-    after = t["t_after_conversion_us"] * us
+    adc = adc_timing(t)
+    settle = adc["settle"]
     park = t["t_vmid_park_us"] * us
     settle_v = t["t_vmid_settle_us"] * us
-    if acq > conv:
-        raise ValueError("timing.adc_acquisition_ns must not exceed t_conversion_us")
+    visit = bool(t["vmid_visit_after_each"])
+    n_scan = len(t["scan_order"])
+    busy = adc["busy"]                                # connected per visit: settle + one ADC word per mux (this mux is first)
     if t.get("sampling_rate_hz"):
         # per-sensor revisit rate: the cycle length is fixed and the VMID park time absorbs the remainder
-        n_scan = len(t["scan_order"])
-        busy = settle + conv + after + (settle_v if t["vmid_visit_after_each"] else 0.0)
-        park = 1.0 / float(t["sampling_rate_hz"]) / n_scan - busy
+        rate = float(t["sampling_rate_hz"])
+        min_cycle = n_scan * (busy + (settle_v if visit else 0.0))
+        park = (1.0 / rate / n_scan - busy - settle_v) if visit else (1.0 / rate - n_scan * busy)
         if park < 0:
-            raise ValueError(f"timing.sampling_rate_hz = {t['sampling_rate_hz']:g} Hz is too high: with {n_scan} addresses the "
-                             f"minimum cycle is {n_scan * busy * 1e6:.1f} us (max {1.0 / (n_scan * busy):.1f} Hz)")
-    per_addr = settle + conv + after + (settle_v + park if t["vmid_visit_after_each"] else park)
-    cycle = len(t["scan_order"]) * per_addr
+            raise ValueError(f"timing.sampling_rate_hz = {rate:g} Hz is too high: with {n_scan} addresses the "
+                             f"minimum cycle is {min_cycle * 1e6:.1f} us (max {1.0 / min_cycle:.1f} Hz)")
+    cycle = n_scan * (busy + settle_v + park) if visit else n_scan * busy + park
     n_cycles = int(t["num_cycles"])
     if t.get("run_duration_s"):
         n_cycles = max(1, int((t["run_duration_s"] - t["t_start_us"] * us) / cycle))
@@ -93,15 +120,19 @@ def build_schedule(cfg: dict) -> tuple[list[dict], float, bool]:
     now = t["t_start_us"] * us
     for cycle_i in range(n_cycles):
         for addr in t["scan_order"]:
-            dwell = settle + conv + after + (0.0 if t["vmid_visit_after_each"] else park)
-            slots.append({"cycle": cycle_i, "address": int(addr), "kind": "sensor", "t0": now, "t1": now + dwell,
-                          "t_sample": now + settle + acq})
-            now += dwell
-            if t["vmid_visit_after_each"]:
+            slots.append({"cycle": cycle_i, "address": int(addr), "kind": "sensor", "t0": now, "t1": now + busy,
+                          "t_sample": now + adc["hold_offset"]})
+            now += busy
+            if visit:
                 dwell = settle_v + park
                 slots.append({"cycle": cycle_i, "address": VMID_ADDR, "kind": "vmid", "t0": now, "t1": now + dwell,
                               "t_sample": now + settle_v})
                 now += dwell
+        if not visit and park > 0:
+            # no VMID visit between sensors: the mux parks on VMID once, after the last address of the sweep
+            slots.append({"cycle": cycle_i, "address": VMID_ADDR, "kind": "vmid", "t0": now, "t1": now + park,
+                          "t_sample": now + park})
+            now += park
     if not periodic:
         now += t["tail_us"] * us
         slots.append({"cycle": -1, "address": VMID_ADDR, "kind": "tail", "t0": slots[-1]["t1"], "t1": now,
@@ -118,11 +149,15 @@ def build_schedule(cfg: dict) -> tuple[list[dict], float, bool]:
     return slots, now, periodic
 
 
+def slots_per_cycle(slots: list[dict]) -> int:
+    return sum(1 for sl in slots if sl["cycle"] == 0)
+
+
 def control_pulse_lines(cfg: dict, slots: list[dict]) -> list[str]:
     """Periodic PULSE control sources (one cycle of the schedule repeated); VMID is a series chain of pieces."""
     mux = cfg["mux"]
     ton, toff, edge = mux["switch_on_ns"] * NANO, mux["switch_off_ns"] * NANO, mux["control_edge_ns"] * NANO
-    per_cycle = len(cfg["timing"]["scan_order"]) * (2 if cfg["timing"]["vmid_visit_after_each"] else 1)
+    per_cycle = slots_per_cycle(slots)
     c0 = [dict(x) for x in slots[:per_cycle]]
     cycle = slots[per_cycle]["t0"] - slots[0]["t0"]
     seq = c0 + [dict(c0[0], t0=c0[0]["t0"] + cycle)]
@@ -167,6 +202,11 @@ def control_pwl(cfg: dict, slots: list[dict]) -> dict[int, list[tuple[float, flo
             merged.append(dict(s))
     pts: dict[int, list[tuple[float, float]]] = {a: [(0.0, 0.0)] for a in range(8)}
     pts[VMID_ADDR] = [(0.0, 1.0)]  # parked on VMID before the first command
+    if merged and merged[0]["address"] != VMID_ADDR:
+        # leave the initial park when the first address command arrives (break-before-make); without this point the
+        # waveform ramps linearly from 1 at t = 0 down to the next VMID visit and S7 conducts for most of the run
+        t_leave = merged[0]["t0"] + toff
+        pts[VMID_ADDR] += [(t_leave, 1.0), (t_leave + edge, 0.0)]
     for i, s in enumerate(merged):
         a = s["address"]
         t_on = s["t0"] + ton
@@ -300,7 +340,7 @@ def build(cfg: dict, with_force: bool = True) -> tuple[str, list[dict]]:
     a(f"Cain ain 0 {par['ain_stray_c_pF'] * PICO:.9e}")
     if periodic:
         a("* ---- solver breakpoints at every ADC hold / VMID diagnostic instant (exact samples with a coarse max step) ----")
-        per_cycle = len(cfg["timing"]["scan_order"]) * (2 if cfg["timing"]["vmid_visit_after_each"] else 1)
+        per_cycle = slots_per_cycle(slots)
         cyc = slots[per_cycle]["t0"] - slots[0]["t0"]
         for k, sl in enumerate(slots[:per_cycle]):
             a(f"Vbp{k} bp{k} 0 PULSE(0 1m {sl['t_sample']:.9e} 1n 1n 1n {cyc:.9e})")
