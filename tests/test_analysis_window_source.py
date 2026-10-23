@@ -173,6 +173,28 @@ def test_file_without_timestamp_column_uses_absolute_row_time(tmp_path):
     np.testing.assert_allclose(late.timestamps_s, expected)
 
 
+def test_long_file_without_timestamp_column_still_windows_to_100_s(tmp_path):
+    csv_path = _write_csv(tmp_path, LONG_ROWS, with_timestamp=False)
+    metadata_path = _write_metadata(tmp_path, capture_duration_seconds=300.0)
+    source = CsvWindowSource.open(csv_path, metadata_path, blip_filter_enabled=False)
+    window = source.snapshot_for(100.0)
+    assert window.channel_labels == ["CH1", "CH2"]
+    assert window.view_range_s == (100.0, 100.0 + WINDOW_VIEW_S)
+    assert window.timestamps_s[-1] - window.timestamps_s[0] <= MAX_RESIDENT_S
+
+
+@pytest.mark.parametrize("timestamp_header", ["timestamp_s", "Timestamp"])
+def test_timestamp_column_is_used_as_time_and_never_as_a_signal(tmp_path, timestamp_header):
+    rows = [f"{row * SAMPLE_PERIOD_S:.3f},{2000 + row},{2100 + row}" for row in range(40)]
+    csv_path = tmp_path / "capture.csv"
+    lines = [f"{timestamp_header},CH1,CH2", *rows]
+    csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    source = CsvWindowSource.open(csv_path, _write_metadata(tmp_path), blip_filter_enabled=False)
+    window = source.snapshot_for(0.0)
+    assert window.channel_labels == ["CH1", "CH2"]
+    assert source.span_s == (0.0, 39 * SAMPLE_PERIOD_S)
+
+
 def test_file_changed_on_disk_is_rejected(tmp_path):
     source = _open(tmp_path, row_count=40)
     with source.csv_path.open("a", encoding="utf-8") as handle:

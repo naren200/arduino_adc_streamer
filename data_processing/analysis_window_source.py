@@ -30,7 +30,9 @@ from constants.pzt_blip_filter import (
     PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES,
 )
 from data_processing.analysis_workbench import (
+    ANALYSIS_TIMESTAMP_COLUMNS,
     AnalysisSourceSnapshot,
+    _column_key,
     _load_filtered_snapshot,
     _metadata_sample_rate_hz,
     csv_signal_columns,
@@ -43,7 +45,6 @@ WINDOW_VIEW_S = 60.0
 WINDOW_BUFFER_S = 20.0
 WINDOW_STEP_S = 40.0
 
-_TIMESTAMP_COLUMN = "Timestamp_s"
 _COMMENT_PREFIX = "#"
 
 TimeRange = tuple[float, float]
@@ -104,7 +105,7 @@ class _CsvFileStamp:
 class _CsvIndex:
     fieldnames: list[str]
     row_offsets: np.ndarray  # byte offset of every data row, plus the end of the last one
-    raw_timestamps_s: np.ndarray | None  # None unless every row carries a numeric Timestamp_s
+    raw_timestamps_s: np.ndarray | None  # None unless every row carries a numeric timestamp
 
     @property
     def row_count(self) -> int:
@@ -124,8 +125,16 @@ def _parse_timestamp_cell(line: bytes, column: int) -> float | None:
         return None
 
 
+def _timestamp_column_index(fieldnames: list[str]) -> int | None:
+    """Same column rule as the signal-column filter, so a timestamp is never both ignored and excluded."""
+    for position, name in enumerate(fieldnames):
+        if _column_key(name) in ANALYSIS_TIMESTAMP_COLUMNS:
+            return position
+    return None
+
+
 def _scan_csv(csv_path: Path) -> _CsvIndex:
-    """One streaming pass: header, data-row byte offsets and the Timestamp_s column."""
+    """One streaming pass: header, data-row byte offsets and the timestamp column."""
     fieldnames: list[str] | None = None
     timestamp_column: int | None = None
     row_starts = array("q")
@@ -139,7 +148,7 @@ def _scan_csv(csv_path: Path) -> _CsvIndex:
                 continue
             if fieldnames is None:
                 fieldnames = [str(name) for name in next(csv.reader([line.decode("utf-8")]))]
-                timestamp_column = fieldnames.index(_TIMESTAMP_COLUMN) if _TIMESTAMP_COLUMN in fieldnames else None
+                timestamp_column = _timestamp_column_index(fieldnames)
                 continue
             row_starts.append(line_start)
             row_end = offset
