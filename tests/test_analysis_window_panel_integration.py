@@ -47,6 +47,7 @@ def panel(tmp_path):
     panel.refresh_analysis_plot = lambda: None
     panel._rebuild_analysis_channel_checks = lambda: None
     panel._load_labels_for_current_source = lambda: None
+    panel._populate_analysis_array_selector = lambda: None  # TestBoard array dropdown is not built in this harness
     panel.save_last_analysis_settings = lambda: None
     yield panel
     panel.shutdown_analysis_worker()
