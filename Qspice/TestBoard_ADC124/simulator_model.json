@@ -386,7 +386,7 @@
      "label": "VMID visit after every sensor",
      "unit": "",
      "type": "bool",
-     "tip": ""
+     "tip": "On: after each sensor the mux goes to VMID (settle + park) before the next sensor. Off: sensors follow each other directly and the mux parks on VMID once per sweep."
     },
     {
      "path": "timing.t_start_us",
@@ -398,49 +398,68 @@
    ]
   },
   {
+   "group": "MUX group and ADC (derives conversion time and the wait on the channel)",
+   "items": [
+    {
+     "path": "timing.repeat",
+     "label": "Repeats (conversions per channel)",
+     "unit": "",
+     "type": "int",
+     "tip": "The ADC reads the same channel this many times in a row before the muxes switch to the next channel or VMID; only the last conversion is kept. Each extra repeat adds n_mux ADC words to the connected time."
+    },
+    {
+     "path": "timing.n_mux",
+     "label": "Number of MUXs read per channel",
+     "unit": "",
+     "type": "int",
+     "tip": "The board has 4 muxes. All switch together; the ADC reads them one after the other. The simulated mux is the first one read, so it waits (n - 1) ADC words on its channel before the muxes switch to the next channel."
+    },
+    {
+     "path": "timing.adc_spi_clk_hz",
+     "label": "ADC SPI clock",
+     "unit": "Hz",
+     "type": "float",
+     "tip": "Default 16 MHz (type 16meg). One ADC word = clocks per word / SPI clock = 1 us at 16 MHz."
+    },
+    {
+     "path": "timing.adc_word_clocks",
+     "label": "SCLK clocks per ADC word",
+     "unit": "",
+     "type": "int",
+     "tip": "ADC124S101: 16 clocks (3 acquisition + 13 conversion)."
+    },
+    {
+     "path": "timing.adc_acquisition_clocks",
+     "label": "SCLK clocks of acquisition (track)",
+     "unit": "",
+     "type": "int",
+     "tip": "ADC124S101: 3 clocks. The sample is held this long after the settle time."
+    }
+   ]
+  },
+  {
    "group": "Per-sensor timing (measured from the address command)",
    "items": [
     {
      "path": "timing.t_sensor_settle_us",
-     "label": "Sensor settle time",
+     "label": "Sensor settle time (shared by all muxes)",
      "unit": "us",
      "type": "float",
-     "tip": "Wait before the ADC starts tracking."
-    },
-    {
-     "path": "timing.adc_acquisition_ns",
-     "label": "ADC acquisition (track) window",
-     "unit": "ns",
-     "type": "float",
-     "tip": "Hold = sample instant at settle + acquisition (ADC124S101: 3 SCLK)."
-    },
-    {
-     "path": "timing.t_conversion_us",
-     "label": "ADC word / conversion time",
-     "unit": "us",
-     "type": "float",
-     "tip": "Sensor stays connected."
-    },
-    {
-     "path": "timing.t_after_conversion_us",
-     "label": "After-conversion time",
-     "unit": "us",
-     "type": "float",
-     "tip": "Other muxes of the group are read; this sensor stays connected."
+     "tip": "All muxes switch at the same time and share this wait before the ADC starts."
     },
     {
      "path": "timing.t_vmid_settle_us",
      "label": "VMID settle time",
      "unit": "us",
      "type": "float",
-     "tip": "Separate from the sensor settle time."
+     "tip": "VMID-visit settle time after every sensor (only used when the VMID visit is on)."
     },
     {
      "path": "timing.t_vmid_park_us",
      "label": "VMID park time",
      "unit": "us",
      "type": "float",
-     "tip": "Parked on VMID while other mux groups are sampled (placeholder). Ignored when a sampling rate is set."
+     "tip": "Parked on VMID while other mux groups are sampled (placeholder). With a VMID visit after every sensor: after every address (following the VMID settle). Without it: once per sweep, after the last address. Ignored when a sampling rate is set."
     }
    ]
   },
@@ -452,7 +471,7 @@
      "label": "Per-sensor sampling rate",
      "unit": "Hz",
      "type": "float",
-     "tip": "Optional. Leave empty to use the park time. When set, the VMID park time is derived so each sensor is revisited at this rate.",
+     "tip": "Optional per-sensor revisit rate. Empty = use the park time. When set, the VMID park time is derived so each sensor is revisited at this rate (error if too high).",
      "nullable": true
     }
    ]

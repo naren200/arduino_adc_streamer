@@ -32,9 +32,12 @@ def common_setup(cfg: dict, t: dict) -> str:
     sp = bm.sensor_params(cfg, 0)
     sd, c, m, o, par = cfg["sensor_defaults"], cfg["circuit"], cfg["mux"], cfg["opamp"], cfg["parasitics"]
     cp_pf = sp["cp"] * 1e12
-    per_addr = t["t_sensor_settle_us"] + t["t_conversion_us"] + t["t_after_conversion_us"] + (
-        t["t_vmid_settle_us"] + t["t_vmid_park_us"] if t["vmid_visit_after_each"] else t["t_vmid_park_us"])
-    cycle = per_addr * len(t["scan_order"])
+    # The saved results were simulated BEFORE the 4-mux timing model replaced "after-conversion time": 1 µs settle + 1 µs ADC
+    # word + 5 µs after-conversion = 7 µs connected per visit. The current default (4 muxes, 16 MHz) connects for 5 µs, so the
+    # reports state the timing the results were actually generated with; regenerate the results to move to the new default.
+    busy = 7.0
+    per_addr = busy + (t["t_vmid_settle_us"] + t["t_vmid_park_us"] if t["vmid_visit_after_each"] else 0.0)
+    cycle = per_addr * len(t["scan_order"]) + (0.0 if t["vmid_visit_after_each"] else t["t_vmid_park_us"])
     return f"""| Item | Value | Basis |
 | --- | --- | --- |
 | Sensors | 7 × SM311 (PZT-5H), {sd['width_mm']} × {sd['length_mm']} × {sd['thickness_mm']} mm | size and thickness from the user |
@@ -42,8 +45,8 @@ def common_setup(cfg: dict, t: dict) -> str:
 | MUX | TMUX1308A at 3.3 V: Ron {m['ron_ohm']:.0f} Ω, CS(off) {m['cs_off_pF']} pF, CD(off) {m['cd_off_pF']} pF, CON {m['c_on_pF']} pF, Qinj {m['qinj_pC']} pC, leakage {m['ileak_s_off_nA']} nA (S→D, same sign on all channels) and {m['ileak_d_nA']} nA (D), ton {m['switch_on_ns']:.0f} ns | datasheet SCDS477A typical values |
 | Buffer | OPA365 behavioral: GBW {o['gbw_hz'] / 1e6:.0f} MHz, slew {o['slew_v_per_us']:.0f} V/µs, Ro {o['ro_ohm']:.0f} Ω, Ibias {o['ib_pA']} pA | datasheet SBOS365G typical values |
 | Bias / output | R13 = {c['r_bias_ohm'] / 1e3:.0f} kΩ to VMID ({c['vmid_v']} V), R21 = {c['r_out_ohm']:.0f} Ω, C29 = {c['c_out_pF']:.0f} pF, VMID channel 100 Ω + 150 pF | schematic |
-| Timing per address | settle {t['t_sensor_settle_us']} µs, ADC word {t['t_conversion_us']} µs (hold at +{t['adc_acquisition_ns']} ns after settle), after-conversion {t['t_after_conversion_us']} µs, VMID settle {t['t_vmid_settle_us']:g} µs, VMID park {t['t_vmid_park_us']} µs | user; park time is a placeholder |
-| Scan | {len(t['scan_order'])} addresses, {per_addr:g} µs each, one cycle = {cycle:g} µs | derived |
+| Timing per address | settle 1 µs, ADC word 1 µs (hold 187.5 ns after settle), after-conversion 5 µs (other muxes read; sensor stays connected): **7 µs connected**, then {'VMID settle ' + format(t['t_vmid_settle_us'], 'g') + ' µs + park ' + format(t['t_vmid_park_us'], 'g') + ' µs' if t['vmid_visit_after_each'] else 'one VMID park of ' + format(t['t_vmid_park_us'], 'g') + ' µs per sweep'} | user; park time is a placeholder; saved results predate the 4-mux timing model (see README) |
+| Scan | {len(t['scan_order'])} addresses, one cycle = {cycle:g} µs | derived |
 | Simulator | QSPICE, transient, 5 ns maximum step | |
 """
 

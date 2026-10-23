@@ -9,6 +9,7 @@ import pytest
 pytest.importorskip("PyQt6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import numpy as np  # noqa: E402
 from PyQt6 import QtCore, QtTest, QtWidgets  # noqa: E402
 
 from qspice_sim import model_loader, runner  # noqa: E402
@@ -175,3 +176,71 @@ def test_stop_cancels_a_long_run(window):
     window.stop()
     _wait_for_run(window, 20_000)
     assert window.result is None and "cancelled" in window.status_label.text().lower()
+
+
+@pytest.mark.parametrize("model_id", ["TestBoard_ADC124", "TestBoard_7953"])
+def test_repeats_parameter_is_on_the_system_tab_and_changes_the_derived_values(app, model_id):
+    models = [model_loader.load_model(QSPICE_DIR / "TestBoard_ADC124"), model_loader.load_model(QSPICE_DIR / "TestBoard_7953")]
+    win = MainWindow(models)
+    win.settings.clear()
+    win.load_model(next(m for m in models if m.id == model_id))
+    system = win._tab_forms[1]
+    row = next(r for r in system.rows if r.path == "timing.repeat")
+    assert row.item["label"].startswith("Repeats") and win.cfg["timing"]["repeat"] == 1
+    before = dict(win.model.summary(win.cfg))
+    row.editor.setText("3")
+    row.editor.editingFinished.emit()
+    assert win.cfg["timing"]["repeat"] == 3
+    after = dict(win.model.summary(win.cfg))
+    key = "Connected time per sensor visit" if model_id == "TestBoard_ADC124" else "Connected time per sensor"
+    assert float(after[key].split()[0]) == pytest.approx(3 * float(before[key].split()[0]) - (2 * 1.0 if model_id == "TestBoard_ADC124" else 0.0), rel=1e-6)
+    win.close()
+
+
+def test_typed_value_is_applied_when_run_is_pressed_without_leaving_the_field(window):
+    """Regression: a typed value was ignored when Run / F5 was used before the field lost focus (the toolbar takes no focus)."""
+    window.activateWindow()
+    window.tabs.setCurrentIndex(1)
+    row = _field(window, "mux.ileak_s_off_nA")
+    row.editor.setFocus()
+    QtTest.QTest.qWait(100)
+    if QtWidgets.QApplication.focusWidget() is not row.editor:
+        pytest.skip("the offscreen platform did not give the editor keyboard focus")
+    row.editor.setText("7n")                         # typed, Enter not pressed, focus not moved
+    assert window.cfg["mux"]["ileak_s_off_nA"] != pytest.approx(7e-9)
+    window._commit_pending_edits()
+    assert window.cfg["mux"]["ileak_s_off_nA"] == pytest.approx(7e-9)
+
+
+def test_several_runs_compare_against_the_original_reference(window, monkeypatch):
+    try:
+        runner.find_qspice()
+    except runner.SimulationError:
+        pytest.skip("QSPICE is not installed")
+    window.cfg["timing"]["num_cycles"] = 1
+    window.viz["nodes"] = {"ain"}
+    window._populate_nodes()
+    window.run()
+    _wait_for_run(window)
+    window.hold_reference()
+    original = window.reference
+    original_desc = original["desc"]
+    original_y = original["traces"]["ain"][1].copy()
+
+    answers = {"value": QtWidgets.QMessageBox.StandardButton.No}
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(lambda *a, **k: answers["value"]))
+    finals = []
+    for bias in (47e3, 4.7e6, 220e3):                # three runs with different settings against the same reference
+        window.cfg["circuit"]["r_bias_ohm"] = bias
+        window.run()
+        _wait_for_run(window)
+        window.hold_reference()                      # declined (No): the original reference must stay
+        assert window.reference is original and window.reference["desc"] == original_desc
+        assert np.array_equal(window.reference["traces"]["ain"][1], original_y)
+        finals.append(float(np.min(window.result.column("ain"))))
+    assert len({round(f, 4) for f in finals}) == 3 and "reference" in window._title()
+    assert "R13" in window._title()
+
+    answers["value"] = QtWidgets.QMessageBox.StandardButton.Yes   # an explicit confirmation replaces it
+    window.hold_reference()
+    assert window.reference is not original and "R13" in window.reference["desc"]

@@ -1,0 +1,837 @@
+{
+ "name": "TestBoard_7953 PZT front end (one ADS7953)",
+ "description": "15 PZT sensors on the channels of one ADS7953 (16-channel mux + 12-bit SAR ADC), a shared OPA365 buffer between MXO and AINP with a bias resistor to VMID, and the ADC sample-and-hold. SPI frame timing drives the mux and the hold; while the other ADC pair is clocked this mux is parked on VMID (channel 15). VREF 2.5 V, VMID 1.25 V, 20 MHz SPI.",
+ "config": "config.json",
+ "adapter": "simulator_adapter.py",
+ "components": [
+  {
+   "group": "PZT sensor (all 15, SM311 / PZT-5H class)",
+   "items": [
+    {
+     "path": "sensor_defaults.width_mm",
+     "label": "Width",
+     "unit": "mm",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "sensor_defaults.length_mm",
+     "label": "Length",
+     "unit": "mm",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "sensor_defaults.thickness_mm",
+     "label": "Thickness",
+     "unit": "mm",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "sensor_defaults.eps33_r",
+     "label": "Relative permittivity eps33T/eps0",
+     "unit": "",
+     "type": "float",
+     "tip": "Steminc SM311: 3500 at 1 kHz."
+    },
+    {
+     "path": "sensor_defaults.d33_pC_per_N",
+     "label": "d33 charge constant",
+     "unit": "pC/N",
+     "type": "float",
+     "tip": "Steminc SM311: 600 pC/N."
+    },
+    {
+     "path": "sensor_defaults.force_gain",
+     "label": "Force gain",
+     "unit": "",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "sensor_defaults.r_insulation_ohm",
+     "label": "Insulation resistance",
+     "unit": "ohm",
+     "type": "float",
+     "tip": "DC leakage of the element (placeholder 10 Gohm)."
+    },
+    {
+     "path": "sensor_defaults.loss_model",
+     "label": "Dielectric loss model",
+     "unit": "",
+     "type": "choice",
+     "tip": "none = ideal Cp. parallel_r = tan delta as a parallel resistor (creates a DC leak).",
+     "choices": [
+      "none",
+      "parallel_r"
+     ]
+    },
+    {
+     "path": "sensor_defaults.tan_delta",
+     "label": "tan delta",
+     "unit": "",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "sensor_defaults.tan_delta_ref_hz",
+     "label": "tan delta reference frequency",
+     "unit": "Hz",
+     "type": "float",
+     "tip": ""
+    }
+   ]
+  },
+  {
+   "group": "Analog front end (shared by the 16 mux channels)",
+   "items": [
+    {
+     "path": "circuit.vref_v",
+     "label": "ADC reference VREF",
+     "unit": "V",
+     "type": "float",
+     "tip": "2.5 V: input range 1 (0 .. VREF). Used for range warnings."
+    },
+    {
+     "path": "circuit.vmid_v",
+     "label": "VMID reference",
+     "unit": "V",
+     "type": "float",
+     "tip": "1.25 V (half of VREF)."
+    },
+    {
+     "path": "circuit.vdd_v",
+     "label": "Op-amp supply",
+     "unit": "V",
+     "type": "float",
+     "tip": "Placeholder: confirm the board supply."
+    },
+    {
+     "path": "circuit.r_bias_ohm",
+     "label": "Bias resistor MXO -> VMID",
+     "unit": "ohm",
+     "type": "float",
+     "tip": "470 kohm on ADC2/ADC3, 1 Mohm on ADC1, 249 kohm on ADC4 (repository timing report)."
+    },
+    {
+     "path": "circuit.c_mxo_pF",
+     "label": "MXO node capacitance",
+     "unit": "pF",
+     "type": "float",
+     "tip": "Placeholder: mux output capacitance plus trace and op-amp pin; holds the previous channel charge."
+    },
+    {
+     "path": "circuit.r_out_ohm",
+     "label": "Buffer output resistor (-> AINP)",
+     "unit": "ohm",
+     "type": "float",
+     "tip": "Placeholder: datasheet typical application (Fig. 66)."
+    },
+    {
+     "path": "circuit.c_ain_pF",
+     "label": "Capacitor at AINP",
+     "unit": "pF",
+     "type": "float",
+     "tip": "Placeholder: datasheet typical application, 150 pF."
+    },
+    {
+     "path": "circuit.r_vmid_series_ohm",
+     "label": "VMID channel series resistor",
+     "unit": "ohm",
+     "type": "float",
+     "tip": "Placeholder (as on TestBoard_ADC124)."
+    },
+    {
+     "path": "circuit.c_vmid_ch15_pF",
+     "label": "VMID channel capacitor",
+     "unit": "pF",
+     "type": "float",
+     "tip": "Placeholder (as on TestBoard_ADC124)."
+    },
+    {
+     "path": "circuit.initial_sensor_node_v",
+     "label": "Initial sensor node voltage",
+     "unit": "V",
+     "type": "float",
+     "tip": ""
+    }
+   ]
+  },
+  {
+   "group": "Parasitics (placeholders)",
+   "items": [
+    {
+     "path": "parasitics.sensor_trace_r_ohm",
+     "label": "Sensor trace resistance",
+     "unit": "ohm",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "parasitics.sensor_trace_c_pF",
+     "label": "Sensor trace capacitance",
+     "unit": "pF",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "parasitics.c_coupling_adjacent_pF",
+     "label": "Adjacent-pin coupling",
+     "unit": "pF",
+     "type": "float",
+     "tip": ""
+    }
+   ]
+  },
+  {
+   "group": "ADS7953 (datasheet SLAS605C where stated)",
+   "items": [
+    {
+     "path": "adc.c_sample_pF",
+     "label": "Sample capacitor (input capacitance)",
+     "unit": "pF",
+     "type": "float",
+     "tip": "Datasheet: 15 pF."
+    },
+    {
+     "path": "adc.r_track_ohm",
+     "label": "Track switch resistance",
+     "unit": "ohm",
+     "type": "float",
+     "tip": "Placeholder (not specified)."
+    },
+    {
+     "path": "adc.ron_ohm",
+     "label": "Mux on resistance",
+     "unit": "ohm",
+     "type": "float",
+     "tip": "Placeholder (not specified; the datasheet recommends <= 50 ohm source impedance when MXO is tied to AINP)."
+    },
+    {
+     "path": "adc.roff_ohm",
+     "label": "Mux off resistance",
+     "unit": "ohm",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "adc.cs_off_pF",
+     "label": "Channel pin capacitance (off)",
+     "unit": "pF",
+     "type": "float",
+     "tip": "Placeholder."
+    },
+    {
+     "path": "adc.c_feedthrough_pF",
+     "label": "Channel to MXO feedthrough capacitance",
+     "unit": "pF",
+     "type": "float",
+     "tip": "Placeholder."
+    },
+    {
+     "path": "adc.qinj_pC",
+     "label": "Charge injection",
+     "unit": "pC",
+     "type": "float",
+     "tip": "Not specified by the datasheet: default 0."
+    },
+    {
+     "path": "adc.qinj_src_fraction",
+     "label": "Injection share to the channel side",
+     "unit": "",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "adc.temperature_c",
+     "label": "Temperature",
+     "unit": "C",
+     "type": "float",
+     "tip": "Selects the leakage from datasheet Figure 43 (pin leakage vs temperature, -40 .. 125 C)."
+    },
+    {
+     "path": "adc.leak_scale",
+     "label": "Leakage multiplier",
+     "unit": "",
+     "type": "float",
+     "tip": "Scales the Figure 43 leakage at every channel pin and AINP (same sign everywhere: worst case)."
+    },
+    {
+     "path": "adc.mux_on_delay_ns",
+     "label": "Mux switch-on delay",
+     "unit": "ns",
+     "type": "float",
+     "tip": "Placeholder."
+    },
+    {
+     "path": "adc.mux_off_delay_ns",
+     "label": "Mux switch-off delay",
+     "unit": "ns",
+     "type": "float",
+     "tip": "Placeholder."
+    },
+    {
+     "path": "adc.mux_edge_ns",
+     "label": "Mux control edge time",
+     "unit": "ns",
+     "type": "float",
+     "tip": "Break-before-make needs on >= off + edge."
+    },
+    {
+     "path": "adc.sh_edge_ns",
+     "label": "Sample/hold control edge",
+     "unit": "ns",
+     "type": "float",
+     "tip": ""
+    }
+   ]
+  },
+  {
+   "group": "Buffer OPA365 (datasheet SBOS365G, typical)",
+   "items": [
+    {
+     "path": "opamp.gbw_hz",
+     "label": "Gain-bandwidth",
+     "unit": "Hz",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.aol",
+     "label": "DC open-loop gain",
+     "unit": "V/V",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.slew_v_per_us",
+     "label": "Slew rate",
+     "unit": "V/us",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.vos_uV",
+     "label": "Input offset",
+     "unit": "uV",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.ib_pA",
+     "label": "Input bias current",
+     "unit": "pA",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.cdiff_pF",
+     "label": "Differential input capacitance",
+     "unit": "pF",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.ccm_pF",
+     "label": "Common-mode input capacitance",
+     "unit": "pF",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.ro_ohm",
+     "label": "Open-loop output resistance",
+     "unit": "ohm",
+     "type": "float",
+     "tip": ""
+    },
+    {
+     "path": "opamp.rail_margin_mV",
+     "label": "Output headroom from rails",
+     "unit": "mV",
+     "type": "float",
+     "tip": ""
+    }
+   ]
+  }
+ ],
+ "system": [
+  {
+   "group": "Scan of this ADC",
+   "items": [
+    {
+     "path": "timing.scan_order",
+     "label": "Scan order (mux channels)",
+     "unit": "",
+     "type": "intlist",
+     "tip": "Comma separated sensor channels 0..14, each once."
+    },
+    {
+     "path": "timing.repeat",
+     "label": "Repeats (conversions per channel)",
+     "unit": "",
+     "type": "int",
+     "tip": "The ADC converts the same channel this many frames in a row before switching to the next channel or VMID; only the last conversion is kept. Each extra repeat adds one frame to the connected time."
+    },
+    {
+     "path": "timing.vmid_between_channels",
+     "label": "VMID visit after every channel",
+     "unit": "",
+     "type": "bool",
+     "tip": "Firmware 'VMID between channels': 2 VMID frames after every channel (stream = n*(repeats+2) frames)."
+    },
+    {
+     "path": "timing.vmid_frames_between",
+     "label": "VMID frames after a channel",
+     "unit": "",
+     "type": "int",
+     "tip": ""
+    },
+    {
+     "path": "timing.other_adc_frames",
+     "label": "Frames of the other ADC while this mux is parked on VMID",
+     "unit": "",
+     "type": "int",
+     "tip": "Default 12: ADC1 streams 10 routes + 2 drain frames before ADC2 (full routing, repeat 1)."
+    },
+    {
+     "path": "timing.sweep_gap_us",
+     "label": "Extra gap per sweep (software, USB)",
+     "unit": "us",
+     "type": "float",
+     "tip": "Parked on VMID. Default 0."
+    },
+    {
+     "path": "timing.t_start_us",
+     "label": "Start delay",
+     "unit": "us",
+     "type": "float",
+     "tip": ""
+    }
+   ]
+  },
+  {
+   "group": "SPI and frame timing",
+   "items": [
+    {
+     "path": "timing.spi_clk_hz",
+     "label": "ADC SPI clock",
+     "unit": "Hz",
+     "type": "float",
+     "tip": "20 MHz (type 20meg)."
+    },
+    {
+     "path": "timing.adc_word_clocks",
+     "label": "SCLK clocks per frame",
+     "unit": "",
+     "type": "int",
+     "tip": "ADS7953: 16."
+    },
+    {
+     "path": "timing.frame_gap_ns",
+     "label": "Gap between frames",
+     "unit": "ns",
+     "type": "float",
+     "tip": "CS-high guard plus software time. 1200 ns gives ~2 us frames (measured 16,889 sweeps/s over 29 frame slots)."
+    },
+    {
+     "path": "timing.first_clock_delay_ns",
+     "label": "First SCLK edge after CS falls",
+     "unit": "ns",
+     "type": "float",
+     "tip": "Assumed 25 ns (illustration in the timing report); measure with a scope."
+    }
+   ]
+  }
+ ],
+ "simulation": [
+  {
+   "group": "Measurement time",
+   "items": [
+    {
+     "path": "timing.run_duration_s",
+     "label": "Run duration",
+     "unit": "s",
+     "type": "float",
+     "tip": "Optional. Empty = use the number of sweeps below.",
+     "nullable": true
+    },
+    {
+     "path": "timing.num_cycles",
+     "label": "Sweeps",
+     "unit": "",
+     "type": "int",
+     "tip": "Used when no run duration is set."
+    },
+    {
+     "path": "timing.tail_us",
+     "label": "Tail after the last sweep",
+     "unit": "us",
+     "type": "float",
+     "tip": ""
+    }
+   ]
+  },
+  {
+   "group": "Solver",
+   "items": [
+    {
+     "path": "simulation.max_step_ns",
+     "label": "Maximum time step",
+     "unit": "ns",
+     "type": "float",
+     "tip": "5 ns resolves the mux switching edges; coarser steps give noisy baselines."
+    }
+   ]
+  }
+ ],
+ "tables": [
+  {
+   "path": "forces",
+   "title": "Input profile: force pulses",
+   "tip": "One row per trapezoidal force pulse on a sensor (channel 0..14). Rows on the same address add up. About 0.12 N already reaches VREF for a 0.7 mm sensor.",
+   "columns": [
+    {
+     "key": "address",
+     "label": "Channel",
+     "type": "int",
+     "min": 0,
+     "max": 14
+    },
+    {
+     "key": "t_start_us",
+     "label": "Start [us]",
+     "type": "float"
+    },
+    {
+     "key": "rise_us",
+     "label": "Rise [us]",
+     "type": "float"
+    },
+    {
+     "key": "width_us",
+     "label": "Hold [us]",
+     "type": "float"
+    },
+    {
+     "key": "fall_us",
+     "label": "Fall [us]",
+     "type": "float"
+    },
+    {
+     "key": "amp_N",
+     "label": "Amplitude [N]",
+     "type": "float"
+    }
+   ],
+   "new_row": {
+    "address": 2,
+    "t_start_us": 20.0,
+    "rise_us": 40.0,
+    "width_us": 150.0,
+    "fall_us": 40.0,
+    "amp_N": 0.05
+   }
+  }
+ ],
+ "plot_groups": [
+  {
+   "id": "adc",
+   "title": "ADC chain [V]"
+  },
+  {
+   "id": "pins",
+   "title": "Sensor pins [V]"
+  },
+  {
+   "id": "force",
+   "title": "Applied force [N]"
+  },
+  {
+   "id": "enable",
+   "title": "Mux enable [0..1]"
+  },
+  {
+   "id": "control",
+   "title": "S/H control"
+  },
+  {
+   "id": "other",
+   "title": "Other nodes [V]"
+  }
+ ],
+ "nodes": [
+  {
+   "name": "mxo",
+   "label": "MXO (mux output / buffer input)",
+   "group": "adc",
+   "default": true
+  },
+  {
+   "name": "sh",
+   "label": "ADC sample capacitor (converted value)",
+   "group": "adc",
+   "default": true
+  },
+  {
+   "name": "ain",
+   "label": "AINP (buffer output node)",
+   "group": "adc"
+  },
+  {
+   "name": "bufo",
+   "label": "Buffer output",
+   "group": "adc"
+  },
+  {
+   "name": "vmid",
+   "label": "VMID",
+   "group": "adc"
+  },
+  {
+   "name": "s0",
+   "label": "Ch0 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s1",
+   "label": "Ch1 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s2",
+   "label": "Ch2 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s3",
+   "label": "Ch3 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s4",
+   "label": "Ch4 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s5",
+   "label": "Ch5 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s6",
+   "label": "Ch6 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s7",
+   "label": "Ch7 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s8",
+   "label": "Ch8 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s9",
+   "label": "Ch9 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s10",
+   "label": "Ch10 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s11",
+   "label": "Ch11 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s12",
+   "label": "Ch12 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s13",
+   "label": "Ch13 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s14",
+   "label": "Ch14 pin",
+   "group": "pins"
+  },
+  {
+   "name": "s15",
+   "label": "Ch15 (VMID) pin",
+   "group": "pins"
+  },
+  {
+   "name": "f0",
+   "label": "Force on sensor 0",
+   "group": "force"
+  },
+  {
+   "name": "f1",
+   "label": "Force on sensor 1",
+   "group": "force"
+  },
+  {
+   "name": "f2",
+   "label": "Force on sensor 2",
+   "group": "force"
+  },
+  {
+   "name": "f3",
+   "label": "Force on sensor 3",
+   "group": "force"
+  },
+  {
+   "name": "f4",
+   "label": "Force on sensor 4",
+   "group": "force"
+  },
+  {
+   "name": "f5",
+   "label": "Force on sensor 5",
+   "group": "force"
+  },
+  {
+   "name": "f6",
+   "label": "Force on sensor 6",
+   "group": "force"
+  },
+  {
+   "name": "f7",
+   "label": "Force on sensor 7",
+   "group": "force"
+  },
+  {
+   "name": "f8",
+   "label": "Force on sensor 8",
+   "group": "force"
+  },
+  {
+   "name": "f9",
+   "label": "Force on sensor 9",
+   "group": "force"
+  },
+  {
+   "name": "f10",
+   "label": "Force on sensor 10",
+   "group": "force"
+  },
+  {
+   "name": "f11",
+   "label": "Force on sensor 11",
+   "group": "force"
+  },
+  {
+   "name": "f12",
+   "label": "Force on sensor 12",
+   "group": "force"
+  },
+  {
+   "name": "f13",
+   "label": "Force on sensor 13",
+   "group": "force"
+  },
+  {
+   "name": "f14",
+   "label": "Force on sensor 14",
+   "group": "force"
+  },
+  {
+   "name": "c0",
+   "label": "Enable Ch0",
+   "group": "enable"
+  },
+  {
+   "name": "c1",
+   "label": "Enable Ch1",
+   "group": "enable"
+  },
+  {
+   "name": "c2",
+   "label": "Enable Ch2",
+   "group": "enable"
+  },
+  {
+   "name": "c3",
+   "label": "Enable Ch3",
+   "group": "enable"
+  },
+  {
+   "name": "c4",
+   "label": "Enable Ch4",
+   "group": "enable"
+  },
+  {
+   "name": "c5",
+   "label": "Enable Ch5",
+   "group": "enable"
+  },
+  {
+   "name": "c6",
+   "label": "Enable Ch6",
+   "group": "enable"
+  },
+  {
+   "name": "c7",
+   "label": "Enable Ch7",
+   "group": "enable"
+  },
+  {
+   "name": "c8",
+   "label": "Enable Ch8",
+   "group": "enable"
+  },
+  {
+   "name": "c9",
+   "label": "Enable Ch9",
+   "group": "enable"
+  },
+  {
+   "name": "c10",
+   "label": "Enable Ch10",
+   "group": "enable"
+  },
+  {
+   "name": "c11",
+   "label": "Enable Ch11",
+   "group": "enable"
+  },
+  {
+   "name": "c12",
+   "label": "Enable Ch12",
+   "group": "enable"
+  },
+  {
+   "name": "c13",
+   "label": "Enable Ch13",
+   "group": "enable"
+  },
+  {
+   "name": "c14",
+   "label": "Enable Ch14",
+   "group": "enable"
+  },
+  {
+   "name": "c15",
+   "label": "Enable Ch15 (VMID)",
+   "group": "enable"
+  },
+  {
+   "name": "shc",
+   "label": "S/H control (1 = track, 0 = hold)",
+   "group": "control"
+  }
+ ],
+ "sample_marker": {
+  "node": "sh",
+  "label": "ADC hold samples"
+ }
+}
