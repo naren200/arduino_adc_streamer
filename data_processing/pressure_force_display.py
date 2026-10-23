@@ -184,7 +184,9 @@ class PressureForceDisplayEngine:
             sensor_id = str(raw_id).strip().upper()
             if not all(position in voltages for position in SHEAR_SENSOR_POSITIONS):
                 raise ValueError(f"force-display package {sensor_id} is missing a PZT position")
-            package = self._packages.setdefault(sensor_id, self._new_package_state())
+            package = self._packages.get(sensor_id)
+            if package is None:
+                package = self._packages[sensor_id] = self._new_package_state()
             calibration = (channel_calibration or {}).get(sensor_id, {})
             observation_timestamp: float | None = None
             for position in SHEAR_SENSOR_POSITIONS:
