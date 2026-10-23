@@ -71,12 +71,12 @@ def run_netlist(netlist: str, nodes: list[str], workdir: Path, qspice: Path,
                 cancel: threading.Event | None = None) -> QRaw:
     """Write the netlist with a .save of the requested nodes, run QSPICE, return the parsed result."""
     workdir.mkdir(parents=True, exist_ok=True)
-    cir = workdir / "run.cir"
-    for stale in workdir.glob("run.*"):
+    for stale in workdir.glob("run*.*"):  # best effort: a file still mapped by another window cannot be deleted on Windows
         try:
             stale.unlink()
         except OSError:
             pass
+    cir = workdir / f"run_{int(time.time() * 1000)}.cir"   # unique name: never read or overwrite a stale/locked result
     cir.write_text(netlist_tools.set_save(netlist, nodes), encoding="utf-8")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
     t0 = time.time()
@@ -92,8 +92,11 @@ def run_netlist(netlist: str, nodes: list[str], workdir: Path, qspice: Path,
             progress(time.time() - t0, raw.stat().st_size if raw.exists() else 0)
         time.sleep(0.25)
     output = proc.stdout.read() if proc.stdout else ""
-    if not raw.exists():
-        raise SimulationError("QSPICE produced no result file.\n" + output.strip()[-1500:])
+    out_file = cir.with_suffix(".out")
+    log = output + (out_file.read_text(errors="replace") if out_file.exists() else "")
+    if "Fatal error" in log or not raw.exists():
+        detail = next((ln.strip() for ln in log.splitlines() if "Fatal error" in ln), log.strip()[-1500:])
+        raise SimulationError(f"QSPICE failed: {detail}")
     if progress:
         progress(time.time() - t0, raw.stat().st_size)
     try:
