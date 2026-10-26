@@ -10,6 +10,7 @@ from core.piezo_engine.median import (
     MEDIAN_WINDOW_MAX_SAMPLES,
     MEDIAN_WINDOW_MIN_SAMPLES,
     normalize_median_window,
+    sliding_window_median,
     validate_median_window,
 )
 from data_processing.pzt_blip_filter import PztBlipFilterMixin
@@ -140,3 +141,24 @@ def test_normalize_clamps_and_forces_odd():
 def test_wrong_column_count_raises():
     with pytest.raises(ValueError):
         CausalMedianN(3, n_columns=2).process(np.zeros((4, 3)))
+
+
+def _np_median_reference(extended: np.ndarray, window: int) -> np.ndarray:
+    return np.median(np.lib.stride_tricks.sliding_window_view(extended, window, axis=0), axis=-1)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("window", [3, 5, 15])
+@pytest.mark.parametrize("row_count", [1, 2, 40])
+def test_sliding_window_median_is_bit_identical_to_np_median(dtype, window, row_count):
+    rng = np.random.default_rng(window * 100 + row_count)
+    extended = rng.integers(0, ADC_FULL_SCALE, size=(window - 1 + row_count, 7)).astype(dtype)
+    extended[1::2, 2] = extended[0::2, 2][: len(extended[1::2, 2])]  # ties
+    last_row = len(extended) - 1
+    extended[min(3, last_row), 4] = np.nan
+    extended[min(4, last_row), 5] = np.inf
+    extended[min(5, last_row), 6] = -np.inf
+    expected = _np_median_reference(extended, window)
+    actual = sliding_window_median(extended, window)
+    assert actual.dtype == expected.dtype
+    np.testing.assert_array_equal(actual, expected)

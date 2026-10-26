@@ -40,6 +40,21 @@ def validate_median_window(window_samples: int) -> int:
     return window
 
 
+def sliding_window_median(extended: np.ndarray, window_samples: int) -> np.ndarray:
+    """Median of every ``window_samples`` window down axis 0 (``len - window + 1`` rows).
+
+    Window 3, the default and the live-ingest hot path, is a pure min/max
+    selection: bit-identical to ``np.median`` (NaN included) at a fraction of
+    its per-call overhead, which dominates for one-sweep blocks.
+    """
+    if window_samples == MEDIAN_WINDOW_MIN_SAMPLES:
+        row_count = extended.shape[0] - window_samples + 1
+        first, second, third = (extended[offset:offset + row_count] for offset in range(window_samples))
+        return np.maximum(np.minimum(first, second), np.minimum(np.maximum(first, second), third))
+    windows = np.lib.stride_tricks.sliding_window_view(extended, window_samples, axis=0)
+    return np.median(windows, axis=-1)
+
+
 class CausalMedianN:
     """Stateful causal median-of-N over one or more columns (samples on axis 0)."""
 
@@ -68,7 +83,6 @@ class CausalMedianN:
         filtered = block.copy()
         if extended.shape[0] < self.window_samples:
             return filtered
-        windows = np.lib.stride_tricks.sliding_window_view(extended, self.window_samples, axis=0)
         first_filtered_row = self._carry - len(self._history)
-        filtered[first_filtered_row:] = np.median(windows, axis=-1)
+        filtered[first_filtered_row:] = sliding_window_median(extended, self.window_samples)
         return filtered

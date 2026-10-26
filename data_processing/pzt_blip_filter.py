@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from core.piezo_engine.median import sliding_window_median
 from constants.pzt_blip_filter import (
     PZT_BLIP_FILTER_DEFAULT_ENABLED,
     PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES,
@@ -100,11 +101,9 @@ class PztBlipFilterMixin:
         extended = np.concatenate([prefix, raw_columns], axis=0)
 
         if extended.shape[0] >= window:
-            windows = np.lib.stride_tricks.sliding_window_view(extended, window, axis=0)
-            median = np.median(windows, axis=-1)
             filtered = raw_columns.copy()
             offset = carry - history_len
-            filtered[offset:] = median
+            filtered[offset:] = sliding_window_median(extended, window)
         else:
             # Not enough samples (across this block + carried history) for a
             # single full window yet; pass raw values through unfiltered.
