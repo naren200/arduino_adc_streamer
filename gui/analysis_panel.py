@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
 from pyqtgraph.exporters import ImageExporter
 
 from constants.plotting import PLOT_COLORS, PLOT_EXPORT_WIDTH
+from constants.pressure_map import ANALYSIS_HPF_CUTOFF_HZ
 from constants.pzt_blip_filter import (
     PZT_BLIP_FILTER_DEFAULT_ENABLED,
     PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES,
@@ -1582,7 +1583,7 @@ class AnalysisPanelMixin(GatingPreviewPanelMixin):
             "overlay_flags": self.analysis_state.get("overlays", {}),
             "vref_voltage": self._analysis_source_voltage(),
             "integration_window_samples": int(getattr(self, "signal_integration_window_samples", 1) or 1),
-            "hpf_cutoff_hz": float(getattr(self, "signal_integration_hpf_cutoff_hz", 0.0) or 0.0),
+            "hpf_cutoff_hz": ANALYSIS_HPF_CUTOFF_HZ,
             "pzt_force_settings": self.analysis_state.get("pzt_force", {}),
             "gate_replay_setup": self.gating_preview_request(),
             "auto_range": getattr(self, "_analysis_pending_auto_range", False),

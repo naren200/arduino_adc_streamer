@@ -1,4 +1,4 @@
-"""Tests for the Signal Integration tab's voltage HPF display helpers."""
+"""Tests for the Signal Integration tab's voltage display helpers."""
 
 import os
 import json
@@ -21,15 +21,12 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
     DEFAULT_PRESSURE_PIXELS_PER_MM,
     DEFAULT_PRESSURE_SHOW_MARKER,
-    DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
     DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH,
-    SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ,
 )
 from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS
 from constants.shear import DEFAULT_ARROW_GAIN, DEFAULT_ARROW_MIN_THRESHOLD, SHEAR_SENSOR_POSITIONS
 from config.pressure_map_mask_config import MaskConfigStore
-from data_processing.adc_filter_engine import ADCFilterEngine
 from core.piezo_engine.normal_force_calculator import NormalForceCalculator
 from data_processing.pressure_map_array_generator import PressureMapArrayGenerator
 from data_processing.force_block_worker import ForceBlockWorker
@@ -103,11 +100,8 @@ class SignalIntegrationPanelHarness(PressureMapPanelMixin):
             "channel_selection_source": "manual",
             "selected_array_sensors": [],
         }
-        self.signal_integration_hpf_cutoff_hz = SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ
         self.signal_integration_window_samples = DEFAULT_INTEGRATION_WINDOW_SAMPLES
         self.signal_integration_display_window_sec = 1.0
-        self._signal_integration_filter_engine = ADCFilterEngine()
-        self._signal_integration_filter_warning = ""
         self._shear_settings_loading = False
         self._shear_autosave_enabled = False
         self._pressure_package_sensor_gains = {}
@@ -168,7 +162,7 @@ class SignalIntegrationPanelHarness(PressureMapPanelMixin):
 
 
 class SignalIntegrationPanelTests(unittest.TestCase):
-    """Verify display-only voltage conversion, HPF, and integration."""
+    """Verify display-only voltage conversion and integration."""
 
     SAMPLE_RATE_HZ = 1000.0
     SAMPLE_COUNT = 500
@@ -179,7 +173,6 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def _install_shear_setting_widgets(self, harness):
-        harness.signal_integration_hpf_spin = DummySpinBox(12.5)
         harness.signal_integration_window_spin = DummySpinBox(44)
         harness.signal_integration_display_window_spin = DummySpinBox(2.5)
         harness.signal_integration_timeline_mode_combo = DummyComboBox("PZR")
@@ -358,16 +351,40 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(harness.force_arrow_gain_spin.value(), 15.0)
             self.assertEqual(harness.force_arrow_threshold_spin.value(), 0.0125)
 
-    def test_hpf_removes_constant_dc_bias_without_integration(self):
+    def test_hpf_control_is_gone_and_saved_hpf_key_is_ignored(self):
         harness = SignalIntegrationPanelHarness()
-        harness.signal_integration_hpf_cutoff_hz = DEFAULT_HPF_CUTOFF_HZ
-        sample_times = np.arange(self.SAMPLE_COUNT, dtype=np.float64) / self.SAMPLE_RATE_HZ
-        biased_signal = np.full(self.SAMPLE_COUNT, harness.VREF_VOLTS / 2.0, dtype=np.float64)
+        self._install_shear_setting_widgets(harness)
+        tab = harness.create_signal_integration_tab()
+        self.assertFalse(hasattr(harness, "signal_integration_hpf_spin"))
+        tab.deleteLater()
 
-        filtered = harness._remove_signal_integration_dc_bias(biased_signal, sample_times)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "shear_settings.json"
+            harness.save_shear_settings_to_path(settings_path, log_message=False)
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            self.assertNotIn("hpf_cutoff_hz", payload["shear_settings"]["signal_integration"])
 
-        self.assertEqual(filtered.shape, biased_signal.shape)
-        self.assertLess(float(np.max(np.abs(filtered))), DEFAULT_HPF_CUTOFF_HZ / self.SAMPLE_RATE_HZ)
+            payload["shear_settings"]["signal_integration"]["hpf_cutoff_hz"] = 10.0
+            settings_path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertTrue(harness.load_shear_settings_from_path(settings_path, log_message=False))
+
+    def test_integrated_package_values_match_unfiltered_integration(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.signal_integration_window_samples = 4
+        rng = np.random.default_rng(7)
+        max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+        data = rng.integers(0, max_adc_value, size=(200, 3)).astype(np.float32)
+        timestamps = np.arange(200, dtype=np.float64) * 0.001
+
+        integrated, _times, latest = harness._prepare_signal_integration_integrated_series(
+            {"sample_indices": [0, 1, 2]}, data, timestamps, avg_sample_time_sec=0.0003,
+            max_samples_per_series=10_000,
+        )
+
+        voltage = data.reshape(-1).astype(np.float64) / max_adc_value * harness.VREF_VOLTS
+        expected = harness._integrate_signal_integration_voltage_samples(voltage)
+        self.assertTrue(np.array_equal(integrated, expected))
+        self.assertEqual(latest, float(expected[-1]))
 
     def test_integration_window_produces_moving_sum(self):
         harness = SignalIntegrationPanelHarness()
@@ -381,7 +398,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             np.asarray([1.0, 3.0, 6.0, 9.0, 12.0], dtype=np.float64),
         )
 
-    def test_prepare_integrated_series_applies_voltage_hpf_and_integration(self):
+    def test_prepare_integrated_series_applies_voltage_integration(self):
         harness = SignalIntegrationPanelHarness()
         harness.signal_integration_window_samples = 2
         max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
@@ -440,7 +457,6 @@ class SignalIntegrationPanelTests(unittest.TestCase):
     def test_prepare_integrated_series_can_subtract_time_series_median_baseline(self):
         harness = SignalIntegrationPanelHarness()
         harness.signal_integration_window_samples = 1
-        harness.signal_integration_hpf_cutoff_hz = SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ
         harness.signal_integration_use_median_baseline_check = DummyCheckBox(True)
         max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
         one_volt_count = max_adc_value / harness.VREF_VOLTS
@@ -1138,7 +1154,6 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             payload = json.loads(settings_path.read_text(encoding="utf-8"))
             settings = payload["shear_settings"]
             self.assertEqual(payload["version"], 1)
-            self.assertEqual(settings["signal_integration"]["hpf_cutoff_hz"], 12.5)
             self.assertEqual(settings["signal_integration"]["integration_window_samples"], 44)
             self.assertEqual(settings["signal_integration"]["timeline_source"], "PZR")
             self.assertFalse(settings["signal_integration"]["show_rs1"])
@@ -1174,7 +1189,6 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             }
             settings_path.write_text(json.dumps(payload), encoding="utf-8")
 
-            harness.signal_integration_hpf_spin.setValue(1.0)
             harness.signal_integration_window_spin.setValue(2)
             harness.signal_integration_timeline_mode_combo.setCurrentText("PZT")
             harness.signal_integration_rosette_rs1_check.setChecked(True)
@@ -1201,7 +1215,6 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             applied = harness.load_shear_settings_from_path(settings_path, log_message=True)
 
             self.assertTrue(applied)
-            self.assertEqual(harness.signal_integration_hpf_spin.value(), 12.5)
             self.assertEqual(harness.signal_integration_window_spin.value(), 44)
             self.assertEqual(harness.signal_integration_timeline_mode_combo.currentText(), "PZR")
             self.assertFalse(harness.signal_integration_rosette_rs1_check.isChecked())
@@ -1369,8 +1382,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         tab = harness.create_signal_integration_tab()
         try:
             expected_tooltips = {
-                "signal_integration_hpf_spin": "high-pass cutoff",
-                "signal_integration_window_spin": "recent high-pass-filtered samples",
+                "signal_integration_window_spin": "recent samples summed",
                 "signal_integration_display_window_spin": "recent history",
                 "signal_integration_reset_btn": "refresh the integrated preview",
                 "signal_integration_timeline_mode_combo": "timeline shows integrated pzt signals",

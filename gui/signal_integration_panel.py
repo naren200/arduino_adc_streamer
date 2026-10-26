@@ -48,7 +48,6 @@ from PyQt6.QtWidgets import (
 )
 from gui.custom_widgets import NonScrollableDoubleSpinBox as QDoubleSpinBox, NonScrollableSpinBox as QSpinBox
 
-from constants.filtering_defaults import FILTER_DEFAULT_LOW_CUTOFF_HZ
 from constants.plotting import (
     IADC_RESOLUTION_BITS,
     MAX_PLOT_SWEEPS,
@@ -95,7 +94,6 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_MASK_NAME,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     DEFAULT_DISPLAY_WINDOW_SEC,
-    DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
     DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH,
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS1_ENABLED,
@@ -130,7 +128,6 @@ from constants.pressure_map import (
     PRESSURE_SENSOR_SPACING_STEP_MM,
     SIGNAL_INTEGRATION_AVERAGE_LINE_WIDTH,
     SIGNAL_INTEGRATION_DIMMED_COLOR_FRACTION,
-    SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ,
     SIGNAL_INTEGRATION_DISPLAY_WINDOW_DECIMALS,
     SIGNAL_INTEGRATION_DISPLAY_WINDOW_MAX_SEC,
     SIGNAL_INTEGRATION_DISPLAY_WINDOW_MIN_SEC,
@@ -138,16 +135,10 @@ from constants.pressure_map import (
     SIGNAL_INTEGRATION_HISTORY_DISPLAY_WINDOW_MULTIPLIER,
     SIGNAL_INTEGRATION_HISTORY_INTEGRATION_WINDOW_MULTIPLIER,
     SIGNAL_INTEGRATION_HISTORY_MIN_SWEEPS,
-    SIGNAL_INTEGRATION_HPF_CUTOFF_DECIMALS,
-    SIGNAL_INTEGRATION_HPF_CUTOFF_MAX_HZ,
-    SIGNAL_INTEGRATION_HPF_CUTOFF_MIN_HZ,
-    SIGNAL_INTEGRATION_HPF_CUTOFF_STEP_HZ,
-    SIGNAL_INTEGRATION_HPF_FILTER_ORDER,
     SIGNAL_INTEGRATION_LEGEND_OFFSET,
     SIGNAL_INTEGRATION_MAX_PROCESSING_SWEEPS,
     SIGNAL_INTEGRATION_MAX_TOTAL_POINTS_TO_DISPLAY,
     SIGNAL_INTEGRATION_MIN_POINTS_PER_VISIBLE_CHANNEL,
-    SIGNAL_INTEGRATION_NYQUIST_DIVISOR,
     SIGNAL_INTEGRATION_PLOT_MAX_HEIGHT_PX,
     SIGNAL_INTEGRATION_PLOT_MIN_HEIGHT_PX,
     SIGNAL_INTEGRATION_PLOT_LINE_WIDTH,
@@ -213,7 +204,6 @@ from constants.shear import (
     SHEAR_SETTINGS_VERTICAL_SPACING_PX,
     SHEAR_SETTINGS_VERSION,
 )
-from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
 from core.piezo_engine.normal_force_calculator import NormalForceCalculator, NormalForceResult
 from data_processing.pressure_map_generator import PressureMapGenerator, PressureMapResult
 from data_processing.pressure_map_array_generator import (
@@ -280,7 +270,7 @@ class PressureMapPanelMixin:
             None.
 
         Returns:
-            QWidget containing HPF controls, integration controls, display
+            QWidget containing integration controls, display
             controls, the integrated voltage plot, shear visualization, and
             pressure map visualization.
 
@@ -354,34 +344,14 @@ class PressureMapPanelMixin:
         controls_group = QGroupBox("Signal Integration Controls")
         controls_layout = QGridLayout(controls_group)
 
-        hpf_tooltip = (
-            "Display-only high-pass cutoff applied before integration to remove DC bias. "
-            "Lower values keep slower drift; 0 disables the HPF."
-        )
-        controls_layout.addWidget(self._create_tooltip_label("HPF cutoff:", hpf_tooltip), 0, 0)
-        self.signal_integration_hpf_spin = QDoubleSpinBox()
-        self.signal_integration_hpf_spin.setRange(
-            SIGNAL_INTEGRATION_HPF_CUTOFF_MIN_HZ,
-            SIGNAL_INTEGRATION_HPF_CUTOFF_MAX_HZ,
-        )
-        self.signal_integration_hpf_spin.setDecimals(SIGNAL_INTEGRATION_HPF_CUTOFF_DECIMALS)
-        self.signal_integration_hpf_spin.setSingleStep(SIGNAL_INTEGRATION_HPF_CUTOFF_STEP_HZ)
-        self.signal_integration_hpf_spin.setSuffix(" Hz")
-        self.signal_integration_hpf_spin.setValue(
-            float(getattr(self, "signal_integration_hpf_cutoff_hz", DEFAULT_HPF_CUTOFF_HZ))
-        )
-        self.signal_integration_hpf_spin.setToolTip(hpf_tooltip)
-        self.signal_integration_hpf_spin.valueChanged.connect(self.on_signal_integration_settings_changed)
-        controls_layout.addWidget(self.signal_integration_hpf_spin, 0, 1)
-
         integration_window_tooltip = (
-            "Number of recent high-pass-filtered samples summed at each point. "
+            "Number of recent samples summed at each point. "
             "Larger windows smooth more and emphasize slower buildup."
         )
         controls_layout.addWidget(
             self._create_tooltip_label("Integration window:", integration_window_tooltip),
             0,
-            2,
+            0,
         )
         self.signal_integration_window_spin = QSpinBox()
         self.signal_integration_window_spin.setRange(
@@ -394,7 +364,7 @@ class PressureMapPanelMixin:
         )
         self.signal_integration_window_spin.setToolTip(integration_window_tooltip)
         self.signal_integration_window_spin.valueChanged.connect(self.on_signal_integration_settings_changed)
-        controls_layout.addWidget(self.signal_integration_window_spin, 0, 3)
+        controls_layout.addWidget(self.signal_integration_window_spin, 0, 1)
 
         display_window_tooltip = (
             "How much recent history the Pressure Map tab shows and uses for the live preview."
@@ -402,7 +372,7 @@ class PressureMapPanelMixin:
         controls_layout.addWidget(
             self._create_tooltip_label("Display window:", display_window_tooltip),
             0,
-            4,
+            2,
         )
         self.signal_integration_display_window_spin = QDoubleSpinBox()
         self.signal_integration_display_window_spin.setRange(
@@ -417,14 +387,14 @@ class PressureMapPanelMixin:
         )
         self.signal_integration_display_window_spin.setToolTip(display_window_tooltip)
         self.signal_integration_display_window_spin.valueChanged.connect(self.on_signal_integration_settings_changed)
-        controls_layout.addWidget(self.signal_integration_display_window_spin, 0, 5)
+        controls_layout.addWidget(self.signal_integration_display_window_spin, 0, 3)
 
         self.signal_integration_reset_btn = QPushButton("Reset View")
         self.signal_integration_reset_btn.setToolTip(
             "Refresh the integrated preview using the current settings and latest buffered data."
         )
         self.signal_integration_reset_btn.clicked.connect(self.on_signal_integration_reset_clicked)
-        controls_layout.addWidget(self.signal_integration_reset_btn, 0, 6)
+        controls_layout.addWidget(self.signal_integration_reset_btn, 0, 4)
 
         show_graph_tooltip = (
             "Show or hide the top Pressure Map timeline graph while keeping the pressure maps live."
@@ -440,7 +410,7 @@ class PressureMapPanelMixin:
         controls_layout.addWidget(self.signal_integration_show_graph_check, 2, 0, 1, 2)
 
         median_baseline_tooltip = (
-            "Subtract the latest Time Series median baseline from each channel before HPF/integration. "
+            "Subtract the latest Time Series median baseline from each channel before integration. "
             "Baselines come from the first auto-capture window or Time Series Zero Signals."
         )
         self.signal_integration_use_median_baseline_check = QCheckBox("Use Time Series median baseline")
@@ -543,7 +513,7 @@ class PressureMapPanelMixin:
         self.signal_integration_plot_widget.setMinimumHeight(SIGNAL_INTEGRATION_PLOT_MIN_HEIGHT_PX)
         self.signal_integration_plot_widget.setMaximumHeight(SIGNAL_INTEGRATION_PLOT_MAX_HEIGHT_PX)
         self.signal_integration_plot_widget.setBackground("w")
-        self.signal_integration_plot_widget.setLabel("left", "Integrated HPF Voltage", units="V samples")
+        self.signal_integration_plot_widget.setLabel("left", "Integrated Voltage", units="V samples")
         self.signal_integration_plot_widget.setLabel("bottom", "Time", units="s")
         self.signal_integration_plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.signal_integration_plot_widget.setMouseEnabled(x=False, y=False)
@@ -601,8 +571,6 @@ class PressureMapPanelMixin:
         self._latest_shear_result: ShearResult | None = None
         self._latest_normal_force_result: NormalForceResult | None = None
         self._latest_pressure_map_result: PressureMapResult | None = None
-        self._signal_integration_filter_engine = ADCFilterEngine()
-        self._signal_integration_filter_warning = ""
         self._signal_integration_updating_plot = False
         self._signal_integration_last_refresh_finished_at: float | None = None
         self._signal_integration_last_refresh_duration_sec = 0.0
@@ -2688,10 +2656,6 @@ class PressureMapPanelMixin:
         """
         return {
             "signal_integration": {
-                "hpf_cutoff_hz": self._spin_float(
-                    "signal_integration_hpf_spin",
-                    float(getattr(self, "signal_integration_hpf_cutoff_hz", DEFAULT_HPF_CUTOFF_HZ)),
-                ),
                 "integration_window_samples": self._spin_int(
                     "signal_integration_window_spin",
                     int(getattr(self, "signal_integration_window_samples", DEFAULT_INTEGRATION_WINDOW_SAMPLES)),
@@ -3004,7 +2968,6 @@ class PressureMapPanelMixin:
         pzt_force = self._settings_section(settings, "pzt_force")
         changed = False
 
-        changed |= self._set_spin_value("signal_integration_hpf_spin", signal_integration, "hpf_cutoff_hz", float)
         changed |= self._set_spin_value(
             "signal_integration_window_spin",
             signal_integration,
@@ -3459,7 +3422,7 @@ class PressureMapPanelMixin:
         return effective
 
     def on_signal_integration_settings_changed(self, _value: object | None = None) -> None:
-        """Apply HPF, integration, and display-window changes.
+        """Apply integration and display-window changes.
 
         Args:
             _value: Qt signal payload from the changed spin box.
@@ -3470,13 +3433,11 @@ class PressureMapPanelMixin:
         Raises:
             None.
         """
-        self.signal_integration_hpf_cutoff_hz = float(self.signal_integration_hpf_spin.value())
         self.signal_integration_window_samples = int(self.signal_integration_window_spin.value())
         self.signal_integration_display_window_sec = float(self.signal_integration_display_window_spin.value())
         self.signal_integration_show_graph = self._get_signal_integration_show_graph()
         self.signal_integration_use_median_baseline = self._get_signal_integration_use_median_baseline()
         self._apply_signal_integration_graph_visibility()
-        self._signal_integration_filter_warning = ""
         self.update_signal_integration_plot()
         self._refresh_pressure_package_gain_controls(
             getattr(self, "_latest_signal_integration_package_layout", None)
@@ -3688,7 +3649,7 @@ class PressureMapPanelMixin:
             self.signal_integration_status_label.setText("Integrated display refreshed")
 
     def update_signal_integration_plot(self) -> None:
-        """Render integrated HPF voltage using the Time Series buffer path.
+        """Render integrated voltage using the Time Series buffer path.
 
         Args:
             None.
@@ -4510,8 +4471,7 @@ class PressureMapPanelMixin:
         from data_processing.acquisition_timing import gap_indices, peak_envelope
         boundaries = np.unique(np.concatenate(([0], gap_indices(channel_times), [len(channel_data)]))).astype(int)
         for start, end in zip(boundaries[:-1], boundaries[1:]):
-            segment = self._remove_signal_integration_dc_bias(channel_data[start:end], channel_times[start:end])
-            channel_data[start:end] = self._integrate_signal_integration_voltage_samples(segment)
+            channel_data[start:end] = self._integrate_signal_integration_voltage_samples(channel_data[start:end])
         channel_data = self._apply_signal_integration_sensor_polarity(channel_data)
 
         if visible_start_time_sec is not None:
@@ -4551,53 +4511,6 @@ class PressureMapPanelMixin:
             multiplier = SENSOR_POLARITY_REVERSED_MULTIPLIER
         return samples * multiplier
 
-    def _remove_signal_integration_dc_bias(
-        self,
-        voltage_samples: np.ndarray,
-        sample_times_sec: np.ndarray,
-    ) -> np.ndarray:
-        cutoff_hz = float(getattr(self, "signal_integration_hpf_cutoff_hz", DEFAULT_HPF_CUTOFF_HZ))
-        if cutoff_hz <= SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ:
-            return voltage_samples
-
-        if voltage_samples.size == 0:
-            return voltage_samples
-
-        sample_rate_hz = self._estimate_signal_integration_series_rate_hz(sample_times_sec)
-        if sample_rate_hz <= 0.0:
-            return self._subtract_signal_integration_visible_mean(
-                voltage_samples,
-                "sample rate unavailable",
-            )
-
-        nyquist_hz = sample_rate_hz / SIGNAL_INTEGRATION_NYQUIST_DIVISOR
-        if cutoff_hz >= nyquist_hz:
-            return self._subtract_signal_integration_visible_mean(
-                voltage_samples,
-                f"cutoff {cutoff_hz:.2f} Hz is at or above Nyquist {nyquist_hz:.2f} Hz",
-            )
-
-        if not SCIPY_FILTERS_AVAILABLE:
-            return self._subtract_signal_integration_visible_mean(
-                voltage_samples,
-                "SciPy unavailable",
-            )
-
-        settings = self._build_signal_integration_hpf_settings(cutoff_hz)
-        try:
-            filtered = self._signal_integration_filter_engine.filter_signal(
-                settings,
-                voltage_samples,
-                sample_rate_hz,
-            )
-            self._signal_integration_filter_warning = ""
-            return np.asarray(filtered, dtype=np.float64)
-        except Exception as exc:
-            return self._subtract_signal_integration_visible_mean(
-                voltage_samples,
-                str(exc),
-            )
-
     def _integrate_signal_integration_voltage_samples(self, voltage_samples: np.ndarray) -> np.ndarray:
         samples = np.asarray(voltage_samples, dtype=np.float64).reshape(-1)
         if samples.size == 0:
@@ -4615,44 +4528,6 @@ class PressureMapPanelMixin:
         if samples.size > window_samples:
             integrated[window_samples:] = cumulative_sum[window_samples:] - cumulative_sum[:-window_samples]
         return integrated
-
-    def _build_signal_integration_hpf_settings(self, cutoff_hz: float) -> dict:
-        return {
-            "enabled": True,
-            "main_type": "highpass",
-            "order": SIGNAL_INTEGRATION_HPF_FILTER_ORDER,
-            "low_cutoff_hz": FILTER_DEFAULT_LOW_CUTOFF_HZ,
-            "high_cutoff_hz": float(cutoff_hz),
-            "notches": [],
-        }
-
-    def _estimate_signal_integration_series_rate_hz(self, sample_times_sec: np.ndarray) -> float:
-        sample_times = np.asarray(sample_times_sec, dtype=np.float64).reshape(-1)
-        if sample_times.size <= 1:
-            return 0.0
-
-        sample_intervals = np.diff(sample_times)
-        positive_intervals = sample_intervals[sample_intervals > 0.0]
-        if positive_intervals.size == 0:
-            return 0.0
-
-        return float(1.0 / np.median(positive_intervals))
-
-    def _subtract_signal_integration_visible_mean(
-        self,
-        voltage_samples: np.ndarray,
-        reason: str,
-    ) -> np.ndarray:
-        self._record_signal_integration_filter_warning(reason)
-        return voltage_samples - float(np.mean(voltage_samples))
-
-    def _record_signal_integration_filter_warning(self, reason: str) -> None:
-        message = f"Signal Integration HPF fallback: {reason}; subtracting visible-window mean"
-        if message == self._signal_integration_filter_warning:
-            return
-        self._signal_integration_filter_warning = message
-        if hasattr(self, "log_status"):
-            self.log_status(message)
 
     def _get_or_create_signal_integration_curve(self, curve_key: Hashable, name: str, pen):
         curve = self.signal_integration_curves.get(curve_key)
@@ -4807,7 +4682,7 @@ class PressureMapPanelMixin:
             self.signal_integration_plot_widget.enableAutoRange(axis="y", enable=False)
             self.signal_integration_plot_widget.setYRange(y_min, y_max, padding=0.0)
         else:
-            self.signal_integration_plot_widget.setLabel("left", "Integrated HPF Voltage", units="V samples")
+            self.signal_integration_plot_widget.setLabel("left", "Integrated Voltage", units="V samples")
             self.signal_integration_plot_widget.enableAutoRange(axis="y")
         self.signal_integration_plot_widget.setLabel("bottom", "Time", units="s")
 
