@@ -63,6 +63,17 @@ def sensor_params(cfg: dict, addr: int) -> dict:
             "cp_calc": cp_calc, "cp_source": source}
 
 
+def adc_range(cfg: dict) -> dict:
+    """ADC input range: 0 .. VDD when VMID is above 0, -VDD .. +VDD (bipolar, twice the span) when VMID is 0."""
+    bits = int(cfg["adc"].get("bits", 12))
+    if bits < 2:
+        raise ValueError("adc.bits must be at least 2")
+    vref = float(cfg["circuit"]["vdd_v"])
+    bipolar = float(cfg["circuit"]["vmid_v"]) == 0
+    v_low = -vref if bipolar else 0.0
+    return {"bits": bits, "vref": vref, "v_low": v_low, "v_high": vref, "bipolar": bipolar, "lsb": (vref - v_low) / 2 ** bits}
+
+
 def adc_timing(t: dict) -> dict:
     """ADC / mux-group timing derived from the number of muxes and the SPI clock (all in seconds).
 
@@ -334,7 +345,13 @@ def build(cfg: dict, with_force: bool = True) -> tuple[str, list[dict]]:
         a(f"* --- end models/{lib} ---")
     a("")
     a("* ---- supply and reference ----")
-    a(f"Vdd vdd 0 {c['vdd_v']}")
+    rng = adc_range(cfg)
+    if rng["bipolar"]:
+        a("* VMID = 0: bipolar analog supply, the buffer rails are -VDD .. +VDD (the real ADC124S101 inputs cannot go below 0 V)")
+        a(f"Vdd vdd 0 {rng['vref']}")
+        a(f"Vss vss 0 {-rng['vref']}")
+    else:
+        a(f"Vdd vdd 0 {c['vdd_v']}")
     a(f"Vvmid vmid 0 {c['vmid_v']}")
     a("")
     a("* ---- PZT sensors: force [N] as volts -> charge source (d33*dF/dt) || Cp || loss ----")
@@ -375,7 +392,7 @@ def build(cfg: dict, with_force: bool = True) -> tuple[str, list[dict]]:
     a(f"R13 muxd vmid {c['r_bias_ohm']}")
     if par["r_bias_par_c_pF"] > 0:
         a(f"Crb muxd vmid {par['r_bias_par_c_pF'] * PICO:.9e}")
-    a("XU13 muxd bufo bufo vdd 0 OPA365_BEH")
+    a(f"XU13 muxd bufo bufo vdd {'vss' if rng['bipolar'] else '0'} OPA365_BEH")
     a(f"R21 bufo ain {c['r_out_ohm']}")
     a(f"C29 ain 0 {c['c_out_pF'] * PICO:.9e}")
     a(f"Cain ain 0 {par['ain_stray_c_pF'] * PICO:.9e}")
@@ -388,7 +405,8 @@ def build(cfg: dict, with_force: bool = True) -> tuple[str, list[dict]]:
             a(f"Rbp{k} bp{k} 0 1k")
     a("")
     a("* ---- initial conditions ----")
-    a(" ".join([".ic"] + [f"V(s{k})={c['initial_sensor_node_v']} V(p{k})={c['initial_sensor_node_v']}" for k in range(7)]))
+    ic = c["vmid_v"] if c["initial_sensor_node_v"] is None else c["initial_sensor_node_v"]     # empty = follows VMID
+    a(" ".join([".ic"] + [f"V(s{k})={ic} V(p{k})={ic}" for k in range(7)]))
     a("")
     a(f".tran 0 {t_stop:.9e} 0 {sim['max_step_ns'] * NANO:.9e}")
     if periodic:

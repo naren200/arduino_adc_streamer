@@ -60,6 +60,17 @@ def sensor_params(cfg: dict, addr: int) -> dict:
             "cp_calc": cp_calc, "cp_source": source}
 
 
+def adc_range(cfg: dict) -> dict:
+    """ADC input range: 0 .. VREF when VMID is above 0, -VREF .. +VREF (bipolar, twice the span) when VMID is 0."""
+    bits = int(cfg["adc"].get("bits", 12))
+    if bits < 2:
+        raise ValueError("adc.bits must be at least 2")
+    vref = float(cfg["circuit"]["vref_v"])
+    bipolar = float(cfg["circuit"]["vmid_v"]) == 0
+    v_low = -vref if bipolar else 0.0
+    return {"bits": bits, "vref": vref, "v_low": v_low, "v_high": vref, "bipolar": bipolar, "lsb": (vref - v_low) / 2 ** bits}
+
+
 def leakage_levels(cfg: dict) -> tuple[float, float, float]:
     """Pin leakage (amps) at 0 V, 1.25 V and 2.5 V for the chosen temperature, from datasheet Figure 43.
 
@@ -295,7 +306,13 @@ def build(cfg: dict) -> tuple[str, dict]:
         add((HERE / "models" / lib).read_text(encoding="utf-8").rstrip())
         add(f"* --- end models/{lib} ---")
     add("")
-    add(f"Vdd vdd 0 {c['vdd_v']}")
+    rng = adc_range(cfg)
+    if rng["bipolar"]:
+        add("* VMID = 0: bipolar analog supply, the buffer rails are -VREF .. +VREF (the real ADS7953 inputs cannot go below 0 V)")
+        add(f"Vdd vdd 0 {rng['vref']}")
+        add(f"Vss vss 0 {-rng['vref']}")
+    else:
+        add(f"Vdd vdd 0 {c['vdd_v']}")
     add(f"Vvmid vmid 0 {c['vmid_v']}")
     add("")
     add("* ---- PZT sensors: force [N] as volts -> charge source d33*dF/dt || Cp || insulation ----")
@@ -328,7 +345,7 @@ def build(cfg: dict) -> tuple[str, dict]:
     add("")
     add("* ---- OPA365 unity buffer, bias resistor to VMID, buffer output -> AINP, ADC sample-and-hold ----")
     add(f"Rbias mxo vmid {c['r_bias_ohm']}")
-    add("XU mxo bufo bufo vdd 0 OPA365_BEH")
+    add(f"XU mxo bufo bufo vdd {'vss' if rng['bipolar'] else '0'} OPA365_BEH")
     add(f"Rout bufo ain {c['r_out_ohm']}")
     add(f"Cain ain 0 {c['c_ain_pF'] * PICO:.9e}")
     add(f"Bsh ain sh I=V(ain,sh)*limit(V(shc),0,1)/{a['r_track_ohm']}")
@@ -336,7 +353,7 @@ def build(cfg: dict) -> tuple[str, dict]:
     add(f"Blkain ain 0 I={leak[0]:.9e} + ({leak[1]:.9e}-{leak[0]:.9e})*limit(V(ain),0,1.25)/1.25 + ({leak[2]:.9e}-{leak[1]:.9e})*limit(V(ain)-1.25,0,1.25)/1.25")
     add(fmt_pwl("Vshc", "shc", hold_pwl(cfg, sched)))
     add("")
-    ic = c["initial_sensor_node_v"]
+    ic = c["vmid_v"] if c["initial_sensor_node_v"] is None else c["initial_sensor_node_v"]     # empty = follows VMID
     add(" ".join([".ic"] + [f"V(s{k})={ic} V(p{k})={ic}" for k in range(N_SENSORS)] + [f"V(sh)={c['vmid_v']}"]))
     add(f".tran 0 {t_stop:.9e} 0 {sim['max_step_ns'] * NANO:.9e}")
     names = ["ain", "mxo", "bufo", "sh", "shc", "vmid"] + [f"s{k}" for k in range(16)] + [f"f{k}" for k in range(N_SENSORS)] \

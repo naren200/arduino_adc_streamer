@@ -148,7 +148,20 @@
      "label": "Initial sensor node voltage",
      "unit": "V",
      "type": "float",
-     "tip": "Start condition of every sensor node."
+     "tip": "Start condition of every sensor node. Empty = follows the VMID reference.",
+     "nullable": true
+    }
+   ]
+  },
+  {
+   "group": "ADC (ADC124S101)",
+   "items": [
+    {
+     "path": "adc.bits",
+     "label": "Resolution (ADC-Out)",
+     "unit": "bit",
+     "type": "int",
+     "tip": "Bits of the derived ADC-Out value. Range 0 .. VDD, or -VDD .. +VDD when VMID = 0; LSB = span / 2^bits."
     }
    ]
   },

@@ -92,3 +92,76 @@ def test_field_hint_shows_the_calculated_capacitance(model):
     assert model.field_hints(cfg)["sensor_defaults.cp_pF"] == "calculated: 60.7 pF"
     cfg["sensor_defaults"]["cp_pF"] = 10.0                  # the hint keeps showing what is being overridden
     assert model.field_hints(cfg)["sensor_defaults.cp_pF"] == "calculated: 60.7 pF"
+
+
+# ------------------------------------------------------------------ B4: ADC range depends on VMID
+def _ref_key(model) -> str:
+    return "vref_v" if model.id == "TestBoard_7953" else "vdd_v"
+
+
+def test_adc_range_and_lsb_follow_vmid(model):
+    bm = model.adapter.bm
+    cfg = model.default_config()
+    ref = cfg["circuit"][_ref_key(model)]
+    uni = bm.adc_range(cfg)
+    assert (uni["v_low"], uni["v_high"], uni["bipolar"]) == (0.0, ref, False)
+    assert uni["lsb"] == pytest.approx(ref / 4096)
+    cfg["circuit"]["vmid_v"] = 0.0
+    bip = bm.adc_range(cfg)
+    assert (bip["v_low"], bip["v_high"], bip["bipolar"]) == (-ref, ref, True)
+    assert bip["lsb"] == pytest.approx(2 * ref / 4096)
+    cfg["adc"]["bits"] = 10
+    assert bm.adc_range(cfg)["lsb"] == pytest.approx(2 * ref / 1024)
+    cfg["adc"]["bits"] = 1
+    with pytest.raises(ValueError, match="bits"):
+        bm.adc_range(cfg)
+
+
+def test_rails_become_symmetric_only_when_vmid_is_zero(model):
+    cfg = model.default_config()
+    ref = cfg["circuit"][_ref_key(model)]
+    unipolar = _netlist(model, cfg)
+    assert "Vss" not in unipolar and re.search(r"^XU\w* \S+ bufo bufo vdd 0 OPA365_BEH$", unipolar, re.MULTILINE)
+    cfg["circuit"]["vmid_v"] = 1.0                                   # any VMID above 0 keeps the single supply
+    assert "Vss" not in _netlist(model, cfg)
+    cfg["circuit"]["vmid_v"] = 0.0
+    bipolar = _netlist(model, cfg)
+    assert re.search(rf"^Vdd vdd 0 {ref}$", bipolar, re.MULTILINE) and re.search(rf"^Vss vss 0 {-ref}$", bipolar, re.MULTILINE)
+    assert re.search(r"^XU\w* \S+ bufo bufo vdd vss OPA365_BEH$", bipolar, re.MULTILINE)
+
+
+def test_initial_sensor_node_follows_vmid_unless_set(model):
+    cfg = model.default_config()
+    assert cfg["circuit"]["initial_sensor_node_v"] is None
+    cfg["circuit"]["vmid_v"] = 0.0
+    ic = next(ln for ln in _netlist(model, cfg).splitlines() if ln.startswith(".ic"))
+    assert "V(s0)=0.0 V(p0)=0.0" in ic
+    cfg["circuit"]["initial_sensor_node_v"] = 0.7
+    ic = next(ln for ln in _netlist(model, cfg).splitlines() if ln.startswith(".ic"))
+    assert "V(s0)=0.7 V(p0)=0.7" in ic
+
+
+def test_bipolar_mode_warns_and_the_swing_checks_use_the_new_range(model):
+    cfg = model.default_config()
+    ref = cfg["circuit"][_ref_key(model)]
+    sp = model.adapter.bm.sensor_params(cfg, 2)
+    amp = 0.75 * ref / (sp["d33"] / sp["cp"])                       # open-circuit swing of 0.75 * ref: more than VMID can take, fits +/-ref
+    cfg["forces"] = [{"address": 2, "t_start_us": 20.0, "rise_us": 40.0, "width_us": 100.0, "fall_us": 40.0, "amp_N": amp}]
+    uni = model.build(cfg)["warnings"]
+    assert any("exceed" in w for w in uni) and not any("bipolar" in w for w in uni)
+    cfg["circuit"]["vmid_v"] = 0.0
+    bip = model.build(cfg)["warnings"]
+    assert any("bipolar analog supply assumed" in w for w in bip)
+    assert not any(w.startswith("Force") for w in bip)      # +/-v_open fits into -ref .. +ref
+    cfg["forces"][0]["amp_N"] = 1.5 * ref / (sp["d33"] / sp["cp"])   # too large even for the bipolar range
+    assert any("exceed" in w for w in model.build(cfg)["warnings"])
+
+
+def test_derived_values_show_range_and_lsb(model):
+    cfg = model.default_config()
+    ref = cfg["circuit"][_ref_key(model)]
+    text = dict(model.summary(cfg))["ADC input range"]
+    assert text.startswith(f"0 .. {ref:g} V (unipolar)") and f"LSB {ref / 4096 * 1e3:.4g} mV at 12 bit" in text
+    cfg["circuit"]["vmid_v"] = 0.0
+    text = dict(model.summary(cfg))["ADC input range"]
+    assert text.startswith(f"{-ref:g} .. {ref:g} V (bipolar") and f"LSB {2 * ref / 4096 * 1e3:.4g} mV" in text

@@ -15,7 +15,7 @@
     "c_ain_pF": 150.0,
     "r_vmid_series_ohm": 100.0,
     "c_vmid_ch15_pF": 150.0,
-    "initial_sensor_node_v": 1.25
+    "initial_sensor_node_v": null
   },
 
   "sensor_defaults": {
@@ -48,7 +48,8 @@
   },
 
   "adc": {
-    "_note": "ADS7953. c_sample_pF is from the datasheet; the leakage is the datasheet Figure 43 curve (AINP leakage vs temperature, VA = VBD = 5 V) read by eye (about +/-1 nA), interpolated log-linearly in temperature and linearly in pin voltage (0, 1.25, 2.5 V), and applied as a current to ground at every channel pin and at AINP. Above 110 C the top curve is extrapolated with its last slope (about 59 nA at 125 C, close to the 61 nA in the electrical characteristics). The other values are placeholders (charge injection 0 = not specified).",
+    "bits": 12,
+    "_note": "ADS7953. bits = resolution used for the derived ADC-Out value (range: 0 .. VREF, or -VREF .. +VREF when VMID = 0). c_sample_pF is from the datasheet; the leakage is the datasheet Figure 43 curve (AINP leakage vs temperature, VA = VBD = 5 V) read by eye (about +/-1 nA), interpolated log-linearly in temperature and linearly in pin voltage (0, 1.25, 2.5 V), and applied as a current to ground at every channel pin and at AINP. Above 110 C the top curve is extrapolated with its last slope (about 59 nA at 125 C, close to the 61 nA in the electrical characteristics). The other values are placeholders (charge injection 0 = not specified).",
     "ron_ohm": 200.0,
     "roff_ohm": 1e12,
     "cs_off_pF": 1.0,

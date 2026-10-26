@@ -162,7 +162,8 @@
      "label": "Initial sensor node voltage",
      "unit": "V",
      "type": "float",
-     "tip": ""
+     "tip": "Start condition of every sensor node. Empty = follows the VMID reference.",
+     "nullable": true
     }
    ]
   },
@@ -195,6 +196,13 @@
   {
    "group": "ADS7953 (datasheet SLAS605C where stated)",
    "items": [
+    {
+     "path": "adc.bits",
+     "label": "Resolution (ADC-Out)",
+     "unit": "bit",
+     "type": "int",
+     "tip": "Bits of the derived ADC-Out value. Range 0 .. VREF, or -VREF .. +VREF when VMID = 0; LSB = span / 2^bits."
+    },
     {
      "path": "adc.c_sample_pF",
      "label": "Sample capacitor (input capacitance)",

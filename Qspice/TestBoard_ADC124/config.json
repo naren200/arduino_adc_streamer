@@ -12,7 +12,7 @@
     "r_bias_ohm": 470000.0,
     "r_out_ohm": 33.0,
     "c_out_pF": 470.0,
-    "initial_sensor_node_v": 1.65
+    "initial_sensor_node_v": null
   },
 
   "sensor_defaults": {
@@ -48,6 +48,11 @@
     "muxd_trace_c_pF": 2.0,
     "r_bias_par_c_pF": 0.1,
     "ain_stray_c_pF": 1.0
+  },
+
+  "adc": {
+    "_note": "ADC124S101: 12-bit SAR ADC with VA = vdd_v as the reference. bits = resolution used for the derived ADC-Out value (range: 0 .. VDD, or -VDD .. +VDD when VMID = 0).",
+    "bits": 12
   },
 
   "mux": {

@@ -33,18 +33,30 @@ def build(cfg: dict) -> dict:
     text, slots = bm.build(cfg, with_force=True)
     sensor = [s for s in slots if s["kind"] == "sensor"]
     warnings: list[str] = []
+    rng = bm.adc_range(cfg)
+    if rng["bipolar"]:
+        warnings.append("VMID = 0: bipolar analog supply assumed, the buffer rails are -VDD .. +VDD "
+                        "(real ADS7953 / ADC124S101 inputs cannot go below 0 V).")
     for kind, f in [("pulse", f) for f in cfg.get("forces", [])] + [("sine", f) for f in cfg.get("forces_sin", [])]:
         sp = bm.sensor_params(cfg, int(f["address"]))
         v_open = sp["d33"] * float(f["amp_N"]) / sp["cp"]
-        if cfg["circuit"]["vmid_v"] + v_open > cfg["circuit"]["vdd_v"]:
+        if cfg["circuit"]["vmid_v"] + v_open > rng["v_high"]:
             warnings.append(f"Force {kind} on address {f['address']} ({f['amp_N']} N) gives {v_open:.2f} V open circuit: "
                             f"the sensor pin would exceed VDD ({cfg['circuit']['vdd_v']} V); the model has no input clamp.")
+        if cfg["circuit"]["vmid_v"] - v_open < rng["v_low"]:
+            below = f"-VDD ({rng['v_low']:g} V)" if rng["bipolar"] else "0 V"
+            warnings.append(f"Force {kind} on address {f['address']}: the release swing would go below {below}.")
     return {
         "netlist": text,
         "t_stop": max(s["t1"] for s in slots),
         "samples": [{"t": s["t_sample"], "label": f"addr {s['address']}"} for s in sensor],
         "warnings": warnings,
     }
+
+
+def adc_range_text(rng: dict) -> str:
+    kind = "bipolar, VMID = 0" if rng["bipolar"] else "unipolar"
+    return f"{rng['v_low']:g} .. {rng['v_high']:g} V ({kind}), LSB {rng['lsb'] * 1e3:.4g} mV at {rng['bits']} bit"
 
 
 def summary(cfg: dict) -> list[tuple[str, str]]:
@@ -76,6 +88,7 @@ def summary(cfg: dict) -> list[tuple[str, str]]:
         ("Sensor capacitance (sensor 0)", f"{sp['cp'] * 1e12:.1f} pF ({sp['cp_source']})"),
         ("Sensitivity, open circuit", f"{sp['d33'] / sp['cp']:.2f} V/N"),
         ("Force for +/-1.65 V swing", f"{1.65 / (sp['d33'] / sp['cp']):.3f} N"),
+        ("ADC input range", adc_range_text(bm.adc_range(cfg))),
     ]
     if t.get("run_duration_s") and cycle > 0:
         out.append(("Scan cycles in the run", f"{int((t['run_duration_s'] - t['t_start_us'] * us) / cycle)}"))

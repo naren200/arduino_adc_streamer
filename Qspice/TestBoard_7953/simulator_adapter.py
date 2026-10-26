@@ -28,14 +28,19 @@ def build(cfg: dict) -> dict:
     text, sched = bm.build(cfg)
     warnings: list[str] = []
     c = cfg["circuit"]
+    rng = bm.adc_range(cfg)
+    if rng["bipolar"]:
+        warnings.append("VMID = 0: bipolar analog supply assumed, the buffer rails are -VREF .. +VREF "
+                        "(real ADS7953 / ADC124S101 inputs cannot go below 0 V).")
     for kind, f in [("pulse", f) for f in cfg.get("forces", [])] + [("sine", f) for f in cfg.get("forces_sin", [])]:
         sp = bm.sensor_params(cfg, int(f["address"]))
         v_open = sp["d33"] * float(f["amp_N"]) / sp["cp"]
-        if c["vmid_v"] + v_open > c["vref_v"]:
+        if c["vmid_v"] + v_open > rng["v_high"]:
             warnings.append(f"Force {kind} on address {f['address']} ({f['amp_N']} N) gives {v_open:.2f} V open circuit: the sensor "
                             f"pin would exceed VREF ({c['vref_v']} V, ADS7953 range 1); the model has no input clamp.")
-        if c["vmid_v"] - v_open < 0:
-            warnings.append(f"Force {kind} on address {f['address']}: the release swing would go below 0 V (ADS7953 absolute range -0.2 V).")
+        if c["vmid_v"] - v_open < rng["v_low"]:
+            below = f"-VREF ({rng['v_low']:g} V)" if rng["bipolar"] else "0 V (ADS7953 absolute range -0.2 V)"
+            warnings.append(f"Force {kind} on address {f['address']}: the release swing would go below {below}.")
     track = sched["timing"]["track"]
     if track < MIN_ACQUISITION_S:
         warnings.append(f"Track window {track * 1e9:.0f} ns is shorter than the ADS7953 minimum acquisition time of 325 ns "
@@ -46,6 +51,11 @@ def build(cfg: dict) -> dict:
         "samples": [{"t": s["t"], "label": f"Ch{s['address']}"} for s in sched["samples"]],
         "warnings": warnings,
     }
+
+
+def adc_range_text(rng: dict) -> str:
+    kind = "bipolar, VMID = 0" if rng["bipolar"] else "unipolar"
+    return f"{rng['v_low']:g} .. {rng['v_high']:g} V ({kind}), LSB {rng['lsb'] * 1e3:.4g} mV at {rng['bits']} bit"
 
 
 def summary(cfg: dict) -> list[tuple[str, str]]:
@@ -76,6 +86,7 @@ def summary(cfg: dict) -> list[tuple[str, str]]:
         ("Sensor capacitance (sensor 0)", f"{sp['cp'] * 1e12:.1f} pF ({sp['cp_source']})"),
         ("Sensitivity, open circuit", f"{sp['d33'] / sp['cp']:.2f} V/N"),
         ("Force for +/-1.25 V swing", f"{c['vmid_v'] / (sp['d33'] / sp['cp']):.3f} N"),
+        ("ADC input range", adc_range_text(bm.adc_range(cfg))),
     ]
 
 
