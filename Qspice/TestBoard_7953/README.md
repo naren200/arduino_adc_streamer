@@ -40,7 +40,8 @@ Sweep = the frames of the other ADCs with this mux on VMID (`n_adc` ADCs in tota
 | Frame gap | 1200 ns (frame ≈ 2 µs) | **Derived**: 16,889 sweeps/s (TestBoard_7953 README) over 29 frame slots ≈ 2.04 µs; replace with a CS/SCLK scope measurement |
 | First SCLK edge after CS falls | 25 ns | Assumption from the timing report's illustration |
 | Mux Ron (200 Ω), pin / feedthrough capacitance, track switch (200 Ω), MXO capacitance (10 pF), R/C at AINP (100 Ω / 150 pF), VMID channel network, supply (3.3 V), mux delays, charge injection (0) | – | **Placeholders**: not in any supplied document. The datasheet gives no mux Ron; AINP R/C is its typical-application value, not this board's schematic. |
-| PZT SM311 (d33 600 pC/N, εr 3500), 0.7 × 0.7 × 0.25 mm | – | Steminc table; size from TestBoard_ADC124 (confirm for this board) |
+| PZT SM311 (d33 600 pC/N, εr 3500), 0.7 × 0.7 × 0.25 mm | – | Steminc table; size from TestBoard_ADC124 (confirm for this board). `sensor_defaults.cp_pF` (empty by default) replaces the calculated capacitance with a measured one, also per address in `sensor_overrides`. |
+| ADC resolution `adc.bits` (12) | – | Used by the simulator for the derived ADC-Out value: range `0 .. VREF`, or `-VREF .. +VREF` with symmetric buffer rails when `vmid_v = 0` (see the Simulator README). |
 
 ## Presets (Simulation tab)
 
@@ -51,7 +52,7 @@ Sweep = the frames of the other ADCs with this mux on VMID (`n_adc` ADCs in tota
 ## Limitations
 
 - Only one ADC; the other pair appears only as parked time. The two buses and the Teensy are not modelled.
-- No ADC quantisation or code output; the converted value is the voltage on the sample capacitor at the hold instant (12-bit LSB at 2.5 V is 0.61 mV).
+- The netlist has no ADC quantisation or code output; the converted value is the voltage on the sample capacitor at the hold instant (12-bit LSB at 2.5 V is 0.61 mV). The Simulator derives the quantised code (ADC-Out), optional white noise and the calculated force from that value after the run.
 - No hold droop, comparator or reference noise; leakage uses the same sign on every channel (worst case).
 - Long runs create long piecewise-linear control sources: a 5 ms run takes about 20 s and a 60 ms run a few minutes at the 5 ns step.
 

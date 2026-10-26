@@ -69,7 +69,7 @@ class ForceTab(QtWidgets.QSplitter):
         self.addWidget(bottom)
         self.setStretchFactor(0, 0)
         self.setStretchFactor(1, 1)
-        self.setSizes([330, 520])
+        self.setSizes([370, 500])
 
     def refresh(self) -> None:
         self.form.refresh()

@@ -124,6 +124,8 @@ unverified guesses; several were wrong (Ron 5 Ω vs 120 Ω, leakage 20x too smal
 | `eps33_r` | 3500 | Same table: εT33/ε0 = 3500 at 1 kHz. |
 | `tan_delta` | 0.025 | Same table: 2.5 % at 1 kHz. |
 | `width_mm`, `length_mm`, `thickness_mm` | 0.7, 0.7, 0.25 | Confirmed by the user. Gives Cp ≈ 61 pF and 9.9 V/N open circuit, so forces above ~0.17 N push the sensor pin past the 3.3 V rail. |
+| `cp_pF` | empty | Optional capacitance of the sensor in pF (also per address in `sensor_overrides`). Empty = the value calculated from the size above; a measured value replaces it everywhere Cp is used. |
+| `adc.bits` | 12 | ADC124S101 resolution, used by the simulator for the derived ADC-Out value (range `0 .. VDD`; with `vmid_v = 0`: `-VDD .. +VDD` and symmetric buffer rails, see the Simulator README). |
 | OPA365 `gbw_hz`, `slew_v_per_us`, `aol`, `vos_uV` | 50 MHz, 25 V/µs, 120 dB, 100 µV | SBOS365G §7.6 typ (GBW/SR specified at VS = 5 V, reused at 3.3 V). |
 | `ib_pA` | 0.2 | §7.6 IB ±0.2 pA typ (±10 pA max, rises strongly above ~85 °C). |
 | `cdiff_pF`, `ccm_pF` | 6, 2 | §7.6 input capacitance: differential 6 pF, common-mode 2 pF. |
