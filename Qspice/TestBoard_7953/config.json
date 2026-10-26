@@ -26,6 +26,7 @@
     "eps33_r": 3500.0,
     "d33_pC_per_N": 600.0,
     "force_gain": 1.0,
+    "cp_pF": null,
     "r_insulation_ohm": 1e10,
     "loss_model": "none",
     "tan_delta": 0.025,

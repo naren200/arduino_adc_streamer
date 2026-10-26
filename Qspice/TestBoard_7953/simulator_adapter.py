@@ -73,7 +73,15 @@ def summary(cfg: dict) -> list[tuple[str, str]]:
         ("Sweep period", f"{cycle * 1e6:.2f} us  ({1.0 / cycle:,.0f} sweeps/s)"),
         ("Connected duty per sensor", f"{connected / cycle * 100:.1f} %"),
         ("Pin leakage at 0 / 1.25 / 2.5 V (Figure 43)", " / ".join(f"{x * 1e9:.3g}" for x in bm.leakage_levels(cfg)) + f" nA at {cfg['adc']['temperature_c']:g} C"),
-        ("Sensor capacitance (sensor 0)", f"{sp['cp'] * 1e12:.1f} pF"),
+        ("Sensor capacitance (sensor 0)", f"{sp['cp'] * 1e12:.1f} pF ({sp['cp_source']})"),
         ("Sensitivity, open circuit", f"{sp['d33'] / sp['cp']:.2f} V/N"),
         ("Force for +/-1.25 V swing", f"{c['vmid_v'] / (sp['d33'] / sp['cp']):.3f} N"),
     ]
+
+
+def field_hints(cfg: dict) -> dict[str, str]:
+    """Text shown in the empty capacitance-override field: the value that is used when nothing is entered."""
+    try:
+        return {"sensor_defaults.cp_pF": f"calculated: {bm.sensor_params(cfg, 0)['cp_calc'] * 1e12:.1f} pF"}
+    except (KeyError, ValueError):
+        return {}

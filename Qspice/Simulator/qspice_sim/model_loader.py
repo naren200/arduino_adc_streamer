@@ -5,6 +5,7 @@ configuration (``config.json`` by default) and an adapter module (``simulator_ad
 
     build(cfg)   -> {"netlist": str, "t_stop": float, "samples": [{"t": s, "label": str}], "warnings": [str]}
     summary(cfg) -> [(label, text), ...]        optional
+    field_hints(cfg) -> {path: text}            optional, placeholder text of empty nullable fields
 
 See ../README.md for the full contract.
 """
@@ -66,6 +67,16 @@ class Model:
     def summary(self, cfg: dict) -> list[tuple[str, str]]:
         fn = getattr(self.adapter, "summary", None)
         return list(fn(copy.deepcopy(cfg))) if fn else []
+
+    def field_hints(self, cfg: dict) -> dict[str, str]:
+        """Optional adapter.field_hints(cfg) -> {path: text}: shown as the placeholder of an empty (nullable) field."""
+        fn = getattr(self.adapter, "field_hints", None)
+        if not fn:
+            return {}
+        try:
+            return dict(fn(copy.deepcopy(cfg)))
+        except Exception:  # a hint is a convenience; invalid parameters are reported elsewhere
+            return {}
 
     def node_info(self) -> dict[str, dict]:
         return {n["name"].lower(): n for n in self.manifest.get("nodes", [])}

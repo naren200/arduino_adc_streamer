@@ -26,7 +26,8 @@
     "tan_delta": 0.025,
     "tan_delta_ref_hz": 1000.0,
     "r_insulation_ohm": 1e10,
-    "force_gain": 1.0
+    "force_gain": 1.0,
+    "cp_pF": null
   },
   "sensor_overrides": {
     "_note": "Per-address overrides, e.g. \"3\": {\"thickness_mm\": 0.5, \"force_gain\": 0.9}",

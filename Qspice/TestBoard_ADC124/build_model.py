@@ -48,12 +48,19 @@ def sensor_params(cfg: dict, addr: int) -> dict:
     p = dict(cfg["sensor_defaults"])
     p.update({k: v for k, v in cfg.get("sensor_overrides", {}).get(str(addr), {}).items() if not k.startswith("_")})
     area = (p["width_mm"] * MILLI) * (p["length_mm"] * MILLI)
-    cp = EPS0 * p["eps33_r"] * area / (p["thickness_mm"] * MILLI)
-    d33 = p["d33_pC_per_N"] * PICO * p["force_gain"]
+    cp_calc = EPS0 * p["eps33_r"] * area / (p["thickness_mm"] * MILLI)
+    override = p.get("cp_pF")
+    if override is None:
+        cp, source = cp_calc, "calculated"
+    else:
+        if not float(override) > 0:
+            raise ValueError(f"sensor {addr}: capacitance override cp_pF must be positive (leave it empty to calculate it from the size)")
+        cp, source = float(override) * PICO, "override"
     rp = None
     if p.get("loss_model", "none") == "parallel_r" and p["tan_delta"] > 0:
         rp = 1.0 / (6.283185307 * p["tan_delta_ref_hz"] * cp * p["tan_delta"])
-    return {"cp": cp, "d33": d33, "rp": rp, "rins": p["r_insulation_ohm"]}
+    return {"cp": cp, "d33": p["d33_pC_per_N"] * PICO * p["force_gain"], "rp": rp, "rins": p["r_insulation_ohm"],
+            "cp_calc": cp_calc, "cp_source": source}
 
 
 def adc_timing(t: dict) -> dict:

@@ -260,3 +260,24 @@ def test_several_runs_compare_against_the_original_reference(window, monkeypatch
     answers["value"] = QtWidgets.QMessageBox.StandardButton.Yes   # an explicit confirmation replaces it
     window.hold_reference()
     assert window.reference is not original and "R13" in window.reference["desc"]
+
+
+def test_capacitance_override_field_is_nullable_shows_the_hint_and_resets(window):
+    row = _field(window, "sensor_defaults.cp_pF")
+    assert window.cfg["sensor_defaults"]["cp_pF"] is None
+    assert row.editor.text() == "" and row.editor.placeholderText() == "calculated: 60.7 pF"
+    row.editor.setText("45")
+    row.editor.editingFinished.emit()
+    assert window.cfg["sensor_defaults"]["cp_pF"] == 45.0 and row.reset.isEnabled()
+    assert dict(window.model.summary(window.cfg))["Sensor capacitance (sensor 0)"] == "45.0 pF (override)"
+    row.editor.setText("")                                  # an empty field stores null again
+    row.editor.editingFinished.emit()
+    assert window.cfg["sensor_defaults"]["cp_pF"] is None and not row.reset.isEnabled()
+    row.editor.setText("45")
+    row.editor.editingFinished.emit()
+    row._on_reset()
+    assert window.cfg["sensor_defaults"]["cp_pF"] is None and row.editor.text() == ""
+    thickness = _field(window, "sensor_defaults.thickness_mm")      # the hint follows the size parameters
+    thickness.editor.setText("0.5")
+    thickness.editor.editingFinished.emit()
+    assert row.editor.placeholderText() == "calculated: 30.4 pF"

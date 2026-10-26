@@ -51,6 +51,7 @@ class FieldRow(QtCore.QObject):
             self.editor.editingFinished.connect(self._commit_text)
         for w in (self.label, self.editor, self.unit):
             w.setToolTip(tip or item["label"])
+        self.hint = ""
         self.path_tip = f"{self.path}"
         self.label.setStatusTip(self.path_tip)
         self._loading = False
@@ -58,6 +59,15 @@ class FieldRow(QtCore.QObject):
     # ----- widgets for the grid -----
     def widgets(self) -> list[QtWidgets.QWidget]:
         return [self.label, self.editor, self.unit, self.reset]
+
+    def set_hint(self, text: str) -> None:
+        """Placeholder of an empty nullable field (for example the value that is used when nothing is entered)."""
+        if not self.nullable or not isinstance(self.editor, QtWidgets.QLineEdit):
+            return
+        self.hint = text
+        self.editor.setPlaceholderText(text or "(not set)")
+        if text:
+            self.editor.setFixedWidth(max(110, 8 * len(text)))
 
     # ----- cfg <-> editor -----
     def load(self) -> None:
@@ -144,9 +154,11 @@ class ParamForm(QtWidgets.QWidget):
 
     def __init__(self, groups: list[dict], get: Callable[[str], Any], set_: Callable[[str, Any], None],
                  default: Callable[[str], Any], header: QtWidgets.QWidget | None = None,
-                 footer: QtWidgets.QWidget | None = None, parent: QtWidgets.QWidget | None = None):
+                 footer: QtWidgets.QWidget | None = None, parent: QtWidgets.QWidget | None = None,
+                 hints: Callable[[], dict[str, str]] | None = None):
         super().__init__(parent)
         self.get, self.set, self.default = get, set_, default
+        self.hints = hints
         self.rows: list[FieldRow] = []
         self._group_boxes: list[tuple[QtWidgets.QGroupBox, list[FieldRow]]] = []
         outer = QtWidgets.QVBoxLayout(self)
@@ -186,6 +198,15 @@ class ParamForm(QtWidgets.QWidget):
     def refresh(self) -> None:
         for row in self.rows:
             row.load()
+        self.update_hints()
+
+    def update_hints(self) -> None:
+        if self.hints is None:
+            return
+        texts = self.hints()
+        for row in self.rows:
+            if row.nullable and (row.path in texts or row.hint):
+                row.set_hint(texts.get(row.path, ""))
 
     def modified_count(self) -> int:
         return sum(1 for r in self.rows if self.get(r.path) != self.default(r.path))

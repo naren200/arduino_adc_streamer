@@ -198,6 +198,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _default(self, path: str):
         return get_path(self.defaults, path, None)
 
+    def _field_hints(self) -> dict[str, str]:
+        return self.model.field_hints(self.cfg) if self.model else {}
+
     def _build_tabs(self) -> None:
         m = self.model
         while self.tabs.count():
@@ -207,7 +210,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tab_forms, self._tables = [], []
         self.tabs.addTab(self._build_model_tab(), "Model")
 
-        comp = ParamForm(m.manifest.get("components", []), self._get, self._set, self._default)
+        comp = ParamForm(m.manifest.get("components", []), self._get, self._set, self._default, hints=self._field_hints)
         comp.changed.connect(self._on_param_changed)
         self._tab_forms.append(comp)
         self.tabs.addTab(comp, "Components")
@@ -450,6 +453,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ================================================================== parameter changes
     def _on_param_changed(self, _path: str) -> None:
+        for f in self._tab_forms:
+            f.update_hints()
         self._refresh_summary()
         self.estimate_label.setText("Estimate: parameters changed \u2013 press \u201cUpdate estimate\u201d")
         self._update_modified_label()

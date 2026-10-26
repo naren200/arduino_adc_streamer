@@ -73,10 +73,18 @@ def summary(cfg: dict) -> list[tuple[str, str]]:
         ("Scan cycle", f"{cycle * 1e6:.2f} us"),
         ("Sampling rate per sensor", f"{1.0 / cycle:,.1f} Hz" if cycle > 0 else "n/a"),
         ("Connected duty per sensor", f"{busy / cycle * 100:.1f} %  (floating {(cycle - busy) * 1e6:.1f} us per cycle)" if cycle > 0 else "n/a"),
-        ("Sensor capacitance (sensor 0)", f"{sp['cp'] * 1e12:.1f} pF"),
+        ("Sensor capacitance (sensor 0)", f"{sp['cp'] * 1e12:.1f} pF ({sp['cp_source']})"),
         ("Sensitivity, open circuit", f"{sp['d33'] / sp['cp']:.2f} V/N"),
         ("Force for +/-1.65 V swing", f"{1.65 / (sp['d33'] / sp['cp']):.3f} N"),
     ]
     if t.get("run_duration_s") and cycle > 0:
         out.append(("Scan cycles in the run", f"{int((t['run_duration_s'] - t['t_start_us'] * us) / cycle)}"))
     return out
+
+
+def field_hints(cfg: dict) -> dict[str, str]:
+    """Text shown in the empty capacitance-override field: the value that is used when nothing is entered."""
+    try:
+        return {"sensor_defaults.cp_pF": f"calculated: {bm.sensor_params(cfg, 0)['cp_calc'] * 1e12:.1f} pF"}
+    except (KeyError, ValueError):
+        return {}

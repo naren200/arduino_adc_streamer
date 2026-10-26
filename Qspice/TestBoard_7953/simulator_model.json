@@ -36,6 +36,14 @@
      "tip": "Steminc SM311: 3500 at 1 kHz."
     },
     {
+     "path": "sensor_defaults.cp_pF",
+     "label": "Capacitance (override)",
+     "unit": "pF",
+     "type": "float",
+     "nullable": true,
+     "tip": "empty = calculated from size, thickness and eps33. A value replaces the calculated sensor capacitance Cp (a per-sensor value can be set in sensor_overrides)."
+    },
+    {
      "path": "sensor_defaults.d33_pC_per_N",
      "label": "d33 charge constant",
      "unit": "pC/N",
