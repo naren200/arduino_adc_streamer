@@ -13,7 +13,11 @@ from constants.plotting import (
     MAX_PLOT_SWEEPS,
     PLOT_UPDATE_INTERVAL_SEC,
 )
-from constants.pressure_map import PRESSURE_MAP_PLOT_UPDATE_INTERVAL_SEC
+from constants.pressure_map import (
+    PRESSURE_MAP_PLOT_UPDATE_INTERVAL_SEC,
+    PRESSURE_MAP_REFRESH_DUTY_FACTOR,
+)
+from data_processing.refresh_schedule import next_refresh_allowed_at
 from constants.runtime import MAX_TIMING_SAMPLES
 from data_processing.force_state import get_force_runtime_state
 from data_processing.acquisition_timing import DeviceTimeline
@@ -27,6 +31,15 @@ class BinaryProcessorMixin:
     _CAPTURE_STATUS_UPDATE_INTERVAL_SEC = 0.2
     _TIMING_DISPLAY_UPDATE_INTERVAL_SEC = 0.2
     
+    def _is_signal_integration_refresh_due(self, now: float) -> bool:
+        earliest_start = next_refresh_allowed_at(
+            getattr(self, '_signal_integration_last_refresh_finished_at', None),
+            getattr(self, '_signal_integration_last_refresh_duration_sec', 0.0),
+            PRESSURE_MAP_PLOT_UPDATE_INTERVAL_SEC,
+            PRESSURE_MAP_REFRESH_DUTY_FACTOR,
+        )
+        return now >= earliest_start
+
     def process_binary_sweep(self, samples: np.ndarray, avg_sample_time_us: int, block_start_us: int, block_end_us: int):
         """Process incoming binary block data containing one or more sweeps.
         
@@ -316,10 +329,8 @@ class BinaryProcessorMixin:
                     elif (
                         hasattr(self, 'should_update_signal_integration_display')
                         and self.should_update_signal_integration_display()
-                        and now - getattr(self, '_last_signal_integration_plot_update_time', 0.0)
-                        >= PRESSURE_MAP_PLOT_UPDATE_INTERVAL_SEC
+                        and self._is_signal_integration_refresh_due(now)
                     ):
-                        self._last_signal_integration_plot_update_time = now
                         if hasattr(self, 'trigger_signal_integration_update'):
                             self.trigger_signal_integration_update()
                         else:

@@ -604,6 +604,8 @@ class PressureMapPanelMixin:
         self._signal_integration_filter_engine = ADCFilterEngine()
         self._signal_integration_filter_warning = ""
         self._signal_integration_updating_plot = False
+        self._signal_integration_last_refresh_finished_at: float | None = None
+        self._signal_integration_last_refresh_duration_sec = 0.0
         self._rebuild_pressure_force_engine()
         self.update_pressure_map_timeline_controls()
         # Always start tabbed by default; a previously saved layout (including
@@ -3706,6 +3708,7 @@ class PressureMapPanelMixin:
 
         graph_visible = self._get_signal_integration_show_graph()
         self._apply_signal_integration_graph_visibility()
+        heavy_work_started_at: float | None = None
         self._signal_integration_updating_plot = True
         try:
             if not self.config["channels"]:
@@ -3737,6 +3740,7 @@ class PressureMapPanelMixin:
                 self.signal_integration_status_label.setText("Waiting for raw ADC data")
                 return
 
+            heavy_work_started_at = time.time()
             desired_curve_keys = set()
             latest_integrated_by_position: dict[str, float] = {}
             latest_integrated_by_package: dict[str, dict[str, float]] = {}
@@ -3866,6 +3870,13 @@ class PressureMapPanelMixin:
                 self.log_status(f"ERROR updating Signal Integration integrated preview: {exc}")
         finally:
             self._signal_integration_updating_plot = False
+            if heavy_work_started_at is not None:
+                self._record_signal_integration_refresh(heavy_work_started_at)
+
+    def _record_signal_integration_refresh(self, started_at: float) -> None:
+        finished_at = time.time()
+        self._signal_integration_last_refresh_finished_at = finished_at
+        self._signal_integration_last_refresh_duration_sec = finished_at - started_at
 
     def _pressure_map_dock_is_visible(self, dock_name: str, fallback: bool = False) -> bool:
         """Return whether a dock's content is actually visible to the user."""

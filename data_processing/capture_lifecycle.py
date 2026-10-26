@@ -256,6 +256,8 @@ class CaptureLifecycleMixin:
             self.log_status(f"WARNING: Could not open block timing file: {e}")
 
         self.is_capturing = True
+        self._signal_integration_last_refresh_finished_at = None
+        self._signal_integration_last_refresh_duration_sec = 0.0
         self._capture_host_start = time.perf_counter()
         self.timing_state.capture_start_time = time.time()
         get_force_runtime_state(self).start_time = self.timing_state.capture_start_time
