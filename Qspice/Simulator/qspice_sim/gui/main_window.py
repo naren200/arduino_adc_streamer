@@ -63,7 +63,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.defaults: dict = {}
         self.qspice_path = qspice_path or self.settings.value("qspice_path", "", str)
         self.viz = {"nodes": set(), "layout": "group", "show_samples": True, "t0": None, "t1": None,
-                    "line_width": 1.2, "show_ref": True, "annotate": True, "show_noisy": False}
+                    "line_width": 1.2, "show_ref": True, "annotate": True, "show_noisy": False,
+                    "overlay_applied": False, "log_groups": set()}
         self.result: ResultSet | None = None
         self.reference: dict | None = None
         self.worker: SimWorker | None = None
@@ -72,6 +73,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._preview_samples: list[dict] = []
         self._plot_notes: list[str] = []
         self._derived_series: dict[str, dict] = {}
+        self._overlay: list[Trace] = []
         self.sample_table: SampleTable | None = None
         self.force: dict = copy.deepcopy(FORCE_DEFAULTS)
         self.force_tab: ForceTab | None = None
@@ -252,7 +254,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self._build_simulation_tab(), "Simulation")
         self.force_tab = None
         if m.force_calc:
-            self.force_tab = ForceTab(self._force_get, self._force_set, self._force_default, self._force_hints, self._force_extra_items())
+            self.force_tab = ForceTab(self._force_get, self._force_set, self._force_default, self._force_hints)
             self.force_tab.changed.connect(self._on_force_changed)
             self.force_tab.export_requested.connect(self.export_force_samples)
             self.tabs.addTab(self.force_tab, "Force")
@@ -402,6 +404,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.noisy_chk.setVisible(bool((m.adc_out or {}).get("noise_mv_path")))
         self.noisy_chk.toggled.connect(lambda _: self._viz_changed())
         form.addRow("", self.noisy_chk)
+        self.overlay_chk = QtWidgets.QCheckBox("Overlay the applied force (dashed) on the calculated force")
+        self.overlay_chk.setToolTip("Draws the applied force of the channels whose dF or F is ticked on the Calculated force panel")
+        self.overlay_chk.setVisible(bool(m.force_calc))
+        self.overlay_chk.toggled.connect(lambda _: self._viz_changed())
+        form.addRow("", self.overlay_chk)
         self.ref_chk = QtWidgets.QCheckBox("Show the held reference run")
         self.ref_chk.setChecked(True)
         self.ref_chk.toggled.connect(lambda _: self._viz_changed())
@@ -411,13 +418,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.annot_chk.toggled.connect(lambda _: self._viz_changed())
         form.addRow("", self.annot_chk)
         lay.addWidget(box)
+        log_box = QtWidgets.QGroupBox("Log scale (Y) per plot panel")
+        log_box.setToolTip("Bipolar values (forces, dF) are shown as their magnitude |y|; zeros are left out. The axis label then "
+                           "reads |value| (log). The ratio Fcal / Fin is normally positive, so for it the log scale is a direct view.")
+        log_lay = QtWidgets.QGridLayout(log_box)
+        self.log_checks = {}
+        for i, g in enumerate(m.plot_groups()):
+            chk = QtWidgets.QCheckBox(g["title"])
+            chk.setChecked(g["id"] in self.viz["log_groups"])
+            chk.toggled.connect(lambda _: self._viz_changed())
+            self.log_checks[g["id"]] = chk
+            log_lay.addWidget(chk, i // 2, i % 2)
+        lay.addWidget(log_box)
         self._populate_nodes()
         return w
 
     # ------------------------------------------------------------------ force tab
-    def _force_extra_items(self) -> list[dict]:
-        return []
-
     def _force_get(self, path: str):
         return self.force[path.split(".", 1)[1]]
 
@@ -448,7 +464,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return {}
         return {"force.d33_pC_per_N": f"model: {info['d33_C_per_N'] * 1e12:.4g} pC/N",
                 "force.cp_pF": f"model: {info['cp_F'] * 1e12:.4g} pF",
-                "force.cextra_pF": f"model: {info.get('cextra_F', 0.0) * 1e12:.4g} pF"}
+                "force.cextra_pF": f"model: {info.get('cextra_F', 0.0) * 1e12:.4g} pF",
+                "force.min_fin_N": "1 % of max |Fin|"}
 
     def _on_force_changed(self, _path: str) -> None:
         if self.result is not None:
@@ -466,12 +483,21 @@ class MainWindow(QtWidgets.QMainWindow):
             return np.zeros(len(times))
         return None
 
-    def _calculate_force(self, table: SampleTable, notes: list[str] | None = None) -> dict[int, ChannelForce]:
+    def _applied_peak(self, channel: int):
+        """Largest |applied force| of the channel in the whole run (None when the force node was not saved)."""
+        r = self.result
+        node = self.model.force_node(channel)
+        if r.qraw.has(node):
+            return float(np.max(np.abs(r.column(node))))
+        return 0.0 if channel not in self.model.forced_channels(r.cfg) else None
+
+    def _calculate_force(self, table: SampleTable, notes: list[str] | None = None,
+                         channels: list[int] | None = None) -> dict[int, ChannelForce]:
         r = self.result
         vmid = float(get_path(r.cfg, self.model.adc_out["vmid_path"]))
         try:
-            return compute_all(table, self._extraction_channels(table), self.model.sensor_info(r.cfg), self.force, vmid,
-                               self._applied_force)
+            return compute_all(table, self._extraction_channels(table) if channels is None else channels,
+                               self.model.sensor_info(r.cfg), self.force, vmid, self._applied_force, self._applied_peak)
         except ValueError as exc:
             if notes is not None:
                 notes.append(f"Force calculation: {exc}")
@@ -716,7 +742,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not path:
             return
         data = {"format": 1, "model": self.model.id, "config": self.cfg, "force": self.force,
-                "visualization": {**self.viz, "nodes": sorted(self.viz["nodes"])}}
+                "visualization": {**self.viz, "nodes": sorted(self.viz["nodes"]), "log_groups": sorted(self.viz["log_groups"])}}
         Path(path).write_text(json.dumps(data, indent=1), encoding="utf-8")
         self._set_status(f"Settings saved to {path}")
 
@@ -735,17 +761,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cfg = deep_merge(self.model.default_config(), data.get("config", {}))
         self.force = deep_merge(FORCE_DEFAULTS, data.get("force", {}))
         viz = data.get("visualization", {})
-        for k in ("layout", "show_samples", "t0", "t1", "line_width", "show_ref", "annotate", "show_noisy"):
+        for k in ("layout", "show_samples", "t0", "t1", "line_width", "show_ref", "annotate", "show_noisy", "overlay_applied"):
             if k in viz:
                 self.viz[k] = viz[k]
         if "nodes" in viz:
             self.viz["nodes"] = set(viz["nodes"])
+        if "log_groups" in viz:
+            self.viz["log_groups"] = set(viz["log_groups"])
         self._refresh_all_forms()
         self._populate_nodes()
         self._apply_viz_widgets()
         self._set_status(f"Settings loaded from {path}")
 
     def _apply_viz_widgets(self) -> None:
+        """Show the display settings in the widgets. Each widget would trigger _viz_changed, which reads all the others while
+        they still hold the old values, so the signals are held back and the plot is updated once at the end."""
+        self._applying_viz = True
+        try:
+            self._set_viz_widgets()
+        finally:
+            self._applying_viz = False
+        self._viz_changed()
+
+    def _set_viz_widgets(self) -> None:
         self.layout_combo.setCurrentIndex(max(0, self.layout_combo.findData(self.viz["layout"])))
         self.t0_edit.setText("" if self.viz["t0"] is None else format_number(self.viz["t0"]))
         self.t1_edit.setText("" if self.viz["t1"] is None else format_number(self.viz["t1"]))
@@ -754,6 +792,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ref_chk.setChecked(self.viz["show_ref"])
         self.annot_chk.setChecked(self.viz["annotate"])
         self.noisy_chk.setChecked(self.viz["show_noisy"])
+        self.overlay_chk.setChecked(self.viz["overlay_applied"])
+        for gid, chk in self.log_checks.items():
+            chk.setChecked(gid in self.viz["log_groups"])
 
     # ================================================================== QSPICE / model folders
     def _qspice_edited(self) -> None:
@@ -789,6 +830,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.model.force_calc and any(n in derived for n in self.viz["nodes"]):
             # the applied force of the channels that have one, so the calculated force can be compared with it
             wanted.update(self.model.force_node(k) for k in self.model.forced_channels(self.cfg))
+        if self.model.force_calc and self.viz["overlay_applied"]:
+            wanted.update(self.model.force_node(derived[n]["channel"]) for n in self.viz["nodes"]
+                          if n in derived and derived[n]["kind"] in ("df", "fcal"))
         return [n for n in sorted(wanted) if n in existing]
 
     def update_estimate(self) -> None:
@@ -930,12 +974,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ================================================================== plotting
     def _viz_changed(self, replot_only: bool = False) -> None:
+        if getattr(self, "_applying_viz", False):
+            return
         self.viz["layout"] = self.layout_combo.currentData()
         self.viz["line_width"] = self.lw_spin.value()
         self.viz["show_samples"] = self.samples_chk.isChecked()
         self.viz["show_ref"] = self.ref_chk.isChecked()
         self.viz["annotate"] = self.annot_chk.isChecked()
         self.viz["show_noisy"] = self.noisy_chk.isChecked()
+        self.viz["overlay_applied"] = self.overlay_chk.isChecked()
+        self.viz["log_groups"] = {gid for gid, chk in self.log_checks.items() if chk.isChecked()}
         for key, edit in (("t0", self.t0_edit), ("t1", self.t1_edit)):
             text = edit.text().strip()
             try:
@@ -997,12 +1045,11 @@ class MainWindow(QtWidgets.QMainWindow):
         return [s for s in self.model.derived_info()[name]["sources"] if not self.result.qraw.has(s)]
 
     def _build_derived_series(self, notes: list[str]) -> None:
-        """Fill ``self._derived_series`` {name: {label, group, t, v, codes}} for the ticked derived nodes (conversion instants)."""
-        self._derived_series = {}
-        r = self.result
+        """Fill ``self._derived_series`` {name: {label, group, kind, t, v, unit, codes}} for the ticked derived nodes (one value
+        per conversion of the channel) and ``self._overlay`` with the applied-force traces."""
+        self._derived_series, self._overlay = {}, []
         derived = self.model.derived_info()
-        ticked = [n for n in sorted(self.viz["nodes"], key=lambda n: (derived[n]["kind"], derived[n]["channel"]) if n in derived else ("", 0))
-                  if n in derived]
+        ticked = sorted((n for n in self.viz["nodes"] if n in derived), key=lambda n: (derived[n]["kind"], derived[n]["channel"]))
         if not ticked:
             self.sample_table = None
             return
@@ -1016,32 +1063,60 @@ class MainWindow(QtWidgets.QMainWindow):
         if table is None:
             notes.append("Not in the last run (press Run to include them): " + ", ".join(derived[n]["label"] for n in ticked))
             return
+        force_channels = sorted({derived[n]["channel"] for n in ticked if derived[n]["kind"] != "adcout"})
+        cfs = self._calculate_force(table, notes, force_channels) if force_channels else {}
         empty = []
         for name in ticked:
             d = derived[name]
-            mask = table.channel_mask(d["channel"])
+            k = d["channel"]
+            mask = table.channel_mask(k)
             if not mask.any():
                 empty.append(d["label"])
                 continue
+            entry = {"label": d["label"], "group": d["group"], "kind": d["kind"], "t": table.t[mask], "unit": "V"}
             if d["kind"] == "adcout":
-                self._derived_series[name] = {"label": d["label"], "group": d["group"], "t": table.t[mask], "v": table.v_out[mask],
-                                              "codes": table.code[mask], "unit": "V"}
+                entry.update(v=table.v_out[mask], codes=table.code[mask])
+            elif k not in cfs:
+                continue                                    # the reason is in the notes
+            elif d["kind"] == "df":
+                entry.update(v=cfs[k].dF, unit="N")
+            elif d["kind"] == "fcal":
+                entry.update(v=cfs[k].F, unit="N")
+            else:
+                cf = cfs[k]
+                if cf.ratio is None:
+                    notes.append(f"{d['label']}: the applied force {self.model.force_node(k)} was not saved (press Run to include it)")
+                    continue
+                if np.isnan(cf.ratio).all():
+                    notes.append(f"{d['label']} is undefined: |Fin| stays below {cf.ratio_threshold:.3g} N")
+                entry.update(v=cf.ratio, unit="ratio")
+            self._derived_series[name] = entry
         if empty:
             notes.append("no conversion in the run: " + ", ".join(empty))
-        used = [d for n, d in derived.items() if n in self._derived_series]
-        clipped = table.clipped_count([d["channel"] for d in used]) if used else 0
+        used = [derived[n]["channel"] for n in self._derived_series]
+        clipped = table.clipped_count(used) if used else 0
         if clipped:
             notes.append(f"{clipped} sample(s) clipped (outside the ADC range {table.adc.v_low:g} .. {table.adc.v_high:g} V)")
+        if self.viz["overlay_applied"]:
+            r = self.result
+            group = self.model.force_calc.get("group", "fcal")
+            for k in sorted({derived[n]["channel"] for n in self._derived_series if derived[n]["kind"] in ("df", "fcal")}):
+                node = self.model.force_node(k)
+                if r.qraw.has(node):
+                    self._overlay.append(Trace(f"applied_ch{k}", f"Applied force ch{k}", group, r.qraw.time, r.column(node), dashed=True))
+                else:
+                    notes.append(f"applied force {node} not saved (press Run to include it)")
 
     def _derived_traces(self) -> tuple[list[Trace], list[Marker]]:
         r = self.result
         t_end = float(r.qraw.time[-1])
-        traces, markers = [], []
+        traces, markers = [], list()
         for name, s in self._derived_series.items():
             x, y = stair(s["t"], s["v"], t_end)
             traces.append(Trace(name, s["label"], s["group"], x, y, kind="stair"))
-            markers.append(Marker(name, s["label"] + " conversions", s["t"], s["v"], color="#ffd966"))
-        return traces, markers
+            ok = np.isfinite(s["v"])
+            markers.append(Marker(name, s["label"] + " conversions", s["t"][ok], s["v"][ok], color="#ffd966"))
+        return traces + self._overlay, markers
 
     def _replot(self) -> None:
         r = self.result
@@ -1068,7 +1143,7 @@ class MainWindow(QtWidgets.QMainWindow):
         markers = list(derived_markers)
         table = self.sample_table
         if self.viz["show_noisy"] and table is not None and np.any(table.noise_v):
-            for name in self._derived_series:
+            for name in (n for n in self._derived_series if derived[n]["kind"] == "adcout"):
                 mask = table.channel_mask(derived[name]["channel"])
                 markers.append(Marker(name, f"ADC input + noise ch{derived[name]['channel']}", table.t[mask], table.v_noisy[mask],
                                       color="#9fc5e8"))
@@ -1078,8 +1153,9 @@ class MainWindow(QtWidgets.QMainWindow):
             ys = np.interp(xs, r.qraw.time, r.column(sm["node"]))
             markers.append(Marker(sm["node"], sm.get("label", "samples"), xs, ys))
         reference = self.reference["traces"] if (self.reference and self.viz["show_ref"]) else None
+        hlines = {(self.model.force_calc or {}).get("ratio_group", "fratio"): 1.0} if self.model.force_calc else {}
         self.plot.show_traces(traces, self.model.plot_groups(), self.viz["layout"], markers, reference, self.viz["line_width"],
-                              (self.viz["t0"], self.viz["t1"]), self._title())
+                              (self.viz["t0"], self.viz["t1"]), self._title(), log_groups=self.viz["log_groups"], hlines=hlines)
         if missing:
             notes.insert(0, f"Not in the last run (press Run to include them): {', '.join(missing)}")
         self._plot_notes = notes

@@ -85,7 +85,14 @@ class Model:
 
     def plot_groups(self) -> list[dict]:
         groups = list(self.manifest.get("plot_groups", []))
-        if not any(g["id"] == "other" for g in groups):
+        known = {g["id"] for g in groups}
+        if self.force_calc:      # the groups of the calculated force and of the ratio Fcal / Fin
+            fc = self.force_calc
+            for gid, title in ((fc.get("group", "fcal"), "Calculated force [N]"), (fc.get("ratio_group", "fratio"), "Fcal / Fin [ratio]")):
+                if gid not in known:
+                    groups.append({"id": gid, "title": title})
+                    known.add(gid)
+        if "other" not in known:
             groups.append({"id": "other", "title": "Other nodes [V]"})
         return groups
 
@@ -131,6 +138,16 @@ class Model:
         for k in self.channels:
             out.append({"name": f"adcout_ch{k}", "label": f"ADC-Out ch{k}", "group": spec.get("group", "adc"), "kind": "adcout",
                         "channel": k, "sources": [spec["node"]]})
+        fc = self.force_calc
+        if fc:
+            for k in self.channels:
+                force = [self.force_node(k)]
+                out.append({"name": f"df_ch{k}", "label": f"dF ch{k}", "group": fc.get("group", "fcal"), "kind": "df",
+                            "channel": k, "sources": [spec["node"]]})
+                out.append({"name": f"fcal_ch{k}", "label": f"F ch{k}", "group": fc.get("group", "fcal"), "kind": "fcal",
+                            "channel": k, "sources": [spec["node"]]})
+                out.append({"name": f"fratio_ch{k}", "label": f"Fcal/Fin ch{k}", "group": fc.get("ratio_group", "fratio"),
+                            "kind": "fratio", "channel": k, "sources": [spec["node"]] + force})
         return out
 
     def derived_info(self) -> dict[str, dict]:
@@ -236,14 +253,17 @@ def _validate_adc_out(manifest: dict, defaults: dict, groups: set[str]) -> list[
     if spec.get("node") and spec["node"].lower() not in {n["name"].lower() for n in manifest.get("nodes", [])}:
         problems.append(f"adc_out.node: {spec['node']} is not a node of the manifest")
     real = {n["name"].lower() for n in manifest.get("nodes", [])}
-    for d in _derived_names(spec):
+    fc = manifest.get("force_calc")
+    for d in _derived_names(spec, bool(fc and fc.get("enabled"))):
         if d in real:
             problems.append(f"derived node {d} has the same name as a real node")
     return problems
 
 
-def _derived_names(spec: dict) -> list[str]:
-    return [f"adcout_ch{k}" for k in range(int(spec.get("channels", 0)) if isinstance(spec.get("channels", 0), int) else 0)]
+def _derived_names(spec: dict, with_force: bool = False) -> list[str]:
+    channels = range(spec["channels"] if isinstance(spec.get("channels"), int) else 0)
+    prefixes = ["adcout"] + (["df", "fcal", "fratio"] if with_force else [])
+    return [f"{prefix}_ch{k}" for prefix in prefixes for k in channels]
 
 
 def _load_adapter(root: Path, filename: str):

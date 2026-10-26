@@ -184,7 +184,7 @@ def test_force_tab_sits_between_simulation_and_visualization_and_has_the_documen
     assert names.index("Force") == names.index("Simulation") + 1 == names.index("Visualization") - 1
     labels = [r.item["label"] for r in window.force_tab.form.rows]
     assert labels == ["d33 charge constant", "Sensor capacitance", "Extra node capacitance", "Front-end gain G",
-                      "Reference for the first sample", "Voltage source", "Sensors to extract"]
+                      "Reference for the first sample", "Voltage source", "Sensors to extract", "Minimum |Fin| for the ratio"]
     assert [r.path for r in window.force_tab.form.rows if r.kind == "choice"] == ["force.reference", "force.source"]
     assert window.force == FORCE_DEFAULTS
     html = window.force_tab.formulas.toPlainText()

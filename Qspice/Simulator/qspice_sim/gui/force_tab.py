@@ -30,16 +30,11 @@ SCHEMA = [
          "tip": "ADC-Out includes the quantisation and the white noise; the ideal ADC input is the simulated value at the conversion."},
         {"path": "force.channels", "label": "Sensors to extract", "unit": "", "type": "intlist", "nullable": True,
          "tip": "Comma-separated channels. Empty = every channel that has conversions in the run."},
+        {"path": "force.min_fin_N", "label": "Minimum |Fin| for the ratio", "unit": "N", "type": "float", "nullable": True,
+         "tip": "Fcal / Fin is left out (undefined) where the applied force |Fin| is below this value, instead of exploding. "
+                "Empty = 1 % of the largest |Fin| of the channel in the run. An exact zero is always left out."},
     ]},
 ]
-
-
-def build_schema(extra_items: list[dict] | None = None) -> list[dict]:
-    schema = [{"group": g["group"], "items": list(g["items"])} for g in SCHEMA]
-    if extra_items:
-        schema[1]["items"] += extra_items
-    return schema
-
 
 class ForceTab(QtWidgets.QSplitter):
     """Parameter form on top, formulas and the result table below."""
@@ -48,9 +43,9 @@ class ForceTab(QtWidgets.QSplitter):
     export_requested = QtCore.pyqtSignal()
 
     def __init__(self, get: Callable[[str], Any], set_: Callable[[str, Any], None], default: Callable[[str], Any],
-                 hints: Callable[[], dict[str, str]], extra_items: list[dict] | None = None):
+                 hints: Callable[[], dict[str, str]]):
         super().__init__(QtCore.Qt.Orientation.Vertical)
-        self.form = ParamForm(build_schema(extra_items), get, set_, default, hints=hints)
+        self.form = ParamForm(SCHEMA, get, set_, default, hints=hints)
         self.form.changed.connect(self.changed)
         self.addWidget(self.form)
         bottom = QtWidgets.QWidget()

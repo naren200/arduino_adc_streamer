@@ -90,14 +90,18 @@ def test_manifest_validation_checks_the_adc_out_block():
     assert any("at least 2" in p for p in model_loader.validate_manifest(manifest, defaults))
     clash = dict(manifest, nodes=manifest["nodes"] + [{"name": "adcout_ch0", "group": "adc"}])
     assert any("same name" in p for p in model_loader.validate_manifest(clash, model.defaults))
-    assert model.problems == [] and len(model.derived_nodes()) == 15
+    clash = dict(manifest, nodes=manifest["nodes"] + [{"name": "fratio_ch1", "group": "adc"}], force_calc={"enabled": True},
+                 tables=[])
+    assert any("same name" in p for p in model_loader.validate_manifest(clash, model.defaults))
+    assert model.problems == [] and len(model.derived_nodes()) == 15 * 4
 
 
 def test_every_model_gives_one_adc_out_node_per_sensor_channel():
     for mid, n in (("TestBoard_7953", 15), ("TestBoard_ADC124", 7)):
         model = model_loader.load_model(QSPICE_DIR / mid)
-        assert [d["name"] for d in model.derived_nodes()] == [f"adcout_ch{k}" for k in range(n)]
-        assert all(d["sources"] == [model.adc_out["node"]] for d in model.derived_nodes())
+        adc_out = [d for d in model.derived_nodes() if d["kind"] == "adcout"]
+        assert [d["name"] for d in adc_out] == [f"adcout_ch{k}" for k in range(n)]
+        assert all(d["sources"] == [model.adc_out["node"]] for d in adc_out)
         built = model.build(model.default_config())
         assert {s["address"] for s in built["samples"]} == set(range(n))
         assert all(isinstance(s["address"], int) for s in built["samples"])

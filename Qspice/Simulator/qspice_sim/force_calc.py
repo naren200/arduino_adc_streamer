@@ -30,7 +30,10 @@ FORCE_DEFAULTS: dict = {
     "reference": REF_VMID,
     "source": SRC_ADC_OUT,
     "channels": None,           # None = every channel that has conversions
+    "min_fin_N": None,          # None = 1 % of the largest |Fin| of the channel in the run
 }
+
+RATIO_FRACTION = 0.01
 
 
 @dataclass(frozen=True)
@@ -77,6 +80,8 @@ class ChannelForce:
     F: np.ndarray
     fin: np.ndarray | None      # applied force at the conversion instants (None when the force node was not saved)
     clipped: int = 0
+    ratio: np.ndarray | None = None     # F / Fin, NaN where |Fin| is below the threshold
+    ratio_threshold: float = 0.0
 
     @property
     def error_final(self) -> float | None:
@@ -91,9 +96,23 @@ def extract_force(v: np.ndarray, params: SensorParams, v_start: float) -> tuple[
     return dF, np.cumsum(dF)
 
 
+def force_ratio(F: np.ndarray, fin: np.ndarray, threshold: float) -> np.ndarray:
+    """Fcal / Fin: 1 = perfect extraction, below 1 = under-estimated, above 1 = over-estimated. Undefined (NaN) where |Fin| is
+    below the threshold; an exact zero is always masked."""
+    ok = (np.abs(fin) >= threshold) & (fin != 0)
+    out = np.full(len(F), np.nan)
+    out[ok] = F[ok] / fin[ok]
+    return out
+
+
 def compute_channel(table: SampleTable, address: int, params: SensorParams, settings: dict, vmid: float,
-                    fin_at: Callable[[int, np.ndarray], np.ndarray | None] | None = None) -> ChannelForce | None:
-    """Force of one channel from the conversion table (None when the channel has no conversion in the run)."""
+                    fin_at: Callable[[int, np.ndarray], np.ndarray | None] | None = None,
+                    fin_peak: Callable[[int], float | None] | None = None) -> ChannelForce | None:
+    """Force of one channel from the conversion table (None when the channel has no conversion in the run).
+
+    ``fin_peak(channel)`` is the largest |applied force| of the channel in the run; it sets the default ratio threshold
+    (1 % of it) when the settings give no minimum |Fin|.
+    """
     mask = table.channel_mask(address)
     if not mask.any():
         return None
@@ -102,16 +121,25 @@ def compute_channel(table: SampleTable, address: int, params: SensorParams, sett
     dF, F = extract_force(v, params, v_start)
     t = table.t[mask]
     fin = fin_at(address, t) if fin_at else None
-    return ChannelForce(address, params, t, v, dF, F, fin, clipped=int(table.clipped[mask].sum()))
+    cf = ChannelForce(address, params, t, v, dF, F, fin, clipped=int(table.clipped[mask].sum()))
+    if fin is not None:
+        threshold = settings.get("min_fin_N")
+        if threshold is None:
+            peak = fin_peak(address) if fin_peak else None
+            threshold = RATIO_FRACTION * (float(np.max(np.abs(fin))) if peak is None else float(peak))
+        cf.ratio_threshold = float(threshold)
+        cf.ratio = force_ratio(F, fin, cf.ratio_threshold)
+    return cf
 
 
 def compute_all(table: SampleTable, channels: list[int], infos: dict[int, dict], settings: dict, vmid: float,
-                fin_at: Callable[[int, np.ndarray], np.ndarray | None] | None = None) -> dict[int, ChannelForce]:
+                fin_at: Callable[[int, np.ndarray], np.ndarray | None] | None = None,
+                fin_peak: Callable[[int], float | None] | None = None) -> dict[int, ChannelForce]:
     out: dict[int, ChannelForce] = {}
     for ch in channels:
         if ch not in infos:
             continue
-        cf = compute_channel(table, ch, resolve_params(settings, infos[ch]), settings, vmid, fin_at)
+        cf = compute_channel(table, ch, resolve_params(settings, infos[ch]), settings, vmid, fin_at, fin_peak)
         if cf is not None:
             out[ch] = cf
     return out
