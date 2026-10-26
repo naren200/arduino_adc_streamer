@@ -105,7 +105,9 @@
   },
 
   "simulation": {
-    "max_step_ns": 5.0
+    "max_step_ns": 5.0,
+    "adc_noise_mV": 0.0,
+    "noise_seed": 1
   },
 
   "scenarios": {

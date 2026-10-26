@@ -61,7 +61,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.defaults: dict = {}
         self.qspice_path = qspice_path or self.settings.value("qspice_path", "", str)
         self.viz = {"nodes": set(), "layout": "group", "show_samples": True, "t0": None, "t1": None,
-                    "line_width": 1.2, "show_ref": True, "annotate": True}
+                    "line_width": 1.2, "show_ref": True, "annotate": True, "show_noisy": False}
         self.result: ResultSet | None = None
         self.reference: dict | None = None
         self.worker: SimWorker | None = None
@@ -157,6 +157,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.defaults = model.default_config()
         self.cfg = model.default_config()
         self.result = None
+        self.sample_table, self._derived_series = None, {}
         self.reference = None
         self._set_result_actions(False)
         self.plot.clear()
@@ -383,6 +384,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.samples_chk.setVisible(bool(m.manifest.get("sample_marker")))
         self.samples_chk.toggled.connect(lambda _: self._viz_changed())
         form.addRow("", self.samples_chk)
+        self.noisy_chk = QtWidgets.QCheckBox("Show the ADC input + noise at the conversions (markers)")
+        self.noisy_chk.setToolTip("Marks the noisy ADC input of the ticked ADC-Out channels, so noise and quantisation can be told apart")
+        self.noisy_chk.setVisible(bool((m.adc_out or {}).get("noise_mv_path")))
+        self.noisy_chk.toggled.connect(lambda _: self._viz_changed())
+        form.addRow("", self.noisy_chk)
         self.ref_chk = QtWidgets.QCheckBox("Show the held reference run")
         self.ref_chk.setChecked(True)
         self.ref_chk.toggled.connect(lambda _: self._viz_changed())
@@ -585,7 +591,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.load_model(target)
         self.cfg = deep_merge(self.model.default_config(), data.get("config", {}))
         viz = data.get("visualization", {})
-        for k in ("layout", "show_samples", "t0", "t1", "line_width", "show_ref", "annotate"):
+        for k in ("layout", "show_samples", "t0", "t1", "line_width", "show_ref", "annotate", "show_noisy"):
             if k in viz:
                 self.viz[k] = viz[k]
         if "nodes" in viz:
@@ -603,6 +609,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.samples_chk.setChecked(self.viz["show_samples"])
         self.ref_chk.setChecked(self.viz["show_ref"])
         self.annot_chk.setChecked(self.viz["annotate"])
+        self.noisy_chk.setChecked(self.viz["show_noisy"])
 
     # ================================================================== QSPICE / model folders
     def _qspice_edited(self) -> None:
@@ -699,6 +706,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.result is not None:
             self.result.qraw.close()
             self.result = None
+        self.sample_table, self._derived_series = None, {}
         self._pending = (prepared, nodes, copy.deepcopy(self.cfg), time.time())
         self.worker = SimWorker(prepared.netlist, nodes, RUNS_DIR / self.model.id, qspice, self)
         self.worker.progress.connect(self._on_progress)
@@ -780,6 +788,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.viz["show_samples"] = self.samples_chk.isChecked()
         self.viz["show_ref"] = self.ref_chk.isChecked()
         self.viz["annotate"] = self.annot_chk.isChecked()
+        self.viz["show_noisy"] = self.noisy_chk.isChecked()
         for key, edit in (("t0", self.t0_edit), ("t1", self.t1_edit)):
             text = edit.text().strip()
             try:
@@ -910,6 +919,12 @@ class MainWindow(QtWidgets.QMainWindow):
         order = {g["id"]: i for i, g in enumerate(self.model.plot_groups())}
         traces.sort(key=lambda t: (order.get(t.group, 99), t.node))
         markers = list(derived_markers)
+        table = self.sample_table
+        if self.viz["show_noisy"] and table is not None and np.any(table.noise_v):
+            for name in self._derived_series:
+                mask = table.channel_mask(derived[name]["channel"])
+                markers.append(Marker(name, f"ADC input + noise ch{derived[name]['channel']}", table.t[mask], table.v_noisy[mask],
+                                      color="#9fc5e8"))
         sm = self.model.manifest.get("sample_marker")
         if sm and self.viz["show_samples"] and r.prepared.samples and r.qraw.has(sm["node"]):
             xs = np.array([s["t"] for s in r.prepared.samples])

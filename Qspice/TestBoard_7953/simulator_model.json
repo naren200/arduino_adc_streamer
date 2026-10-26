@@ -507,6 +507,25 @@
      "tip": "5 ns resolves the mux switching edges; coarser steps give noisy baselines."
     }
    ]
+  },
+  {
+   "group": "ADC output",
+   "items": [
+    {
+     "path": "simulation.adc_noise_mV",
+     "label": "White noise (RMS)",
+     "unit": "mV",
+     "type": "float",
+     "tip": "RMS (standard deviation) of independent Gaussian white noise added to the ADC input value at every conversion, before quantisation: v_out = quant(v_in + N(0, sigma)). It is applied at the conversion instants, not to the continuous waveform (sampling an ideal white source gives independent samples), so it needs no new simulation. 0 = off."
+    },
+    {
+     "path": "simulation.noise_seed",
+     "label": "Noise seed",
+     "unit": "",
+     "type": "int",
+     "tip": "Seed of the noise generator: the same seed gives the same noise, so runs stay repeatable and comparable against a held reference."
+    }
+   ]
   }
  ],
  "tables": [
@@ -909,6 +928,8 @@
   "bits_path": "adc.bits",
   "vref_path": "circuit.vref_v",
   "vmid_path": "circuit.vmid_v",
-  "bipolar_rails": true
+  "bipolar_rails": true,
+  "noise_mv_path": "simulation.adc_noise_mV",
+  "noise_seed_path": "simulation.noise_seed"
  }
 }

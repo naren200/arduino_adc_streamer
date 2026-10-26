@@ -171,7 +171,7 @@ def _validate_adc_out(manifest: dict, defaults: dict, groups: set[str]) -> list[
     for key in ("node", "bits_path", "vref_path", "vmid_path", "channels"):
         if key not in spec:
             problems.append(f"adc_out: '{key}' is missing")
-    for key in ("bits_path", "vref_path", "vmid_path"):
+    for key in ("bits_path", "vref_path", "vmid_path", "noise_mv_path", "noise_seed_path"):
         if key in spec:
             try:
                 _get(defaults, spec[key])
