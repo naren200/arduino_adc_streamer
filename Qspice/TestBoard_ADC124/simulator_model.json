@@ -834,5 +834,13 @@
   "bipolar_rails": true,
   "noise_mv_path": "simulation.adc_noise_mV",
   "noise_seed_path": "simulation.noise_seed"
+ },
+ "force_calc": {
+  "enabled": true,
+  "force_node": "f{k}",
+  "force_tables": [
+   "forces",
+   "forces_sin"
+  ]
  }
 }

@@ -53,7 +53,7 @@ def _wait_for_run(window, timeout_ms=120_000):
 
 def test_screens_exist(window):
     names = [window.tabs.tabText(i) for i in range(window.tabs.count())]
-    assert names == ["Model", "Components", "System", "Simulation", "Visualization"]
+    assert names == ["Model", "Components", "System", "Simulation", "Force", "Visualization"]
     assert len(_field(window, "mux.ileak_s_off_nA").widgets()) == 4
     assert window.node_tree.topLevelItemCount() >= 4
 

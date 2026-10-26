@@ -100,6 +100,28 @@ class Model:
         spec = self.adc_out
         return list(range(int(spec.get("channels", 0)))) if spec else []
 
+    @property
+    def force_calc(self) -> dict | None:
+        """Manifest block ``force_calc`` (needs adc_out): the model can extract the force from the ADC values."""
+        spec = self.manifest.get("force_calc")
+        return spec if spec and spec.get("enabled") and self.adc_out else None
+
+    def sensor_info(self, cfg: dict) -> dict[int, dict]:
+        """Optional adapter.sensor_info(cfg) -> {address: {d33_C_per_N, cp_F, cextra_F}}."""
+        fn = getattr(self.adapter, "sensor_info", None)
+        return {int(k): dict(v) for k, v in fn(copy.deepcopy(cfg)).items()} if fn else {}
+
+    def force_node(self, channel: int) -> str:
+        return (self.force_calc or {}).get("force_node", "f{k}").format(k=channel).lower()
+
+    def forced_channels(self, cfg: dict) -> set[int]:
+        """Channels that have an applied force in the configuration (rows of the model's force tables)."""
+        out: set[int] = set()
+        for path in (self.force_calc or {}).get("force_tables", []):
+            for row in _get(cfg, path) if _has(cfg, path) else []:
+                out.add(int(row["address"]))
+        return out
+
     def derived_nodes(self) -> list[dict]:
         """[{name, label, group, kind, channel, sources}] in tree order."""
         spec = self.adc_out
@@ -131,6 +153,14 @@ class Model:
         return paths
 
 
+def _has(cfg: dict, path: str) -> bool:
+    try:
+        _get(cfg, path)
+        return True
+    except (KeyError, TypeError):
+        return False
+
+
 def _get(cfg: dict, path: str) -> Any:
     node: Any = cfg
     for part in path.split("."):
@@ -160,6 +190,22 @@ def validate_manifest(manifest: dict, defaults: dict) -> list[str]:
         if n.get("group", "other") not in groups:
             problems.append(f"node {n['name']}: unknown plot group {n.get('group')!r}")
     problems += _validate_adc_out(manifest, defaults, groups)
+    problems += _validate_force_calc(manifest, defaults)
+    return problems
+
+
+def _validate_force_calc(manifest: dict, defaults: dict) -> list[str]:
+    spec = manifest.get("force_calc")
+    if not spec or not spec.get("enabled"):
+        return []
+    problems: list[str] = []
+    if "adc_out" not in manifest:
+        problems.append("force_calc needs an adc_out block (the force is calculated from the ADC values)")
+    if "{k}" not in spec.get("force_node", "f{k}"):
+        problems.append("force_calc.force_node must contain {k}, for example f{k}")
+    for path in spec.get("force_tables", []):
+        if not _has(defaults, path) or not isinstance(_get(defaults, path), list):
+            problems.append(f"force_calc.force_tables: {path} is not a list in the default configuration")
     return problems
 
 

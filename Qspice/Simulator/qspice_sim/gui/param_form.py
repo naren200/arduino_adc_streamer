@@ -79,7 +79,7 @@ class FieldRow(QtCore.QObject):
             elif self.kind == "choice":
                 self.editor.setCurrentText(str(value))
             elif self.kind == "intlist":
-                self.editor.setText(", ".join(str(v) for v in value))
+                self.editor.setText(", ".join(str(v) for v in (value or [])))
             else:
                 self.editor.setText("" if value is None else format_number(value))
         finally:
@@ -119,7 +119,9 @@ class FieldRow(QtCore.QObject):
             if self.kind == "intlist":
                 value: Any = [int(p) for p in text.replace(";", ",").split(",") if p.strip()]
                 if not value:
-                    raise ValueError("enter at least one address")
+                    if not self.nullable:
+                        raise ValueError("enter at least one address")
+                    value = None
             elif text == "":
                 if not self.nullable:
                     raise ValueError("a value is required")

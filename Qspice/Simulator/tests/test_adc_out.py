@@ -158,7 +158,10 @@ def test_ticking_a_derived_node_adds_its_source_to_the_save_list(window):
     window.viz["nodes"] = {"muxd"}
     assert window._nodes_to_save(prepared) == ["muxd"]
     window.viz["nodes"] = {"muxd", "adcout_ch2"}
-    assert window._nodes_to_save(prepared) == ["ain", "muxd"]      # the sample node is pulled in; adcout_ch2 is no QSPICE node
+    # the sample node is pulled in (adcout_ch2 is no QSPICE node), plus the applied force of the forced channels 2 and 4
+    assert window._nodes_to_save(prepared) == ["ain", "f2", "f4", "muxd"]
+    window.cfg["forces"] = []
+    prepared = runner.prepare(window.model, window.cfg)
     window.viz["nodes"] = {"adcout_ch2", "adcout_ch4"}
     assert window._nodes_to_save(prepared) == ["ain"]
 

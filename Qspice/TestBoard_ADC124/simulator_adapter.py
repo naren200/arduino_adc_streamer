@@ -101,3 +101,12 @@ def field_hints(cfg: dict) -> dict[str, str]:
         return {"sensor_defaults.cp_pF": f"calculated: {bm.sensor_params(cfg, 0)['cp_calc'] * 1e12:.1f} pF"}
     except (KeyError, ValueError):
         return {}
+
+
+def sensor_info(cfg: dict) -> dict[int, dict]:
+    """Per-sensor values for the force calculator of the simulator: d33 [C/N, with the force gain], Cp [F] and the extra node capacitance [F]."""
+    out = {}
+    for k in range(7):
+        sp = bm.sensor_params(cfg, k)
+        out[k] = {"d33_C_per_N": sp["d33"], "cp_F": sp["cp"], "cextra_F": 0.0}
+    return out

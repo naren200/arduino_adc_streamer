@@ -15,8 +15,10 @@ from .. import model_loader, runner
 from ..adc_model import SampleTable, build_sample_table, stair, stair_at
 from ..config_utils import apply_overrides, format_number, get_path, parse_number, set_path
 from ..decimate import envelope
+from ..force_calc import FORCE_DEFAULTS, ChannelForce, compute_all, formulas_html, resolve_params, summary_row
 from ..model_loader import Model, ModelError
 from ..qraw import QRaw
+from .force_tab import ForceTab
 from .param_form import ParamForm, TableEditor
 from .plot_panel import Marker, PlotPanel, Trace
 from .worker import SimWorker
@@ -71,6 +73,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._plot_notes: list[str] = []
         self._derived_series: dict[str, dict] = {}
         self.sample_table: SampleTable | None = None
+        self.force: dict = copy.deepcopy(FORCE_DEFAULTS)
+        self.force_tab: ForceTab | None = None
+        self.force_results: dict[int, ChannelForce] = {}
         self._tab_forms: list[ParamForm] = []
         self._tables: list[TableEditor] = []
         self._build_ui()
@@ -157,7 +162,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.defaults = model.default_config()
         self.cfg = model.default_config()
         self.result = None
-        self.sample_table, self._derived_series = None, {}
+        self.sample_table, self._derived_series, self.force_results = None, {}, {}
+        self.force = copy.deepcopy(FORCE_DEFAULTS)
         self.reference = None
         self._set_result_actions(False)
         self.plot.clear()
@@ -244,8 +250,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(system, "System")
 
         self.tabs.addTab(self._build_simulation_tab(), "Simulation")
+        self.force_tab = None
+        if m.force_calc:
+            self.force_tab = ForceTab(self._force_get, self._force_set, self._force_default, self._force_hints, self._force_extra_items())
+            self.force_tab.changed.connect(self._on_force_changed)
+            self.force_tab.export_requested.connect(self.export_force_samples)
+            self.tabs.addTab(self.force_tab, "Force")
         self.tabs.addTab(self._build_visualization_tab(), "Visualization")
         self._refresh_summary()
+        self._update_force_tab()
 
     def _build_model_tab(self) -> QtWidgets.QWidget:
         m = self.model
@@ -401,6 +414,130 @@ class MainWindow(QtWidgets.QMainWindow):
         self._populate_nodes()
         return w
 
+    # ------------------------------------------------------------------ force tab
+    def _force_extra_items(self) -> list[dict]:
+        return []
+
+    def _force_get(self, path: str):
+        return self.force[path.split(".", 1)[1]]
+
+    def _force_set(self, path: str, value) -> None:
+        self.force[path.split(".", 1)[1]] = value
+
+    def _force_default(self, path: str):
+        return FORCE_DEFAULTS[path.split(".", 1)[1]]
+
+    def _extraction_channels(self, table: SampleTable | None) -> list[int]:
+        """Channels of the force calculation: the user list or every model channel that has conversions."""
+        wanted = self.force.get("channels")
+        if wanted:
+            return [int(c) for c in wanted]
+        if table is None:
+            return list(self.model.channels)
+        have = set(int(a) for a in table.address)
+        return [c for c in self.model.channels if c in have]
+
+    def _force_hints(self) -> dict[str, str]:
+        """Values the empty fields follow (of the first extracted channel)."""
+        if not self.model or not self.model.force_calc:
+            return {}
+        infos = self.model.sensor_info(self.cfg)
+        chans = self._extraction_channels(self.sample_table)
+        info = infos.get(chans[0] if chans else min(infos, default=0))
+        if not info:
+            return {}
+        return {"force.d33_pC_per_N": f"model: {info['d33_C_per_N'] * 1e12:.4g} pC/N",
+                "force.cp_pF": f"model: {info['cp_F'] * 1e12:.4g} pF",
+                "force.cextra_pF": f"model: {info.get('cextra_F', 0.0) * 1e12:.4g} pF"}
+
+    def _on_force_changed(self, _path: str) -> None:
+        if self.result is not None:
+            self._replot()
+        else:
+            self._update_force_tab()
+
+    def _applied_force(self, channel: int, times: np.ndarray):
+        """Applied force at the conversion instants: the saved force node, zero for a channel without force, else None."""
+        r = self.result
+        node = self.model.force_node(channel)
+        if r.qraw.has(node):
+            return np.interp(times, r.qraw.time, r.column(node))
+        if channel not in self.model.forced_channels(r.cfg):
+            return np.zeros(len(times))
+        return None
+
+    def _calculate_force(self, table: SampleTable, notes: list[str] | None = None) -> dict[int, ChannelForce]:
+        r = self.result
+        vmid = float(get_path(r.cfg, self.model.adc_out["vmid_path"]))
+        try:
+            return compute_all(table, self._extraction_channels(table), self.model.sensor_info(r.cfg), self.force, vmid,
+                               self._applied_force)
+        except ValueError as exc:
+            if notes is not None:
+                notes.append(f"Force calculation: {exc}")
+            return {}
+
+    def _update_force_tab(self) -> None:
+        tab = self.force_tab
+        if tab is None:
+            return
+        r = self.result
+        infos = self.model.sensor_info(self.cfg)
+        table = None
+        note = "Run a simulation first: the table needs the ADC samples of a run."
+        self.force_results = {}
+        if r is not None:
+            try:
+                table = self.sample_table or self._compute_sample_table()
+            except (KeyError, ValueError, TypeError) as exc:
+                note = f"ADC parameters are invalid: {exc}"
+            else:
+                note = ("The last run did not save the ADC sample node: tick an ADC-Out channel on the Visualization tab and press Run."
+                        if table is None else "")
+        channels = self._extraction_channels(table)
+        params, lsb = None, None
+        try:
+            if channels and channels[0] in infos:
+                params = resolve_params(self.force, infos[channels[0]])
+            lsb = self.model.adc_params(r.cfg if r else self.cfg, self.cfg).lsb
+        except (KeyError, ValueError, TypeError) as exc:
+            note = note or f"Force calculation: {exc}"
+        rows: list[list] = []
+        if table is not None:
+            notes: list[str] = []
+            self.force_results = self._calculate_force(table, notes)
+            rows = [summary_row(self.force_results[c]) for c in channels if c in self.force_results]
+            if notes:
+                note = "; ".join(notes)
+            elif not rows:
+                note = "No conversion of the chosen sensors in the run."
+            else:
+                missing = [c for c in self.force_results if self.force_results[c].fin is None]
+                if missing:
+                    note = ("Applied force not saved for channel(s) " + ", ".join(map(str, missing))
+                            + ": tick an ADC-Out channel and press Run to compare.")
+        tab.show_results(formulas_html(params, lsb, channels[0] if channels else None, self.force["reference"], self.force["source"]),
+                         rows, note)
+
+    def export_force_samples(self) -> None:
+        if not self.force_results:
+            QtWidgets.QMessageBox.information(self, "Export per-sample table", "There is no force result yet: run a simulation first.")
+            return
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export per-sample force table", str(SIM_DIR / "force_samples.csv"),
+                                                        "CSV (*.csv)")
+        if not path:
+            return
+        with open(path, "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow(["t", "address", "V", "dF", "F", "Fin"])
+            n = 0
+            for cf in self.force_results.values():
+                for i in range(len(cf.t)):
+                    w.writerow([f"{cf.t[i]:.9e}", cf.address, f"{cf.v[i]:.9g}", f"{cf.dF[i]:.9g}", f"{cf.F[i]:.9g}",
+                                "" if cf.fin is None else f"{cf.fin[i]:.9g}"])
+                    n += 1
+        self._set_status(f"Exported {n:,} force samples to {path}")
+
     # ================================================================== node tree
     def _populate_nodes(self) -> None:
         m = self.model
@@ -503,6 +640,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_param_changed(self, path: str) -> None:
         for f in self._tab_forms:
             f.update_hints()
+        if self.force_tab is not None:
+            self.force_tab.form.update_hints()
         if self.result is not None and path in self._post_paths():
             self._replot()
         self._refresh_summary()
@@ -536,10 +675,14 @@ class MainWindow(QtWidgets.QMainWindow):
             f.refresh()
         for t in self._tables:
             t.refresh()
+        if self.force_tab is not None:
+            self.force_tab.refresh()
+            self._update_force_tab()
         self._refresh_summary()
 
     def _reset_all(self) -> None:
         self.cfg = self.model.default_config()
+        self.force = copy.deepcopy(FORCE_DEFAULTS)
         self._refresh_all_forms()
         self._set_status("All parameters reset to the model defaults")
 
@@ -572,7 +715,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                         "Settings (*.json)")
         if not path:
             return
-        data = {"format": 1, "model": self.model.id, "config": self.cfg,
+        data = {"format": 1, "model": self.model.id, "config": self.cfg, "force": self.force,
                 "visualization": {**self.viz, "nodes": sorted(self.viz["nodes"])}}
         Path(path).write_text(json.dumps(data, indent=1), encoding="utf-8")
         self._set_status(f"Settings saved to {path}")
@@ -590,6 +733,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if target is not self.model:
             self.load_model(target)
         self.cfg = deep_merge(self.model.default_config(), data.get("config", {}))
+        self.force = deep_merge(FORCE_DEFAULTS, data.get("force", {}))
         viz = data.get("visualization", {})
         for k in ("layout", "show_samples", "t0", "t1", "line_width", "show_ref", "annotate", "show_noisy"):
             if k in viz:
@@ -642,6 +786,9 @@ class MainWindow(QtWidgets.QMainWindow):
         wanted: set[str] = set()
         for n in self.viz["nodes"]:
             wanted.update(derived[n]["sources"] if n in derived else [n])
+        if self.model.force_calc and any(n in derived for n in self.viz["nodes"]):
+            # the applied force of the channels that have one, so the calculated force can be compared with it
+            wanted.update(self.model.force_node(k) for k in self.model.forced_channels(self.cfg))
         return [n for n in sorted(wanted) if n in existing]
 
     def update_estimate(self) -> None:
@@ -936,6 +1083,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if missing:
             notes.insert(0, f"Not in the last run (press Run to include them): {', '.join(missing)}")
         self._plot_notes = notes
+        self._update_force_tab()
         if notes:
             self._set_status("; ".join(notes))
 

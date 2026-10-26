@@ -96,6 +96,7 @@ def test_noise_fields_are_on_the_simulation_tab_with_an_explanation(window):
     assert row.unit.text() == "mV" and "conversion" in row.editor.toolTip() and "not to the continuous waveform" in row.editor.toolTip()
     assert window.cfg["simulation"]["adc_noise_mV"] == 0 and window.cfg["simulation"]["noise_seed"] == 1
     assert _field(window, "simulation.noise_seed").kind == "int"
+    window.cfg["forces"] = []
     prepared = runner.prepare(window.model, window.cfg)
     window.viz["nodes"] = {"adcout_ch2"}
     assert window._nodes_to_save(prepared) == ["ain"]               # the noise adds no QSPICE node
