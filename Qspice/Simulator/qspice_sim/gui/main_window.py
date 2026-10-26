@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import csv
 import json
 import time
 from dataclasses import dataclass, field
@@ -11,6 +12,7 @@ import numpy as np
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from .. import model_loader, runner
+from ..adc_model import SampleTable, build_sample_table, stair, stair_at
 from ..config_utils import apply_overrides, format_number, get_path, parse_number, set_path
 from ..decimate import envelope
 from ..model_loader import Model, ModelError
@@ -65,6 +67,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker: SimWorker | None = None
         self._est_bytes = float("nan")
         self._discovered: list[str] = []
+        self._preview_samples: list[dict] = []
+        self._plot_notes: list[str] = []
+        self._derived_series: dict[str, dict] = {}
+        self.sample_table: SampleTable | None = None
         self._tab_forms: list[ParamForm] = []
         self._tables: list[TableEditor] = []
         self._build_ui()
@@ -122,6 +128,8 @@ class MainWindow(QtWidgets.QMainWindow):
         tb.addSeparator()
         self.act_img = tb.addAction(style.standardIcon(SP.SP_DialogSaveButton), "Save image\u2026", self.save_image)
         self.act_csv = tb.addAction(style.standardIcon(SP.SP_FileIcon), "Export data\u2026", self.export_csv)
+        self.act_samples = tb.addAction("Export samples…", self.export_samples)
+        self.act_samples.setToolTip("CSV of every ADC conversion: t, label, address, v_in, noise_mv, code, v_out")
         tb.addSeparator()
         self.act_ref = tb.addAction("Hold as reference", self.hold_reference)
         self.act_ref.setToolTip("Keep the current traces as a dashed reference so the next run can be compared with it")
@@ -129,7 +137,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tb.addSeparator()
         tb.addAction(style.standardIcon(SP.SP_DialogOpenButton), "Load settings\u2026", self.load_settings)
         tb.addAction(style.standardIcon(SP.SP_DialogSaveButton), "Save settings\u2026", self.save_settings)
-        for a in (self.act_img, self.act_csv, self.act_ref, self.act_clear_ref):
+        for a in (self.act_img, self.act_csv, self.act_samples, self.act_ref, self.act_clear_ref):
             a.setEnabled(False)
 
         sb = self.statusBar()
@@ -153,7 +161,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_result_actions(False)
         self.plot.clear()
         self.banner.hide()
-        self.viz["nodes"] = {n["name"].lower() for n in model.manifest.get("nodes", []) if n.get("default")}
+        self._discover_nodes()
+        self.viz["nodes"] = self._default_nodes()
         if self.model_combo.findData(model.id) < 0:
             self.model_combo.blockSignals(True)
             self.model_combo.addItem(model.name, model.id)
@@ -161,7 +170,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.model_combo.blockSignals(True)
         self.model_combo.setCurrentIndex(max(0, self.model_combo.findData(model.id)))
         self.model_combo.blockSignals(False)
-        self._discover_nodes()
         self._build_tabs()
         self.setWindowTitle(f"Qspice Simulator \u2013 {model.name}")
         self._set_status(f"Loaded model {model.name}")
@@ -184,9 +192,21 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _discover_nodes(self) -> None:
         try:
-            self._discovered = runner.prepare(self.model, self.cfg).nodes_in_netlist
+            prepared = runner.prepare(self.model, self.cfg)
+            self._discovered, self._preview_samples = prepared.nodes_in_netlist, prepared.samples
         except Exception:  # node discovery is best effort; the manifest still lists the known nodes
-            self._discovered = []
+            self._discovered, self._preview_samples = [], []
+
+    def _default_nodes(self) -> set[str]:
+        """Manifest defaults plus the ADC-Out of the first scanned channel and of every channel that has an applied force."""
+        nodes = {n["name"].lower() for n in self.model.manifest.get("nodes", []) if n.get("default")}
+        channels = set(self.model.channels)
+        if channels:
+            first = next((int(s["address"]) for s in self._preview_samples if "address" in s), min(channels))
+            forced = {int(f["address"]) for key in ("forces", "forces_sin") for f in self.cfg.get(key, [])}
+            for k in {first} | (forced & channels):
+                nodes.add(f"adcout_ch{k}")
+        return nodes
 
     # ------------------------------------------------------------------ tabs
     def _get(self, path: str):
@@ -390,6 +410,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 by_group.setdefault(nd.get("group", "other"), []).append(name)
         for name in sorted(known - set(info)):
             by_group["other"].append(name)
+        derived = m.derived_info()
+        for name, d in derived.items():
+            by_group.setdefault(d["group"], []).append(name)
+        tip = self._adc_tooltip()
         for g in groups:
             names = by_group.get(g["id"], [])
             if not names:
@@ -398,8 +422,10 @@ class MainWindow(QtWidgets.QMainWindow):
             parent.setFlags(parent.flags() | QtCore.Qt.ItemFlag.ItemIsAutoTristate | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
             tree.addTopLevelItem(parent)
             for name in names:
-                label = info.get(name, {}).get("label", name)
+                label = derived[name]["label"] if name in derived else info.get(name, {}).get("label", name)
                 item = QtWidgets.QTreeWidgetItem([label, name])
+                if name in derived:
+                    item.setToolTip(0, tip)
                 item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(0, QtCore.Qt.CheckState.Checked if name in self.viz["nodes"] else QtCore.Qt.CheckState.Unchecked)
                 item.setData(0, QtCore.Qt.ItemDataRole.UserRole, name)
@@ -407,6 +433,17 @@ class MainWindow(QtWidgets.QMainWindow):
             parent.setExpanded(g["id"] in ("adc", "other") or any(n in self.viz["nodes"] for n in names))
         tree.resizeColumnToContents(0)
         tree.blockSignals(False)
+
+    def _adc_tooltip(self) -> str:
+        spec = self.model.adc_out
+        if not spec:
+            return ""
+        try:
+            rng = self.model.adc_params(self.cfg).describe()
+        except (KeyError, ValueError, TypeError) as exc:
+            rng = f"invalid ADC parameters: {exc}"
+        return (f"{spec.get('label', 'ADC-Out')}: the value of the sample node ({spec['node']}) at every conversion of this channel, "
+                f"rounded to the ADC resolution. Range {rng}. Derived after the run, no new simulation needed.")
 
     def _selected_nodes(self) -> list[str]:
         out = []
@@ -423,7 +460,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._viz_changed(replot_only=True)
 
     def _nodes_defaults(self) -> None:
-        self.viz["nodes"] = {n["name"].lower() for n in self.model.manifest.get("nodes", []) if n.get("default")}
+        self.viz["nodes"] = self._default_nodes()
         self._populate_nodes()
         self._viz_changed()
 
@@ -452,9 +489,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 parent.setExpanded(True)
 
     # ================================================================== parameter changes
-    def _on_param_changed(self, _path: str) -> None:
+    def _post_paths(self) -> set[str]:
+        """Parameters that only shape the derived values: changing one re-derives the traces, it needs no new run."""
+        spec = self.model.adc_out or {}
+        return {spec[k] for k in ("bits_path", "noise_mv_path", "noise_seed_path") if k in spec}
+
+    def _on_param_changed(self, path: str) -> None:
         for f in self._tab_forms:
             f.update_hints()
+        if self.result is not None and path in self._post_paths():
+            self._replot()
         self._refresh_summary()
         self.estimate_label.setText("Estimate: parameters changed \u2013 press \u201cUpdate estimate\u201d")
         self._update_modified_label()
@@ -585,8 +629,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ================================================================== estimate / run
     def _nodes_to_save(self, prepared: runner.Prepared) -> list[str]:
+        """Ticked QSPICE nodes plus the source nodes of the ticked derived nodes."""
         existing = set(prepared.nodes_in_netlist)
-        return [n for n in sorted(self.viz["nodes"]) if n in existing]
+        derived = self.model.derived_info()
+        wanted: set[str] = set()
+        for n in self.viz["nodes"]:
+            wanted.update(derived[n]["sources"] if n in derived else [n])
+        return [n for n in sorted(wanted) if n in existing]
 
     def update_estimate(self) -> None:
         self._commit_pending_edits()
@@ -641,8 +690,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No)
             if answer != QtWidgets.QMessageBox.StandardButton.Yes:
                 return
-        if prepared.warnings:
-            self.banner.setText("\u26a0 " + "\n\u26a0 ".join(prepared.warnings))
+        warnings = list(prepared.warnings) + self._range_warnings()
+        if warnings:
+            self.banner.setText("\u26a0 " + "\n\u26a0 ".join(warnings))
             self.banner.show()
         else:
             self.banner.hide()
@@ -659,6 +709,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_running(True)
         self._set_status("Running QSPICE\u2026")
         self.worker.start()
+
+    def _range_warnings(self) -> list[str]:
+        """A model that cannot switch to a bipolar supply keeps its single rails: values below 0 V are clipped by the ADC."""
+        spec = self.model.adc_out
+        if not spec or spec.get("bipolar_rails"):
+            return []
+        try:
+            vmid = float(get_path(self.cfg, spec["vmid_path"]))
+        except (KeyError, TypeError, ValueError):
+            return []
+        if vmid == 0:
+            return ["VMID = 0: this model has no bipolar analog supply, so its circuit keeps the single rails; "
+                    "the ADC-Out range is -Vref .. +Vref but values below 0 V are clipped by the circuit."]
+        return []
 
     def stop(self) -> None:
         if self.worker is not None:
@@ -680,8 +744,8 @@ class MainWindow(QtWidgets.QMainWindow):
         msg = f"Done in {self.result.seconds:.1f} s: {qraw.n_points:,} time points"
         if missing:
             msg += f" (not saved by QSPICE: {', '.join(missing)})"
-        self._set_status(msg)
         self._replot()
+        self._set_status(msg + ("; " + "; ".join(self._plot_notes) if self._plot_notes else ""))
 
     def _on_failed(self, message: str) -> None:
         self._set_status("Simulation failed")
@@ -702,7 +766,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress.setValue(0)
 
     def _set_result_actions(self, has: bool) -> None:
-        for a in (self.act_img, self.act_csv, self.act_ref):
+        for a in (self.act_img, self.act_csv, self.act_samples, self.act_ref):
             a.setEnabled(has)
         self.act_clear_ref.setEnabled(self.reference is not None)
 
@@ -755,22 +819,97 @@ class MainWindow(QtWidgets.QMainWindow):
             title += f"   |   dashed = reference: {self.reference['desc']}"
         return title
 
+    # ------------------------------------------------------------------ derived nodes (computed from the sample node)
+    def _noise_settings(self) -> tuple[float, int]:
+        spec = self.model.adc_out or {}
+        noise = float(get_path(self.cfg, spec["noise_mv_path"], 0.0)) if "noise_mv_path" in spec else 0.0
+        seed = int(get_path(self.cfg, spec["noise_seed_path"], 1)) if "noise_seed_path" in spec else 1
+        return noise, seed
+
+    def _compute_sample_table(self) -> SampleTable | None:
+        """Conversion table (ideal input, noise, code, ADC-Out) of the last run, or None when the sample node was not saved."""
+        r, spec = self.result, self.model.adc_out
+        if r is None or not spec or not r.prepared.samples or not r.qraw.has(spec["node"]):
+            return None
+        adc = self.model.adc_params(r.cfg, self.cfg)
+        xs = np.array([float(s["t"]) for s in r.prepared.samples])
+        ideal = np.interp(xs, r.qraw.time, r.column(spec["node"]))
+        noise_mv, seed = self._noise_settings()
+        return build_sample_table(r.prepared.samples, ideal, adc, noise_mv, seed)
+
+    def _derived_missing_sources(self, name: str) -> list[str]:
+        return [s for s in self.model.derived_info()[name]["sources"] if not self.result.qraw.has(s)]
+
+    def _build_derived_series(self, notes: list[str]) -> None:
+        """Fill ``self._derived_series`` {name: {label, group, t, v, codes}} for the ticked derived nodes (conversion instants)."""
+        self._derived_series = {}
+        r = self.result
+        derived = self.model.derived_info()
+        ticked = [n for n in sorted(self.viz["nodes"], key=lambda n: (derived[n]["kind"], derived[n]["channel"]) if n in derived else ("", 0))
+                  if n in derived]
+        if not ticked:
+            self.sample_table = None
+            return
+        try:
+            self.sample_table = self._compute_sample_table()
+        except (KeyError, ValueError, TypeError) as exc:
+            self.sample_table = None
+            notes.append(f"ADC-Out not available: {exc}")
+            return
+        table = self.sample_table
+        if table is None:
+            notes.append("Not in the last run (press Run to include them): " + ", ".join(derived[n]["label"] for n in ticked))
+            return
+        empty = []
+        for name in ticked:
+            d = derived[name]
+            mask = table.channel_mask(d["channel"])
+            if not mask.any():
+                empty.append(d["label"])
+                continue
+            if d["kind"] == "adcout":
+                self._derived_series[name] = {"label": d["label"], "group": d["group"], "t": table.t[mask], "v": table.v_out[mask],
+                                              "codes": table.code[mask], "unit": "V"}
+        if empty:
+            notes.append("no conversion in the run: " + ", ".join(empty))
+        used = [d for n, d in derived.items() if n in self._derived_series]
+        clipped = table.clipped_count([d["channel"] for d in used]) if used else 0
+        if clipped:
+            notes.append(f"{clipped} sample(s) clipped (outside the ADC range {table.adc.v_low:g} .. {table.adc.v_high:g} V)")
+
+    def _derived_traces(self) -> tuple[list[Trace], list[Marker]]:
+        r = self.result
+        t_end = float(r.qraw.time[-1])
+        traces, markers = [], []
+        for name, s in self._derived_series.items():
+            x, y = stair(s["t"], s["v"], t_end)
+            traces.append(Trace(name, s["label"], s["group"], x, y, kind="stair"))
+            markers.append(Marker(name, s["label"] + " conversions", s["t"], s["v"], color="#ffd966"))
+        return traces, markers
+
     def _replot(self) -> None:
         r = self.result
         if r is None:
             return
         info = self.model.node_info()
+        derived = self.model.derived_info()
         traces = []
         missing = []
         for node in sorted(self.viz["nodes"]):
+            if node in derived:
+                continue
             if not r.qraw.has(node):
                 missing.append(node)
                 continue
             nd = info.get(node, {})
             traces.append(Trace(node, nd.get("label", node), nd.get("group", "other"), r.qraw.time, r.column(node)))
+        notes: list[str] = []
+        self._build_derived_series(notes)
+        derived_traces, derived_markers = self._derived_traces()
+        traces += derived_traces
         order = {g["id"]: i for i, g in enumerate(self.model.plot_groups())}
         traces.sort(key=lambda t: (order.get(t.group, 99), t.node))
-        markers = []
+        markers = list(derived_markers)
         sm = self.model.manifest.get("sample_marker")
         if sm and self.viz["show_samples"] and r.prepared.samples and r.qraw.has(sm["node"]):
             xs = np.array([s["t"] for s in r.prepared.samples])
@@ -780,7 +919,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plot.show_traces(traces, self.model.plot_groups(), self.viz["layout"], markers, reference, self.viz["line_width"],
                               (self.viz["t0"], self.viz["t1"]), self._title())
         if missing:
-            self._set_status(f"Not in the last run (press Run to include them): {', '.join(missing)}")
+            notes.insert(0, f"Not in the last run (press Run to include them): {', '.join(missing)}")
+        self._plot_notes = notes
+        if notes:
+            self._set_status("; ".join(notes))
 
     def hold_reference(self) -> None:
         self._commit_pending_edits()
@@ -798,9 +940,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
         traces = {}
         t = r.qraw.time
+        derived = self.model.derived_info()
         for node in self.viz["nodes"]:
-            if r.qraw.has(node):
+            if node not in derived and r.qraw.has(node):
                 traces[node] = tuple(np.array(a) for a in envelope(t, r.column(node), float(t[0]), float(t[-1]), n_buckets=4000))
+        for tr in self._derived_traces()[0]:
+            traces[tr.node] = (tr.t.copy(), tr.v.copy())
         self.reference = {"traces": traces, "desc": self._changes_text(r.cfg)}
         self.act_clear_ref.setEnabled(True)
         self._set_status(f"Reference held ({len(traces)} node(s)): {self.reference['desc']}. Change parameters and press Run to compare")
@@ -830,18 +975,48 @@ class MainWindow(QtWidgets.QMainWindow):
         r = self.result
         if r is None:
             return
-        nodes = [n for n in sorted(self.viz["nodes"]) if r.qraw.has(n)]
+        derived = self.model.derived_info()
+        nodes = [n for n in sorted(self.viz["nodes"]) if n not in derived and r.qraw.has(n)]
+        series = self._derived_series
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export data (visible time range)", str(SIM_DIR / "simulation.csv"),
                                                         "CSV (*.csv)")
-        if not path or not nodes:
+        if not path or not (nodes or series):
             return
         x0, x1 = self.plot.visible_range()
         t = r.qraw.time
         i0, i1 = int(np.searchsorted(t, x0)), int(np.searchsorted(t, x1, side="right"))
         stride = max(1, (i1 - i0) // 2_000_000)
-        cols = [t[i0:i1:stride]] + [r.column(n)[i0:i1:stride] for n in nodes]
-        np.savetxt(path, np.column_stack(cols), delimiter=",", header="time_s," + ",".join(f"V({n})" for n in nodes), comments="")
+        tt = t[i0:i1:stride]
+        cols, names = [tt], ["time_s"]
+        for n in nodes:
+            cols.append(r.column(n)[i0:i1:stride])
+            names.append(f"V({n})")
+        for name, s in series.items():          # derived values are held between conversions of their channel
+            cols.append(stair_at(tt, s["t"], s["v"]))
+            names.append(f"{s['label']} [{s['unit']}]".replace(",", ";"))
+            if "codes" in s:
+                cols.append(stair_at(tt, s["t"], s["codes"].astype(float)))
+                names.append(f"{s['label']} code")
+        np.savetxt(path, np.column_stack(cols), delimiter=",", header=",".join(names), comments="")
         self._set_status(f"Exported {len(cols[0]):,} rows to {path}" + (f" (every {stride}th point)" if stride > 1 else ""))
+
+    def export_samples(self) -> None:
+        """CSV with one row per conversion of every channel: ideal input, noise, code and ADC-Out."""
+        table = self.sample_table or (self._compute_sample_table() if self.result is not None else None)
+        if table is None:
+            QtWidgets.QMessageBox.information(self, "Export samples", "Run a simulation that saves the ADC sample node first "
+                                              "(tick an ADC-Out channel on the Visualization tab).")
+            return
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export samples", str(SIM_DIR / "samples.csv"), "CSV (*.csv)")
+        if not path:
+            return
+        with open(path, "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow(["t", "label", "address", "v_in", "noise_mv", "code", "v_out", "clipped"])
+            for i in range(len(table)):
+                w.writerow([f"{table.t[i]:.9e}", table.label[i], int(table.address[i]), f"{table.v_in[i]:.9g}",
+                            f"{table.noise_v[i] * 1e3:.6g}", int(table.code[i]), f"{table.v_out[i]:.9g}", int(table.clipped[i])])
+        self._set_status(f"Exported {len(table):,} conversions to {path}")
 
     # ================================================================== lifecycle
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:

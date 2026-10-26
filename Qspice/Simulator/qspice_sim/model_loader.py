@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .adc_model import AdcParams
+
 MANIFEST_NAME = "simulator_model.json"
 FIELD_TYPES = {"float", "int", "bool", "choice", "intlist"}
 
@@ -87,6 +89,39 @@ class Model:
             groups.append({"id": "other", "title": "Other nodes [V]"})
         return groups
 
+    # ----- derived nodes (computed in Python from the sample node, not QSPICE nodes) -----
+    @property
+    def adc_out(self) -> dict | None:
+        """Manifest block ``adc_out``: the ADC input node, the ADC parameters in the configuration and the channel count."""
+        return self.manifest.get("adc_out")
+
+    @property
+    def channels(self) -> list[int]:
+        spec = self.adc_out
+        return list(range(int(spec.get("channels", 0)))) if spec else []
+
+    def derived_nodes(self) -> list[dict]:
+        """[{name, label, group, kind, channel, sources}] in tree order."""
+        spec = self.adc_out
+        if not spec:
+            return []
+        out = []
+        for k in self.channels:
+            out.append({"name": f"adcout_ch{k}", "label": f"ADC-Out ch{k}", "group": spec.get("group", "adc"), "kind": "adcout",
+                        "channel": k, "sources": [spec["node"]]})
+        return out
+
+    def derived_info(self) -> dict[str, dict]:
+        return {d["name"]: d for d in self.derived_nodes()}
+
+    def adc_params(self, run_cfg: dict, live_cfg: dict | None = None) -> AdcParams:
+        """ADC parameters of a result: reference and VMID from the configuration the run used (they shape the circuit),
+        the resolution from the live configuration (changing it only re-derives the ADC output, it needs no new run)."""
+        spec = self.adc_out
+        live = run_cfg if live_cfg is None else live_cfg
+        return AdcParams(bits=int(_get(live, spec["bits_path"])), vref=float(_get(run_cfg, spec["vref_path"])),
+                         vmid=float(_get(run_cfg, spec["vmid_path"])))
+
     def all_paths(self) -> list[str]:
         paths = []
         for tab in ("components", "system", "simulation"):
@@ -124,7 +159,45 @@ def validate_manifest(manifest: dict, defaults: dict) -> list[str]:
     for n in manifest.get("nodes", []):
         if n.get("group", "other") not in groups:
             problems.append(f"node {n['name']}: unknown plot group {n.get('group')!r}")
+    problems += _validate_adc_out(manifest, defaults, groups)
     return problems
+
+
+def _validate_adc_out(manifest: dict, defaults: dict, groups: set[str]) -> list[str]:
+    spec = manifest.get("adc_out")
+    if spec is None:
+        return []
+    problems: list[str] = []
+    for key in ("node", "bits_path", "vref_path", "vmid_path", "channels"):
+        if key not in spec:
+            problems.append(f"adc_out: '{key}' is missing")
+    for key in ("bits_path", "vref_path", "vmid_path"):
+        if key in spec:
+            try:
+                _get(defaults, spec[key])
+            except (KeyError, TypeError):
+                problems.append(f"adc_out.{key}: {spec[key]} is not present in the default configuration")
+    try:
+        bits = _get(defaults, spec.get("bits_path", ""))
+        if isinstance(bits, bool) or not isinstance(bits, int) or bits < 2:
+            problems.append(f"adc_out.bits_path: {spec['bits_path']} must be an integer of at least 2")
+    except (KeyError, TypeError):
+        pass
+    if not isinstance(spec.get("channels", 1), int) or spec.get("channels", 1) < 1:
+        problems.append("adc_out.channels must be a positive integer (number of sensor channels)")
+    if spec.get("group", "adc") not in groups:
+        problems.append(f"adc_out: unknown plot group {spec.get('group')!r}")
+    if spec.get("node") and spec["node"].lower() not in {n["name"].lower() for n in manifest.get("nodes", [])}:
+        problems.append(f"adc_out.node: {spec['node']} is not a node of the manifest")
+    real = {n["name"].lower() for n in manifest.get("nodes", [])}
+    for d in _derived_names(spec):
+        if d in real:
+            problems.append(f"derived node {d} has the same name as a real node")
+    return problems
+
+
+def _derived_names(spec: dict) -> list[str]:
+    return [f"adcout_ch{k}" for k in range(int(spec.get("channels", 0)) if isinstance(spec.get("channels", 0), int) else 0)]
 
 
 def _load_adapter(root: Path, filename: str):

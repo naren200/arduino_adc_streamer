@@ -24,14 +24,17 @@ class Trace:
     group: str
     t: np.ndarray
     v: np.ndarray
+    kind: str = "line"          # "stair": derived value held until the next conversion (NaN = undefined, drawn as a gap)
+    dashed: bool = False
 
 
 @dataclass
 class Marker:
-    node: str
+    node: str                   # shown on the panel that holds the trace of this node
     label: str
     x: np.ndarray
     y: np.ndarray
+    color: str | None = None    # None: white marker with a black edge
 
 
 class PlotPanel(QtWidgets.QWidget):
@@ -130,16 +133,22 @@ class PlotPanel(QtWidgets.QWidget):
                 ref = reference.get(tr.node)
                 if ref is not None:
                     plot.plot(ref[0], ref[1], pen=pg.mkPen(color, width=line_width, style=QtCore.Qt.PenStyle.DashLine),
-                              name=f"ref: {tr.label}", skipFiniteCheck=True)
-                item = plot.plot([], [], pen=pg.mkPen(color, width=line_width), name=tr.label, skipFiniteCheck=True)
+                              name=f"ref: {tr.label}", skipFiniteCheck=tr.kind != "stair",
+                              connect="finite" if tr.kind == "stair" else "all")
+                style = QtCore.Qt.PenStyle.DashLine if tr.dashed else QtCore.Qt.PenStyle.SolidLine
+                item = plot.plot([], [], pen=pg.mkPen(color, width=line_width, style=style), name=tr.label,
+                                 skipFiniteCheck=tr.kind != "stair", connect="finite" if tr.kind == "stair" else "all")
                 curves.append((tr, item))
             for mk in markers:
                 if any(t.node == mk.node for t in members):
-                    sp = pg.ScatterPlotItem(mk.x, mk.y, size=6, pen=pg.mkPen("k", width=0.8), brush=pg.mkBrush("#ffffff"), name=mk.label)
+                    brush = pg.mkBrush(mk.color or "#ffffff")
+                    sp = pg.ScatterPlotItem(mk.x, mk.y, size=6, pen=pg.mkPen("k", width=0.8), brush=brush, name=mk.label)
                     plot.addItem(sp)
-            lo = min(float(np.min(t.v)) for t in members if len(t.v))
-            hi = max(float(np.max(t.v)) for t in members if len(t.v))
-            if hi - lo <= 1e-12 * max(1.0, abs(hi)):
+            finite = [t.v[np.isfinite(t.v)] for t in members]
+            finite = [a for a in finite if len(a)]
+            lo = min(float(np.min(a)) for a in finite) if finite else 0.0
+            hi = max(float(np.max(a)) for a in finite) if finite else 0.0
+            if finite and hi - lo <= 1e-12 * max(1.0, abs(hi)):
                 # every trace is constant (for example the force with no input): a fixed range around the value instead
                 # of the huge auto range pyqtgraph picks for a flat line
                 half = 0.5 if hi == 0 else 0.1 * abs(hi)

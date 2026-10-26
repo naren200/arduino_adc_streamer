@@ -900,5 +900,15 @@
  "sample_marker": {
   "node": "sh",
   "label": "ADC hold samples"
+ },
+ "adc_out": {
+  "node": "sh",
+  "label": "ADC-Out (quantised)",
+  "group": "adc",
+  "channels": 15,
+  "bits_path": "adc.bits",
+  "vref_path": "circuit.vref_v",
+  "vmid_path": "circuit.vmid_v",
+  "bipolar_rails": true
  }
 }

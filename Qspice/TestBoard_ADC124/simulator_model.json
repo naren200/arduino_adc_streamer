@@ -803,5 +803,15 @@
  "sample_marker": {
   "node": "ain",
   "label": "ADC hold samples"
+ },
+ "adc_out": {
+  "node": "ain",
+  "label": "ADC-Out (quantised)",
+  "group": "adc",
+  "channels": 7,
+  "bits_path": "adc.bits",
+  "vref_path": "circuit.vdd_v",
+  "vmid_path": "circuit.vmid_v",
+  "bipolar_rails": true
  }
 }

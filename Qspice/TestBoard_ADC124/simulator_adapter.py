@@ -49,7 +49,7 @@ def build(cfg: dict) -> dict:
     return {
         "netlist": text,
         "t_stop": max(s["t1"] for s in slots),
-        "samples": [{"t": s["t_sample"], "label": f"addr {s['address']}"} for s in sensor],
+        "samples": [{"t": s["t_sample"], "label": f"addr {s['address']}", "address": s["address"]} for s in sensor],
         "warnings": warnings,
     }
 

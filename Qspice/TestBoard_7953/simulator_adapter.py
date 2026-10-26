@@ -48,7 +48,7 @@ def build(cfg: dict) -> dict:
     return {
         "netlist": text,
         "t_stop": sched["t_stop"],
-        "samples": [{"t": s["t"], "label": f"Ch{s['address']}"} for s in sched["samples"]],
+        "samples": [{"t": s["t"], "label": f"Ch{s['address']}", "address": s["address"]} for s in sched["samples"]],
         "warnings": warnings,
     }
 
