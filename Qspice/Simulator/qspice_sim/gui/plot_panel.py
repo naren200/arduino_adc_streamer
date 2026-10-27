@@ -44,6 +44,14 @@ def log_magnitude(v: np.ndarray) -> np.ndarray:
     return out
 
 
+class Log10Axis(pg.AxisItem):
+    """Y axis of a logarithmic panel: the ticks show log10 of the value (0 = 1, 1 = 10, -1 = 0.1), like the plotted position,
+    instead of the pyqtgraph default that labels a log axis with the real values and mixes 10^n with plain numbers."""
+
+    def tickStrings(self, values, scale, spacing):
+        return [f"{v:g}" for v in values]
+
+
 class PlotPanel(QtWidgets.QWidget):
     cursor_text = QtCore.pyqtSignal(str)
 
@@ -68,8 +76,20 @@ class PlotPanel(QtWidgets.QWidget):
             self._colors[node] = PALETTE[len(self._colors) % len(PALETTE)]
         return self._colors[node]
 
-    def _empty_hint(self) -> None:
+    def _clear_layout(self) -> None:
+        """Remove the panels. A replot can arrive while the mouse button is held on a plot (a drag or zoom in progress); the scene
+        then still points at the deleted ViewBox and pyqtgraph raises "wrapped C/C++ object of type ViewBox has been deleted" on
+        every following mouse event, so the drag state is dropped first."""
+        scene = self.glw.scene()
+        scene.dragItem = None
+        scene.dragButtons = []
+        scene.lastDrag = None
+        scene.clickEvents = []
+        scene.hoverItems = type(scene.hoverItems)() if hasattr(scene, "hoverItems") else {}
         self.glw.clear()
+
+    def _empty_hint(self) -> None:
+        self._clear_layout()
         self._panels = []
         plot = self.glw.addPlot()
         plot.hideAxis("bottom")
@@ -99,7 +119,7 @@ class PlotPanel(QtWidgets.QWidget):
                     log_groups: set[str] | None = None, hlines: dict[str, float] | None = None) -> None:
         """Draw the traces. ``log_groups``: plot groups shown with a logarithmic Y axis (a panel is logarithmic when all its
         traces belong to such groups; bipolar values are drawn as |y|, zeros are left out). ``hlines``: {group: y} reference lines."""
-        self.glw.clear()
+        self._clear_layout()
         self._panels = []
         self._proxy = None
         if not traces:
@@ -124,9 +144,10 @@ class PlotPanel(QtWidgets.QWidget):
         master = None
         for i, (panel_title, members) in enumerate(buckets):
             is_log = bool(members) and all(t.group in log_groups for t in members)
-            plot = self.glw.addPlot(row=i, col=0, title=title if (i == 0 and title) else None)
+            plot = self.glw.addPlot(row=i, col=0, title=title if (i == 0 and title) else None,
+                                    axisItems={"left": Log10Axis("left")} if is_log else None)
             plot.showGrid(x=True, y=True, alpha=0.25)
-            plot.setLabel("left", f"|{panel_title}| (log)" if is_log else panel_title)
+            plot.setLabel("left", f"log10 |{panel_title}|" if is_log else panel_title)
             if is_log:
                 plot.setLogMode(y=True)
             plot.addLegend(offset=(8, 4), labelTextSize="9pt")
@@ -209,7 +230,7 @@ class PlotPanel(QtWidgets.QWidget):
             if vb.sceneBoundingRect().contains(pos):
                 p = vb.mapSceneToView(pos)
                 y = 10 ** p.y() if panel.get("log") else p.y()
-                self.cursor_text.emit(f"t = {pg.siFormat(p.x(), suffix='s')}    " + (f"|y| = {y:.6g}" if panel.get("log") else f"y = {y:.6g}"))
+                self.cursor_text.emit(f"t = {pg.siFormat(p.x(), suffix='s')}    " + (f"|y| = {y:.6g} (log10 = {p.y():.4g})" if panel.get("log") else f"y = {y:.6g}"))
                 return
 
     # ------------------------------------------------------------------ export

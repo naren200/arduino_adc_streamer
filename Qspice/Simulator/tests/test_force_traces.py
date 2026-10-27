@@ -172,7 +172,7 @@ def test_log_scale_shows_magnitudes_and_survives_zeros_and_negatives(window):
     panels = {tr.group: p for p in window.plot._panels for tr, _ in p["curves"] if tr.group in ("fcal", "fratio")}
     assert panels["fcal"]["log"] and not panels["fratio"]["log"]
     plot = panels["fcal"]["plot"]
-    assert plot.getAxis("left").logMode and plot.getAxis("left").labelText == "|Calculated force [N]| (log)"
+    assert plot.getAxis("left").logMode and plot.getAxis("left").labelText == "log10 |Calculated force [N]|"
     for tr, item in panels["fcal"]["curves"]:
         assert np.all((tr.v > 0) | np.isnan(tr.v))                              # |y|, zeros left out, nothing negative
         x, y = item.getData()

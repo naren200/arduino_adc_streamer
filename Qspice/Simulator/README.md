@@ -220,7 +220,7 @@ table and the ratio can compare with them; if a node was not saved the status ba
 *Overlay the applied force* draws it dashed on the Calculated-force panel.
 
 *Log scale (Y)* (one checkbox per plot panel, saved with the settings): the panel shows the magnitude `|y|` with zeros omitted and the
-axis label reads `|panel| (log)`, because forces and dF are bipolar; the ratio is normally positive, so for it the log scale is a
+axis label reads `log10 |panel|` and the ticks are the exponents (0 = 1, 1 = 10, -1 = 0.1; a Fcal / Fin ratio of 1 sits at 0), because forces and dF are bipolar; the ratio is normally positive, so for it the log scale is a
 direct view. Min/max decimation, zoom, the reference overlay and the markers work in log mode. In the *one plot per node* layout a node
 follows its group's setting; the single overlay panel is logarithmic only when every plotted group is.
 

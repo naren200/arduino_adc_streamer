@@ -1,0 +1,176 @@
+{
+ "format": 1,
+ "model": "TestBoard_ADC124",
+ "config": {
+  "_notes": [
+   "All values are configurable. Entries marked PLACEHOLDER are typical/assumed numbers that were NOT verified against a datasheet or measured on the board: replace them before drawing hardware conclusions.",
+   "Sensors are addressed by MUX address 0..6 (S0..S6 = O6_P1B..O7_P5B on the TestBoard_ADC124 B bank). Address 7 (S7) is the VMID reference channel."
+  ],
+  "circuit": {
+   "vdd_v": 3.3,
+   "vmid_v": 1.65,
+   "r_vmid_series_ohm": 100.0,
+   "c_vmid_s7_pF": 150.0,
+   "r_bias_ohm": 470000.0,
+   "r_out_ohm": 33.0,
+   "c_out_pF": 470.0,
+   "initial_sensor_node_v": null
+  },
+  "sensor_defaults": {
+   "_note": "SM311 = PZT-5H class (Steminc material table: d33 600 pC/N, d31 -270 pC/N, eps33T/eps0 3500 and tan delta 2.5 % at 1 kHz). thickness_mm is an ASSUMPTION: 0.25 mm taken from the SMD22T25311S disc page; replace with the real element thickness or measure Cp.",
+   "width_mm": 0.7,
+   "length_mm": 0.7,
+   "thickness_mm": 0.25,
+   "eps33_r": 3500.0,
+   "d33_pC_per_N": 600.0,
+   "loss_model": "none",
+   "tan_delta": 0.025,
+   "tan_delta_ref_hz": 1000.0,
+   "r_insulation_ohm": 10000000000.0,
+   "force_gain": 1.0,
+   "cp_pF": null
+  },
+  "sensor_overrides": {
+   "_note": "Per-address overrides, e.g. \"3\": {\"thickness_mm\": 0.5, \"force_gain\": 0.9}",
+   "3": {}
+  },
+  "forces_sin": [
+   {
+    "address": 0,
+    "t_start_us": 20.0,
+    "freq_hz": 10000.0,
+    "cycles": 3.0,
+    "amp_N": 0.2
+   }
+  ],
+  "forces": [],
+  "parasitics": {
+   "_note": "PLACEHOLDER layout parasitics.",
+   "sensor_trace_r_ohm": 1.0,
+   "sensor_trace_c_pF": 3.0,
+   "c_coupling_adjacent_pF": 0.2,
+   "muxd_trace_c_pF": 2.0,
+   "r_bias_par_c_pF": 0.1,
+   "ain_stray_c_pF": 1.0
+  },
+  "adc": {
+   "_note": "ADC124S101: 12-bit SAR ADC with VA = vdd_v as the reference. bits = resolution used for the derived ADC-Out value (range: 0 .. VDD, or -VDD .. +VDD when VMID = 0).",
+   "bits": 12
+  },
+  "mux": {
+   "_note": "TMUX1308A at VDD = 3.3 V, 25 C, typical column of datasheet SCDS477A (rev A, June 2025). Source of each value is listed in README.md. roff_ohm and the single-sign leakage are modelling choices, not datasheet numbers.",
+   "ron_ohm": 120.0,
+   "ron_vdep_per_V2": 0.0,
+   "roff_ohm": 1000000000000.0,
+   "cs_off_pF": 2.0,
+   "cd_off_pF": 7.0,
+   "c_on_pF": 11.0,
+   "c_feedthrough_pF": 0.1,
+   "qinj_pC": -0.8,
+   "qinj_src_fraction": 0.0,
+   "ileak_s_off_nA": 1.0,
+   "ileak_d_nA": 1.0,
+   "leak_scale": 1.0,
+   "switch_on_ns": 25.0,
+   "switch_off_ns": 1.0,
+   "control_edge_ns": 2.0
+  },
+  "opamp": {
+   "_note": "OPA365 behavioral model from datasheet SBOS365G (typ, 25 C; GBW/SR are specified at VS = 5 V, used unchanged at 3.3 V).",
+   "gbw_hz": 50000000.0,
+   "aol": 1000000.0,
+   "slew_v_per_us": 25.0,
+   "vos_uV": 100.0,
+   "ib_pA": 0.2,
+   "cdiff_pF": 6.0,
+   "ccm_pF": 2.0,
+   "ro_ohm": 30.0,
+   "rail_margin_mV": 10.0
+  },
+  "timing": {
+   "_note": "Per sensor visit, from the MUX address command: all n_mux muxes switch together and share t_sensor_settle; the ADC then converts the muxes one after the other, one SPI word (adc_word_clocks clocks at adc_spi_clk_hz) each. The simulated mux is the first one: its sample is held adc_acquisition_clocks after the settle time, and it waits (n_mux - 1) words on the channel while the others are converted. Connected time per visit = settle + n_mux words (5 us with 4 muxes at 16 MHz). Then, with vmid_visit_after_each, a VMID visit of t_vmid_settle + t_vmid_park, otherwise one VMID park per sweep. ADC124S101: 16-clock word, 3 acquisition clocks.",
+   "scan_order": [
+    0
+   ],
+   "vmid_visit_after_each": false,
+   "park_on_vmid": false,
+   "t_start_us": 20.0,
+   "t_sensor_settle_us": 10.0,
+   "repeat": 1,
+   "n_mux": 1,
+   "adc_spi_clk_hz": 16000000.0,
+   "adc_word_clocks": 16,
+   "adc_acquisition_clocks": 3,
+   "t_vmid_settle_us": 5.0,
+   "t_vmid_park_us": 7.0,
+   "sampling_rate_hz": null,
+   "num_cycles": 4,
+   "tail_us": 20.0,
+   "run_duration_s": 0.0002
+  },
+  "simulation": {
+   "max_step_ns": 5.0,
+   "periodic_min_cycles": 200,
+   "adc_noise_mV": 0.0,
+   "noise_seed": 1
+  },
+  "scenarios": {
+   "two_pulses": {
+    "description": "Force pulses on sensors 2 and 4 with soft (40 us) edges, short run, with a zero-force baseline run for the delta.",
+    "overrides": {}
+   },
+   "baseline": {
+    "description": "No force. 60 ms (450 scan cycles) at the full 5 ns resolution: the baseline of every channel converges within about 5 ms (time constant ~0.5 ms), so the value is the steady state a 3 s run would also show. A brute-force 3 s run at this resolution is ~6e8 time points (~10 GB); with a coarse step the sample is dominated by solver noise (+-5 mV), see README.",
+    "overrides": {
+     "forces": [],
+     "timing.run_duration_s": 0.06
+    }
+   },
+   "baseline_vmid1ms": {
+    "description": "Same as baseline but with a 1 ms VMID settle (t_vmid_settle_us = 1000), 100 ms run (~14 scan cycles of ~7.1 ms), full 5 ns resolution. Each sensor is connected only 5 us per ~7.1 ms, so the bias network refreshes it far less often.",
+    "overrides": {
+     "forces": [],
+     "timing.run_duration_s": 0.1,
+     "timing.t_vmid_settle_us": 1000.0,
+     "simulation.periodic_min_cycles": 1
+    }
+   }
+  }
+ },
+ "force": {
+  "d33_pC_per_N": null,
+  "cp_pF": null,
+  "cextra_pF": null,
+  "reference": "VMID",
+  "source": "ADC-Out (quantised, with noise)",
+  "channels": null,
+  "min_fin_N": null,
+  "leak_comp": true,
+  "c_side_pF": null,
+  "r_conn_ohm": null,
+  "r_float_ohm": null,
+  "i_float_nA": null,
+  "i_conn_nA": 0.0
+ },
+ "visualization": {
+  "nodes": [
+   "adcout_ch0",
+   "f0",
+   "fcal_ch0",
+   "fratio_ch0",
+   "s0"
+  ],
+  "layout": "group",
+  "show_samples": true,
+  "t0": null,
+  "t1": null,
+  "line_width": 1.2,
+  "show_ref": true,
+  "annotate": true,
+  "show_noisy": false,
+  "overlay_applied": false,
+  "log_groups": [
+   "fratio"
+  ]
+ }
+}
