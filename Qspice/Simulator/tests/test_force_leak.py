@@ -143,9 +143,11 @@ def _table(v, windows=True, address=3, same=False):
 def test_overrides_replace_the_model_values_and_follow_when_empty():
     p = resolve_params(FORCE_DEFAULTS, INFO).leak
     assert (p.c_side, p.c_node, p.r_conn, p.r_float, p.i_float) == pytest.approx((5e-12, 13e-12, 470e3, 10e9, 1e-9))
-    s = dict(FORCE_DEFAULTS, c_side_pF=7.0, cextra_pF=20.0, r_conn_ohm=1e6, r_float_ohm=1e8, i_float_nA=2.0)
+    assert p.i_conn == pytest.approx(1e-9)
+    s = dict(FORCE_DEFAULTS, c_side_pF=7.0, cextra_pF=20.0, r_conn_ohm=1e6, r_float_ohm=1e8, i_float_nA=2.0, i_conn_nA=-3.0)
     q = resolve_params(s, INFO).leak
-    assert (q.c_side, q.c_node, q.r_conn, q.r_float, q.i_float) == pytest.approx((7e-12, 20e-12, 1e6, 1e8, 2e-9))
+    assert (q.c_side, q.c_node, q.r_conn, q.r_float, q.i_float, q.i_conn) == pytest.approx((7e-12, 20e-12, 1e6, 1e8, 2e-9, -3e-9))
+    assert resolve_params(dict(FORCE_DEFAULTS, i_conn_nA=0.0), INFO).leak.i_conn == 0.0          # zero is a value, not "follow the model"
     assert resolve_params(dict(FORCE_DEFAULTS, leak_comp=False), INFO).leak is None        # checkbox off = ideal model
     assert resolve_params(FORCE_DEFAULTS, {k: v for k, v in INFO.items() if k != "leak"}).leak is None   # model without data
     for bad in (dict(r_conn_ohm=0.0), dict(r_float_ohm=-1.0), dict(c_side_pF=-1.0)):
@@ -180,7 +182,7 @@ def test_formulas_explain_the_breakdown_and_both_connection_cases():
     const = compute_channel(_table(v, same=True), 3, p, settings, VMID)
     assert (switched.n_switched, switched.n_const) == (3, 0) and (const.n_switched, const.n_const) == (0, 3)
     html = formulas_html(p, 0.8e-3, 3, "VMID", "ADC-Out", const)
-    for text in ("Charge from the PZT", "Leakage through the bias resistor", "Leakage from the mux drain / ADC pin",
+    for text in ("Charge from the PZT", "Leakage through the bias resistor", "Net leakage into the mux node",
                  "Insulation leakage", "Mux off-leakage", "Charge sharing", "Mux switching", "Constant connection",
                  "h[k] = ", "R<sub>conn</sub>&middot;(1 &minus; a)", "0 conversion(s) follow the mux switching",
                  "3 follow on a constant connection", "4.7e+05 ohm", "&rho; = 0.8"):
@@ -221,6 +223,38 @@ def test_models_report_leak_data_from_their_config_and_connection_windows(model_
         cfg["timing"]["vmid_between_channels"] = True
         samples = model.build(cfg)["samples"]
     assert all(s["node_reset"] for s in samples)                          # VMID between the channels
+
+
+def test_floating_leakage_only_acts_while_released_and_connected_leakage_acts_always():
+    v = VMID + np.array([0.3, 0.27, 0.25, 0.23, 0.22])
+    settings = dict(FORCE_DEFAULTS, source="ideal ADC input")
+
+    def run(same, **kw):
+        s = dict(settings, **kw)
+        return compute_channel(_table(v, same=same), 3, resolve_params(s, INFO), s, VMID).F
+
+    # a sensor that stays connected never floats: I_float (0 or 1000 nA) changes nothing
+    assert run(True, i_float_nA=0.0) == pytest.approx(run(True, i_float_nA=1000.0)) and run(True) == pytest.approx(run(True, i_float_nA=0.0))
+    # with mux switching it does
+    assert not np.allclose(run(False, i_float_nA=0.0), run(False, i_float_nA=1000.0))
+    # the connected leakage acts in both
+    for same in (True, False):
+        assert not np.allclose(run(same, i_conn_nA=0.0), run(same, i_conn_nA=-6.0))
+
+
+def test_adc124_connected_leakage_counts_the_off_channels_of_the_mux():
+    model = model_loader.load_model(QSPICE_DIR / "TestBoard_ADC124")
+    cfg = model.default_config()
+    assert model.sensor_info(cfg)[2]["leak"]["i_conn_A"] == pytest.approx(-6e-9)             # 1 nA drain leakage - 7 x 1 nA S->D
+    cfg["mux"].update(ileak_d_nA=2.0, ileak_s_off_nA=0.5, leak_scale=2.0)
+    leak = model.sensor_info(cfg)[2]["leak"]
+    assert leak["i_conn_A"] == pytest.approx((2.0 - 7 * 0.5) * 2e-9) and leak["i_float_A"] == pytest.approx(1e-9)
+
+
+def test_7953_pin_leakage_goes_to_ground_so_no_off_channel_current_reaches_the_node():
+    model = model_loader.load_model(QSPICE_DIR / "TestBoard_7953")
+    leak = model.sensor_info(model.default_config())[2]["leak"]
+    assert leak["i_conn_A"] == pytest.approx(leak["i_float_A"]) and leak["i_conn_A"] > 0     # the pin leakage of the datasheet only
 
 
 def test_adc124_windows_follow_the_park_mode_and_the_vmid_visit():
@@ -267,7 +301,7 @@ def test_force_tab_has_the_leakage_fields_with_model_hints_and_default_on(window
     assert window.force["leak_comp"] is True and _row(window, "force.leak_comp").editor.isChecked()
     labels = [r.item["label"] for r in window.force_tab.form.rows]
     for name in ("Compensate leakage and charge sharing", "Sensor-side parasitic capacitance", "Leak resistance, sensor connected",
-                 "Leak resistance, sensor floating", "Leakage current, sensor floating"):
+                 "Leak resistance, sensor floating", "Leakage current, sensor floating", "Leakage current, sensor connected"):
         assert name in labels
     hints = {p: _row(window, p).editor.placeholderText() for p in
              ("force.r_conn_ohm", "force.r_float_ohm", "force.i_float_nA", "force.c_side_pF", "force.cextra_pF")}

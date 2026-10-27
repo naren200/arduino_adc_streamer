@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent
 EPS0 = 8.8541878128e-12
 PICO, NANO, MICRO, MILLI = 1e-12, 1e-9, 1e-6, 1e-3
 VMID_ADDR = 7
+N_MUX_CH = 8                      # channels of the TMUX1308A; every one that is off leaks ileak_s_off from its source into the drain
 PIN_NAMES = ["O6_P1B", "O6_P2B", "O6_P3B", "O6_P4B", "O6_P5B", "O7_P4B", "O7_P5B", "VMID"]
 
 
@@ -267,9 +268,11 @@ def leak_info(cfg: dict, addr: int) -> dict:
     # the op-amp differential capacitance sits between the + input and the output of a follower (bootstrapped), only the common-mode one loads the node
     c_node = mux["cd_off_pF"] + c_on_extra + par["muxd_trace_c_pF"] + par["r_bias_par_c_pF"] + op["ccm_pF"]
     ls = mux["leak_scale"]
+    # connected node: the drain leakage discharges it, the off-state source->drain leakage of the other channels charges it
+    i_conn = (mux["ileak_d_nA"] - (N_MUX_CH - 1) * mux["ileak_s_off_nA"]) * NANO * ls
     return {"c_side_F": (par["sensor_trace_c_pF"] + mux["cs_off_pF"]) * PICO, "c_node_F": c_node * PICO,
             "r_conn_ohm": _parallel(c["r_bias_ohm"], sp["rp"]), "v_conn_V": c["vmid_v"],
-            "i_conn_A": mux["ileak_d_nA"] * NANO * ls,
+            "i_conn_A": i_conn,
             "r_float_ohm": _parallel(sp["rins"], sp["rp"]), "v_float_V": 0.0, "i_float_A": mux["ileak_s_off_nA"] * NANO * ls}
 
 
@@ -503,7 +506,7 @@ def build(cfg: dict, with_force: bool = True) -> tuple[str, list[dict]]:
             a(fmt_pwl(f"Vc{addr}", f"c{addr}", ctl[addr]))
     a("")
     a("* ---- TMUX1308A: 8 channels + shared drain parasitics ----")
-    for addr in range(8):
+    for addr in range(N_MUX_CH):
         a(f"Xch{addr} s{addr} muxd c{addr} TMUX_CH")
     a(f"Cd muxd 0 {mux['cd_off_pF'] * PICO:.9e}")
     a(f"Cdtr muxd 0 {par['muxd_trace_c_pF'] * PICO:.9e}")

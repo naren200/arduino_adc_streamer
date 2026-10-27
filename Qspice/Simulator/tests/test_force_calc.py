@@ -188,7 +188,7 @@ def test_force_tab_sits_between_simulation_and_visualization_and_has_the_documen
     labels = [r.item["label"] for r in window.force_tab.form.rows]
     assert labels == ["d33 charge constant", "Sensor capacitance", "Extra node capacitance",
                       "Compensate leakage and charge sharing", "Sensor-side parasitic capacitance", "Leak resistance, sensor connected",
-                      "Leak resistance, sensor floating", "Leakage current, sensor floating",
+                      "Leak resistance, sensor floating", "Leakage current, sensor floating", "Leakage current, sensor connected",
                       "Reference for the first sample", "Voltage source", "Sensors to extract", "Minimum |Fin| for the ratio"]
     assert [r.path for r in window.force_tab.form.rows if r.kind == "choice"] == ["force.reference", "force.source"]
     assert window.force == dict(FORCE_DEFAULTS, leak_comp=False) and FORCE_DEFAULTS["leak_comp"] is True

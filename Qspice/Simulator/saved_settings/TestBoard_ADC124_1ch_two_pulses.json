@@ -11,7 +11,7 @@
    "vmid_v": 1.65,
    "r_vmid_series_ohm": 100.0,
    "c_vmid_s7_pF": 150.0,
-   "r_bias_ohm": 10000000.0,
+   "r_bias_ohm": 470000.0,
    "r_out_ohm": 33.0,
    "c_out_pF": 470.0,
    "initial_sensor_node_v": null
@@ -150,11 +150,15 @@
   "d33_pC_per_N": null,
   "cp_pF": null,
   "cextra_pF": null,
-  "gain": 1.0,
   "reference": "VMID",
   "source": "ADC-Out (quantised, with noise)",
   "channels": null,
-  "min_fin_N": null
+  "min_fin_N": null,
+  "leak_comp": true,
+  "c_side_pF": null,
+  "r_conn_ohm": null,
+  "r_float_ohm": null,
+  "i_float_nA": null
  },
  "visualization": {
   "nodes": [

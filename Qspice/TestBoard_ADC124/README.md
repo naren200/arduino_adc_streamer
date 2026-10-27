@@ -129,7 +129,7 @@ unverified guesses; several were wrong (Ron 5 Ω vs 120 Ω, leakage 20x too smal
 | `c_feedthrough_pF` | 0.1 | **Derived**: off isolation / crosstalk −90 dB at 1 MHz, 50 Ω (−110 dB at 100 kHz) ⇒ C ≈ 0.1 pF. |
 | `qinj_pC` | −0.8 | §6.7 QINJ −0.8 pC (RS = 0 Ω, CL = 100 pF). Assumed to be the step seen when the channel turns off, opposite sign on turn-on. |
 | `qinj_src_fraction` | 0 | The datasheet figure is the drain-side injection; the source-side share is not specified. |
-| `ileak_s_off_nA`, `ileak_d_nA` | 1 | §6.6 IS(OFF), ID(OFF), ID(ON) ±1 nA typ at 25 °C. Limits: ±25 nA at 85 °C, ±800 nA at 125 °C (use `leak_scale`). The model applies the same sign to every channel, which is the worst case for offset. |
+| `ileak_s_off_nA`, `ileak_d_nA` | 1 | §6.6 IS(OFF), ID(OFF), ID(ON) ±1 nA typ at 25 °C. Limits: ±25 nA at 85 °C, ±800 nA at 125 °C (use `leak_scale`). The model applies the same sign to every channel, which is the worst case for offset. While one channel is connected the other 7 channels each push `ileak_s_off_nA` from their source into the drain, so the connected node sees a net `7 · ileak_s_off_nA − ileak_d_nA` (+6 nA by default, about +2.8 mV across the 470 kΩ bias); the Simulator's leakage compensation uses this net value. |
 | `switch_on_ns` | 25 | §6.8 tTRAN typ 23 ns / tON(EN) typ 26 ns (max 51 / 40). |
 | `switch_off_ns`, `control_edge_ns` | 1, 2 | Chosen so the break-before-make gap is `25 − 1 − 2 = 22 ns`, close to tBBM typ 24 ns (min 1 ns). tOFF(EN) typ 40 ns (max 65) is not modelled separately. |
 | `roff_ohm` | 1e12 | Modelling choice; off isolation comes from the feedthrough capacitor. |

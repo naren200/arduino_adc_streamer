@@ -471,7 +471,8 @@ class MainWindow(QtWidgets.QMainWindow):
             hints.update({"force.c_side_pF": f"model: {leak['c_side_F'] * 1e12:.4g} pF",
                           "force.r_conn_ohm": f"model: {leak['r_conn_ohm']:.4g} ohm",
                           "force.r_float_ohm": f"model: {leak['r_float_ohm']:.4g} ohm",
-                          "force.i_float_nA": f"model: {leak['i_float_A'] * 1e9:.4g} nA"})
+                          "force.i_float_nA": f"model: {leak['i_float_A'] * 1e9:.4g} nA",
+                          "force.i_conn_nA": f"model: {leak.get('i_conn_A', 0.0) * 1e9:.4g} nA"})
         return hints
 
     def _on_force_changed(self, _path: str) -> None:

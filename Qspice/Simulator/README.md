@@ -145,7 +145,7 @@ What the node sees (breakdown of `C dV/dt`):
 | --- | --- | --- |
 | Charge from the PZT | `+q = d33 * dF/dt`, charge rate in A (the unknown; `dQ = q * T`) | `d33` |
 | Leakage through the bias resistor (connected) | `-(V - V_conn) / R_conn` | `R_conn` = bias resistor, `tau_conn = R_conn * Ct` |
-| Leakage from the mux drain / ADC pin (connected) | `-I_conn` (constant) | `I_conn` |
+| Net leakage into the mux node (connected: drain / pin leakage minus the leakage of the off channels) | `-I_conn` (constant, negative charges the node) | `I_conn` |
 | Insulation leakage (floating) | `-(V - V_float) / R_float` | `R_float` = insulation, `tau_float = R_float * Cs` |
 | Mux off-leakage / pin leakage (floating) | `-I_float` (constant) | `I_float` |
 | Charge sharing at every (re)connection | not a current: `V -> rho V + (1 - rho) V_conn` | `Cs`, `Cn`, `rho = Cs / Ct` |
@@ -191,7 +191,7 @@ Without leakage and node capacitance this is exactly `dF = dV * C / d33`. The fi
 with *Reference for the first sample = first sample* dF[0] is 0 as before. The model supplies, from the same config keys that build the
 netlist, `sensor_info()[address]["leak"]` (`c_side_F`, `c_node_F`, `r_conn_ohm`, `v_conn_V`, `i_conn_A`, `r_float_ohm`, `v_float_V`,
 `i_float_A`) and each conversion of `samples` carries `t_on`, `t_off` and `node_reset`. In the Force tab the checkbox, the sensor-side
-capacitance, `R_conn`, `R_float` and `I_float` can be overridden (empty = follow the model; the hint shows the model value) and the
+capacitance, `R_conn`, `R_float`, `I_float` (leakage while the sensor floats) and `I_conn` (net leakage while it is connected) can be overridden (empty = follow the model; the hint shows the model value) and the
 *Extra node capacitance* field is the mux node capacitance `Cn` in this mode. All of it replots without a run and is saved with the
 settings.
 

@@ -41,6 +41,7 @@ FORCE_DEFAULTS: dict = {
     "r_conn_ohm": None,         # leak resistance of the node while the sensor is connected (None = follow the model)
     "r_float_ohm": None,        # leak resistance of the floating sensor (None = follow the model)
     "i_float_nA": None,         # constant leakage current of the floating sensor (None = follow the model)
+    "i_conn_nA": None,          # net constant leakage current into/out of the connected node (None = follow the model)
 }
 
 RATIO_FRACTION = 0.01
@@ -113,6 +114,7 @@ def _resolve_leak(settings: dict, info: dict, c_sensor: float) -> LeakParams | N
     raw = info.get("leak")
     if not raw or not settings.get("leak_comp", True):
         return None
+    raw = {"i_conn_A": 0.0, **raw}
 
     def pick(key: str, raw_key: str, scale: float) -> float:
         return float(raw[raw_key]) if settings.get(key) is None else float(settings[key]) * scale
@@ -120,7 +122,7 @@ def _resolve_leak(settings: dict, info: dict, c_sensor: float) -> LeakParams | N
     c_node = float(raw["c_node_F"]) if settings.get("cextra_pF") is None else float(settings["cextra_pF"]) * 1e-12
     leak = LeakParams(c_side=pick("c_side_pF", "c_side_F", 1e-12), c_node=c_node,
                       r_conn=pick("r_conn_ohm", "r_conn_ohm", 1.0), v_conn=float(raw["v_conn_V"]),
-                      i_conn=float(raw.get("i_conn_A", 0.0)),
+                      i_conn=pick("i_conn_nA", "i_conn_A", 1e-9),
                       r_float=pick("r_float_ohm", "r_float_ohm", 1.0), v_float=float(raw["v_float_V"]),
                       i_float=pick("i_float_nA", "i_float_A", 1e-9))
     if leak.c_side < 0 or leak.c_node < 0:
@@ -313,12 +315,13 @@ def _leak_formulas_html(params: SensorParams, live: str, first: str, source: str
         "<td>&minus;(V &minus; V<sub>conn</sub>) / R<sub>conn</sub></td>"
         f"<td>R<sub>conn</sub> = {_eng(L.r_conn, 'ohm')}, V<sub>conn</sub> = {_eng(L.v_conn, 'V')}, "
         f"&tau;<sub>conn</sub> = R<sub>conn</sub>&middot;C<sub>t</sub> = {_eng(tau_c, 'ms', 1e3)}</td></tr>"
-        "<tr><td><b>Leakage from the mux drain / ADC pin</b> (sensor connected)</td><td>&minus;I<sub>conn</sub> (constant)</td>"
+        "<tr><td><b>Net leakage into the mux node</b> (sensor connected: drain / pin leakage minus the off-channel leakage of the mux)</td>"
+        "<td>&minus;I<sub>conn</sub> (constant, negative = charges the node)</td>"
         f"<td>I<sub>conn</sub> = {_eng(L.i_conn, 'nA', 1e9)}</td></tr>"
         "<tr><td><b>Insulation leakage</b> (sensor floating)</td><td>&minus;(V &minus; V<sub>float</sub>) / R<sub>float</sub></td>"
         f"<td>R<sub>float</sub> = {_eng(L.r_float, 'ohm')}, V<sub>float</sub> = {_eng(L.v_float, 'V')}, "
         f"&tau;<sub>float</sub> = R<sub>float</sub>&middot;C<sub>s</sub> = {_eng(tau_f, 'ms', 1e3)}</td></tr>"
-        "<tr><td><b>Mux off-leakage / pin leakage</b> (sensor floating)</td><td>&minus;I<sub>float</sub> (constant)</td>"
+        "<tr><td><b>Mux off-leakage / pin leakage</b> (sensor floating; only used while the sensor is released)</td><td>&minus;I<sub>float</sub> (constant)</td>"
         f"<td>I<sub>float</sub> = {_eng(L.i_float, 'nA', 1e9)}</td></tr>"
         "<tr><td><b>Charge sharing</b> at every (re)connection to the mux node</td>"
         "<td>not a current: V &rarr; &rho;&middot;V + (1 &minus; &rho;)&middot;V<sub>conn</sub>, &rho; = C<sub>s</sub> / C<sub>t</sub></td>"

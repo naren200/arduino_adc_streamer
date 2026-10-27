@@ -84,6 +84,33 @@ def test_compensated_long_pulse_holds_the_applied_force(tmp_path):
     assert np.all(np.abs(cf.F[4:]) < 0.12 * AMP)
 
 
+def test_compensated_one_channel_at_rest_does_not_drift(tmp_path):
+    """A channel that stays connected rests at VMID - (I_drain - 7 I_off) R_bias; with that leakage the force stays at zero."""
+    try:
+        qspice = runner.find_qspice()
+    except runner.SimulationError:
+        pytest.skip("QSPICE is not installed")
+    model = model_loader.load_model(QSPICE_DIR / "TestBoard_ADC124")
+    cfg = model.default_config()
+    cfg["timing"].update(scan_order=[0], n_mux=1, repeat=1, park_on_vmid=False, vmid_visit_after_each=False, num_cycles=100)
+    cfg["adc"]["bits"] = 16
+    cfg["forces"] = []
+    prepared = runner.prepare(model, cfg)
+    raw = runner.run_netlist(prepared.netlist, ["ain"], tmp_path, qspice)
+    try:
+        times = np.array([s["t"] for s in prepared.samples])
+        table = build_sample_table(prepared.samples, np.interp(times, raw.time, raw.column("ain")), model.adc_params(cfg))
+        zero = lambda ch, t: np.zeros(len(t))  # noqa: E731
+        comp = compute_all(table, [0], model.sensor_info(cfg), FORCE_DEFAULTS, cfg["circuit"]["vmid_v"], zero)[0]
+        wrong = model.sensor_info(cfg)
+        wrong[0]["leak"]["i_conn_A"] = 1e-9                                       # the drain leakage alone (the old model value)
+        old = compute_all(table, [0], wrong, FORCE_DEFAULTS, cfg["circuit"]["vmid_v"], zero)[0]
+    finally:
+        raw.close()
+    assert np.max(np.abs(comp.F)) < 1.5e-3                                        # measured below 0.5 mN over 0.8 ms
+    assert np.max(np.abs(old.F)) > 5e-3                                           # about 10 N/s of drift without the off-channel leakage
+
+
 def test_compensated_adc124_plateau_over_many_scan_cycles(tmp_path):
     try:
         qspice = runner.find_qspice()

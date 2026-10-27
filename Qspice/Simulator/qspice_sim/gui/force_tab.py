@@ -36,7 +36,13 @@ SCHEMA = [
         {"path": "force.r_float_ohm", "label": "Leak resistance, sensor floating", "unit": "ohm", "type": "float", "nullable": True,
          "tip": "Insulation resistance of the floating sensor (to ground). tau = R x C_s. Use a very large value for none."},
         {"path": "force.i_float_nA", "label": "Leakage current, sensor floating", "unit": "nA", "type": "float", "nullable": True,
-         "tip": "Constant current drawn from the floating sensor node (mux off-leakage / pin leakage); positive discharges it."},
+         "tip": "Constant current drawn from the floating sensor node (mux off-leakage / pin leakage); positive discharges it. "
+                "Only used in the time the sensor is released from the mux: it has no effect when the sensor stays connected "
+                "(one channel parked on itself)."},
+        {"path": "force.i_conn_nA", "label": "Leakage current, sensor connected", "unit": "nA", "type": "float", "nullable": True,
+         "tip": "Net constant current drawn from the node while the sensor is connected (mux drain / pin leakage minus the "
+                "off-state leakage of the other channels); positive discharges it, negative charges it. 0 = no connected-node leakage "
+                "in the compensation. Used in every connected phase, so it is the one that matters for a sensor that stays connected."},
     ]},
     {"group": "Extraction", "items": [
         {"path": "force.reference", "label": "Reference for the first sample", "unit": "", "type": "choice",
