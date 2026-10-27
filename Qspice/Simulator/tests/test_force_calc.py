@@ -26,7 +26,7 @@ def _table(v, bits=16, vmid=1.25, vref=2.5, address=3):
 
 # ------------------------------------------------------------------ the formulas
 def test_dF_and_F_match_a_hand_computed_result():
-    params = SensorParams(d33=600e-12, c_sensor=60e-12, c_extra=0.0, gain=1.0)
+    params = SensorParams(d33=600e-12, c_sensor=60e-12, c_extra=0.0)
     assert params.sensitivity == pytest.approx(10.0) and params.force_per_volt() == pytest.approx(0.1)
     dF, F = extract_force(np.array([1.35, 1.35, 1.25, 1.55]), params, v_start=1.25)
     assert dF == pytest.approx([0.01, 0.0, -0.01, 0.03]) and F == pytest.approx([0.01, 0.01, 0.0, 0.03])
@@ -41,7 +41,7 @@ def test_reference_choice_changes_only_the_first_step():
     assert vmid.F[-1] - first.F[-1] == pytest.approx(0.01)
 
 
-def test_overriding_d33_capacitance_extra_capacitance_and_gain_scales_the_result_exactly():
+def test_overriding_d33_capacitance_extra_capacitance_scales_the_result_exactly():
     table = _table([1.35, 1.45, 1.30])
     base = compute_channel(table, 3, resolve_params(FORCE_DEFAULTS, INFO), dict(FORCE_DEFAULTS, source=SRC_IDEAL), vmid=1.25)
 
@@ -52,17 +52,16 @@ def test_overriding_d33_capacitance_extra_capacitance_and_gain_scales_the_result
     assert run(d33_pC_per_N=1200.0).F == pytest.approx(base.F / 2)          # twice the charge per newton, half the force
     assert run(cp_pF=120.0).F == pytest.approx(base.F * 2)                  # twice the capacitance, twice the force
     assert run(cextra_pF=60.0).F == pytest.approx(base.F * 2)               # the extra node capacitance adds to the sensor
-    assert run(gain=4.0).F == pytest.approx(base.F / 4)
     assert run(d33_pC_per_N=None).F == pytest.approx(base.F)                # empty = follow the component value
 
 
 def test_no_override_follows_the_model_values_and_bad_values_are_rejected():
     p = resolve_params(FORCE_DEFAULTS, dict(INFO, cextra_F=3e-12))
-    assert (p.d33, p.c_sensor, p.c_extra, p.gain) == (600e-12, 60e-12, 3e-12, 1.0) and p.c_total == pytest.approx(63e-12)
+    assert (p.d33, p.c_sensor, p.c_extra) == (600e-12, 60e-12, 3e-12) and p.c_total == pytest.approx(63e-12)
     with pytest.raises(ValueError, match="capacitance"):
         resolve_params(dict(FORCE_DEFAULTS, cp_pF=0.0), dict(INFO, cp_F=0.0))
     with pytest.raises(ValueError, match="d33"):
-        resolve_params(dict(FORCE_DEFAULTS, gain=0.0), INFO)
+        resolve_params(dict(FORCE_DEFAULTS, d33_pC_per_N=0.0), INFO)
 
 
 def test_ideal_inputs_with_a_tiny_lsb_recover_the_applied_force():
@@ -115,7 +114,9 @@ def test_models_declare_the_force_calculator_and_per_sensor_defaults():
         assert info[0]["cextra_F"] == 0.0
         cfg = model.default_config()
         cfg["sensor_overrides"]["3"] = {"cp_pF": 25.0, "force_gain": 0.5}
-        assert model.sensor_info(cfg)[3] == {"d33_C_per_N": pytest.approx(300e-12), "cp_F": pytest.approx(25e-12), "cextra_F": 0.0}
+        got = dict(model.sensor_info(cfg)[3])
+        assert got.pop("leak")["r_conn_ohm"] == pytest.approx(470e3)
+        assert got == {"d33_C_per_N": pytest.approx(300e-12), "cp_F": pytest.approx(25e-12), "cextra_F": 0.0}
         assert model.force_node(4) == "f4" and model.forced_channels(cfg) == {2, 4}
 
 
@@ -149,6 +150,8 @@ def window(app):
     win.settings.clear()
     win.resize(1500, 900)
     win.show()
+    win.force["leak_comp"] = False             # these tests check the ideal charge model (test_force_leak.py covers the compensation)
+    win._update_force_tab()
     yield win
     win.close()
 
@@ -183,10 +186,12 @@ def test_force_tab_sits_between_simulation_and_visualization_and_has_the_documen
     names = [window.tabs.tabText(i) for i in range(window.tabs.count())]
     assert names.index("Force") == names.index("Simulation") + 1 == names.index("Visualization") - 1
     labels = [r.item["label"] for r in window.force_tab.form.rows]
-    assert labels == ["d33 charge constant", "Sensor capacitance", "Extra node capacitance", "Front-end gain G",
+    assert labels == ["d33 charge constant", "Sensor capacitance", "Extra node capacitance",
+                      "Compensate leakage and charge sharing", "Sensor-side parasitic capacitance", "Leak resistance, sensor connected",
+                      "Leak resistance, sensor floating", "Leakage current, sensor floating",
                       "Reference for the first sample", "Voltage source", "Sensors to extract", "Minimum |Fin| for the ratio"]
     assert [r.path for r in window.force_tab.form.rows if r.kind == "choice"] == ["force.reference", "force.source"]
-    assert window.force == FORCE_DEFAULTS
+    assert window.force == dict(FORCE_DEFAULTS, leak_comp=False) and FORCE_DEFAULTS["leak_comp"] is True
     html = window.force_tab.formulas.toPlainText()
     assert "dF[k]" in html and "ideal charge model" in html.lower()
 
@@ -223,12 +228,9 @@ def test_overriding_a_value_scales_the_result_marks_the_field_and_replots_withou
     assert window.force_results[2].F == pytest.approx(base * 2, rel=1e-3)
     _field(window, "force.cextra_pF").editor.setText("0")
     _field(window, "force.cextra_pF").editor.editingFinished.emit()
-    gain = _field(window, "force.gain")
     cp.editor.setText("")
     cp.editor.editingFinished.emit()
-    gain.editor.setText("2")
-    gain.editor.editingFinished.emit()
-    assert window.force_results[2].F == pytest.approx(base / 2)
+    assert window.force_results[2].F == pytest.approx(base)
 
 
 def test_source_reference_and_sensor_selection(window):
@@ -254,7 +256,7 @@ def test_source_reference_and_sensor_selection(window):
 
 def test_force_settings_round_trip_through_save_and_load(window, tmp_path, monkeypatch):
     _fake_force_run(window)
-    for path, text in (("force.d33_pC_per_N", "900"), ("force.gain", "1.5"), ("force.channels", "2")):
+    for path, text in (("force.d33_pC_per_N", "900"), ("force.cextra_pF", "3"), ("force.channels", "2")):
         _field(window, path).editor.setText(text)
         _field(window, path).editor.editingFinished.emit()
     _field(window, "force.reference").editor.setCurrentText(REF_FIRST)

@@ -91,6 +91,7 @@
     "_note": "Per sensor visit, from the MUX address command: all n_mux muxes switch together and share t_sensor_settle; the ADC then converts the muxes one after the other, one SPI word (adc_word_clocks clocks at adc_spi_clk_hz) each. The simulated mux is the first one: its sample is held adc_acquisition_clocks after the settle time, and it waits (n_mux - 1) words on the channel while the others are converted. Connected time per visit = settle + n_mux words (5 us with 4 muxes at 16 MHz). Then, with vmid_visit_after_each, a VMID visit of t_vmid_settle + t_vmid_park, otherwise one VMID park per sweep. ADC124S101: 16-clock word, 3 acquisition clocks.",
     "scan_order": [0, 1, 2, 3, 4, 5, 6],
     "vmid_visit_after_each": true,
+    "park_on_vmid": true,
     "t_start_us": 20.0,
     "t_sensor_settle_us": 1.0,
     "repeat": 1,

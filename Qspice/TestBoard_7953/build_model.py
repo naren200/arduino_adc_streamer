@@ -149,6 +149,9 @@ def build_schedule(cfg: dict) -> dict:
     if t.get("run_duration_s"):
         n_cycles = max(1, int((t["run_duration_s"] - t["t_start_us"] * MICRO) / cycle))
     start = t["t_start_us"] * MICRO
+    a_cfg = cfg["adc"]
+    t_off_delay = (a_cfg["mux_off_delay_ns"] + a_cfg["mux_edge_ns"] / 2) * NANO       # release: command + off delay + half an edge
+    t_on_delay = (a_cfg["mux_on_delay_ns"] + a_cfg["mux_edge_ns"] / 2) * NANO
     frames: list[dict] = []
     samples: list[dict] = []
     for k in range(n_cycles):
@@ -165,12 +168,36 @@ def build_schedule(cfg: dict) -> dict:
             while e + 1 < len(seq) and seq[e + 1] == ch:
                 e += 1
             if ch != VMID_CH:
-                samples.append({"t": base + (n_park + e + 1) * ft["period"], "address": ch, "cycle": k,
-                                "t_connect": base + (n_park + s) * ft["period"] + ft["delta"]})
+                t_hold = base + (n_park + e + 1) * ft["period"]
+                t_connect = base + (n_park + s) * ft["period"] + ft["delta"]
+                samples.append({"t": t_hold, "address": ch, "cycle": k, "t_connect": t_connect,
+                                "t_on": t_connect + t_on_delay, "t_off": t_hold + ft["delta"] + t_off_delay,
+                                "node_reset": seq[s - 1] == VMID_CH})
             s = e + 1
     t_stop = start + n_cycles * cycle + t["tail_us"] * MICRO
     return {"timing": ft, "frames": frames, "samples": samples, "cycle": cycle, "n_cycles": n_cycles, "t_stop": t_stop,
             "frames_per_cycle": frames_per_cycle, "stream_frames": len(seq), "start": start}
+
+
+def _parallel(*r: float | None) -> float:
+    g = sum(1.0 / x for x in r if x)
+    return 1.0 / g if g else float("inf")
+
+
+def leak_info(cfg: dict, addr: int) -> dict:
+    """Leakage and charge-sharing data of sensor `addr` for the simulator's force calculation (SI units).
+
+    The pin leakage of the datasheet (a current to ground at every channel pin, also while connected) is taken at the VMID voltage.
+    """
+    c, par, a, op = cfg["circuit"], cfg["parasitics"], cfg["adc"], cfg["opamp"]
+    sp = sensor_params(cfg, addr)
+    i0, i1, i2 = leakage_levels(cfg)
+    v = c["vmid_v"]
+    i_pin = i0 + (i1 - i0) * min(max(v, 0.0), 1.25) / 1.25 + (i2 - i1) * min(max(v - 1.25, 0.0), 1.25) / 1.25
+    return {"c_side_F": (par["sensor_trace_c_pF"] + a["cs_off_pF"]) * PICO,
+            "c_node_F": (c["c_mxo_pF"] + op["ccm_pF"]) * PICO,      # the differential capacitance is bootstrapped by the follower
+            "r_conn_ohm": _parallel(c["r_bias_ohm"], sp["rp"]), "v_conn_V": v, "i_conn_A": i_pin,
+            "r_float_ohm": _parallel(sp["rins"], sp["rp"]), "v_float_V": 0.0, "i_float_A": i_pin}
 
 
 # ----------------------------------------------------------------------------- waveforms

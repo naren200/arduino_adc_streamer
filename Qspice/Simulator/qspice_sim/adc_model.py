@@ -75,6 +75,9 @@ class SampleTable:
     v_out: np.ndarray              # quantised value, converted back to volts
     clipped: np.ndarray
     adc: AdcParams = field(default=None)  # type: ignore[assignment]
+    t_on: np.ndarray | None = None         # instant the sensor of the conversion was connected (NaN / None = not given)
+    t_off: np.ndarray | None = None        # instant it was released again
+    node_reset: np.ndarray | None = None   # the mux node was parked on VMID before this connection
 
     def __len__(self) -> int:
         return len(self.t)
@@ -109,7 +112,12 @@ def build_sample_table(samples: list[dict], v_ideal: np.ndarray, adc: AdcParams,
     v_in = np.asarray(v_ideal, dtype=float)[order]
     noise = np.random.default_rng(int(seed)).normal(0.0, noise_mv * 1e-3, len(t)) if len(t) else np.zeros(0)
     code, v_out, clipped = quantize(v_in + noise, adc)
-    return SampleTable(t, address, label, v_in, noise, code, v_out, clipped, adc)
+    t_on = t_off = reset = None
+    if any("t_on" in s and "t_off" in s for s in samples):
+        t_on = np.array([float(samples[i].get("t_on", np.nan)) for i in order])
+        t_off = np.array([float(samples[i].get("t_off", np.nan)) for i in order])
+        reset = np.array([bool(samples[i].get("node_reset", True)) for i in order])
+    return SampleTable(t, address, label, v_in, noise, code, v_out, clipped, adc, t_on, t_off, reset)
 
 
 def stair(t: np.ndarray, v: np.ndarray, t_end: float) -> tuple[np.ndarray, np.ndarray]:

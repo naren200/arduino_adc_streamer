@@ -281,3 +281,15 @@ def test_capacitance_override_field_is_nullable_shows_the_hint_and_resets(window
     thickness.editor.setText("0.5")
     thickness.editor.editingFinished.emit()
     assert row.editor.placeholderText() == "calculated: 30.4 pF"
+
+
+def test_park_on_vmid_checkbox_and_park_time_label(window):
+    row = _field(window, "timing.park_on_vmid")
+    assert row.item["label"] == "Park on VMID" and row.editor.isChecked() and window.cfg["timing"]["park_on_vmid"] is True
+    assert _field(window, "timing.t_vmid_park_us").item["label"] == "Park time"
+    assert dict(window.model.summary(window.cfg))["Park mode"] == "on VMID"
+    row.editor.setChecked(False)
+    assert window.cfg["timing"]["park_on_vmid"] is False and row.reset.isEnabled()
+    assert dict(window.model.summary(window.cfg))["Park mode"].startswith("stays on the last channel")
+    row._on_reset()
+    assert window.cfg["timing"]["park_on_vmid"] is True and row.editor.isChecked()

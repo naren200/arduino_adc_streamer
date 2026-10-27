@@ -462,12 +462,21 @@ class MainWindow(QtWidgets.QMainWindow):
         info = infos.get(chans[0] if chans else min(infos, default=0))
         if not info:
             return {}
-        return {"force.d33_pC_per_N": f"model: {info['d33_C_per_N'] * 1e12:.4g} pC/N",
-                "force.cp_pF": f"model: {info['cp_F'] * 1e12:.4g} pF",
-                "force.cextra_pF": f"model: {info.get('cextra_F', 0.0) * 1e12:.4g} pF",
-                "force.min_fin_N": "1 % of max |Fin|"}
+        leak = info.get("leak")
+        hints = {"force.d33_pC_per_N": f"model: {info['d33_C_per_N'] * 1e12:.4g} pC/N",
+                 "force.cp_pF": f"model: {info['cp_F'] * 1e12:.4g} pF",
+                 "force.cextra_pF": f"model: {(leak['c_node_F'] if leak and self.force.get('leak_comp', True) else info.get('cextra_F', 0.0)) * 1e12:.4g} pF",
+                 "force.min_fin_N": "1 % of max |Fin|"}
+        if leak:
+            hints.update({"force.c_side_pF": f"model: {leak['c_side_F'] * 1e12:.4g} pF",
+                          "force.r_conn_ohm": f"model: {leak['r_conn_ohm']:.4g} ohm",
+                          "force.r_float_ohm": f"model: {leak['r_float_ohm']:.4g} ohm",
+                          "force.i_float_nA": f"model: {leak['i_float_A'] * 1e9:.4g} nA"})
+        return hints
 
     def _on_force_changed(self, _path: str) -> None:
+        if _path == "force.leak_comp" and self.force_tab is not None:
+            self.force_tab.form.update_hints()          # the extra-capacitance field means the node capacitance in the compensated model
         if self.result is not None:
             self._replot()
         else:
@@ -503,6 +512,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 notes.append(f"Force calculation: {exc}")
             return {}
 
+    def _leak_notes(self) -> list[str]:
+        """Remarks about the leakage compensation of the last force result."""
+        out = []
+        missing = {cf.leak_missing for cf in self.force_results.values() if cf.leak_missing}
+        if missing:
+            out.append("Leakage compensation not applied (ideal formula used): " + "; ".join(sorted(missing)))
+        unreset = sum(cf.unreset for cf in self.force_results.values())
+        if unreset:
+            out.append(f"{unreset} conversion(s) follow another channel directly (the mux node was not parked on VMID): "
+                       "the charge it left on the node is not compensated")
+        return out
+
     def _update_force_tab(self) -> None:
         tab = self.force_tab
         if tab is None:
@@ -533,6 +554,7 @@ class MainWindow(QtWidgets.QMainWindow):
             notes: list[str] = []
             self.force_results = self._calculate_force(table, notes)
             rows = [summary_row(self.force_results[c]) for c in channels if c in self.force_results]
+            notes += self._leak_notes()
             if notes:
                 note = "; ".join(notes)
             elif not rows:
@@ -542,8 +564,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 if missing:
                     note = ("Applied force not saved for channel(s) " + ", ".join(map(str, missing))
                             + ": tick an ADC-Out channel and press Run to compare.")
-        tab.show_results(formulas_html(params, lsb, channels[0] if channels else None, self.force["reference"], self.force["source"]),
-                         rows, note)
+        shown = self.force_results.get(channels[0]) if channels else None
+        tab.show_results(formulas_html(params, lsb, channels[0] if channels else None, self.force["reference"], self.force["source"],
+                                       shown), rows, note)
 
     def export_force_samples(self) -> None:
         if not self.force_results:
@@ -759,7 +782,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if target is not self.model:
             self.load_model(target)
         self.cfg = deep_merge(self.model.default_config(), data.get("config", {}))
-        self.force = deep_merge(FORCE_DEFAULTS, data.get("force", {}))
+        self.force = {k: v for k, v in deep_merge(FORCE_DEFAULTS, data.get("force", {})).items() if k in FORCE_DEFAULTS}   # drops removed keys (gain)
         viz = data.get("visualization", {})
         for k in ("layout", "show_samples", "t0", "t1", "line_width", "show_ref", "annotate", "show_noisy", "overlay_applied"):
             if k in viz:

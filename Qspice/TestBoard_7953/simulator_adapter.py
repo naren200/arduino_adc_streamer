@@ -48,7 +48,8 @@ def build(cfg: dict) -> dict:
     return {
         "netlist": text,
         "t_stop": sched["t_stop"],
-        "samples": [{"t": s["t"], "label": f"Ch{s['address']}", "address": s["address"]} for s in sched["samples"]],
+        "samples": [{"t": s["t"], "label": f"Ch{s['address']}", "address": s["address"], "t_on": s["t_on"], "t_off": s["t_off"],
+                     "node_reset": s["node_reset"]} for s in sched["samples"]],
         "warnings": warnings,
     }
 
@@ -103,5 +104,5 @@ def sensor_info(cfg: dict) -> dict[int, dict]:
     out = {}
     for k in range(bm.N_SENSORS):
         sp = bm.sensor_params(cfg, k)
-        out[k] = {"d33_C_per_N": sp["d33"], "cp_F": sp["cp"], "cextra_F": 0.0}
+        out[k] = {"d33_C_per_N": sp["d33"], "cp_F": sp["cp"], "cextra_F": 0.0, "leak": bm.leak_info(cfg, k)}
     return out

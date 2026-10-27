@@ -98,16 +98,22 @@ buffer and the sampling network) would need millions of PWL points at the 5 ns s
 ### Force tab: force from the ADC values
 ![Force tab](docs/tab_force.png)
 
-The tab (between Simulation and Visualization, hidden for models without `force_calc`) extracts the force with the ideal charge model:
+The formula panel of the tab, in full (breakdown of the node, equation of a phase, mux switching, constant connection):
+
+![Force tab formulas](docs/tab_force_formulas.png)
+
+The tab (between Simulation and Visualization, hidden for models without `force_calc`) extracts the force from the charge the sensor
+generated. With *Compensate leakage and charge sharing* off (or for a model that gives no leakage data) it uses the **ideal charge
+model**:
 
 | | |
 | --- | --- |
 | Open-circuit sensor voltage | `V = d33 * F / C`, `C = C_sensor + C_extra` |
-| Change in force between two consecutive conversions of the same sensor | `dF[k] = (V[k] - V[k-1]) * C / (d33 * G)`; `V[-1]` = VMID or the first sample |
+| Change in force between two consecutive conversions of the same sensor | `dF[k] = (V[k] - V[k-1]) * C / d33`; `V[-1]` = VMID or the first sample |
 | Total force | `F[k] = sum(dF[0..k])`, starting at 0 |
-| Sensitivity, force per LSB | `S = d33 / C` [V/N]; `dF_LSB = lsb * C / (d33 * G)` [N] |
+| Sensitivity, force per LSB | `S = d33 / C` [V/N]; `dF_LSB = lsb * C / d33` [N] |
 
-Parameters: d33 [pC/N], sensor capacitance [pF], extra node capacitance [pF] (default 0), front-end gain `G` (default 1), reference of
+Parameters: d33 [pC/N], sensor capacitance [pF], extra node capacitance [pF] (default 0), reference of
 the first sample (VMID / first sample), voltage source (ADC-Out quantised with noise / ideal ADC input), the sensors to extract (empty =
 every channel with conversions) and the minimum |Fin| of the ratio. By default d33 (including the component's force gain) and the
 capacitance (override or calculated) of each sensor come from the component settings; a value typed here replaces them for the
@@ -116,10 +122,92 @@ shows the inherited value as `model: 600 pC/N`). The settings are saved with *Sa
 per sensor the number of conversions and clipped samples, min / max of dF and F, the final F, the applied force at the end of the
 run and the final error; *Export per-sample table…* writes `t, address, V, dF, F, Fin`.
 
-This is the **ideal** charge model. It ignores the charge sharing with the multiplexer node, the leakage and the bias-resistor decay,
-so `F` drifts and differs from the applied force when the real circuit deviates; that difference is the point of the comparison.
-(TestBoard_7953, 0.05 N pulse: a short pulse is recovered at about 73 % because the 10 pF multiplexer node takes part of the charge;
-during a long pulse the bias resistor drains the sensor and F falls to 44 % of that in four sweeps.)
+The ideal model ignores the charge sharing with the multiplexer node, the leakage and the bias-resistor decay, so `F` drifts and
+differs from the applied force when the real circuit deviates. (TestBoard_7953, 0.05 N pulse: a short pulse is recovered at about 73 %
+because the 10 pF multiplexer node takes part of the charge; during a long pulse the bias resistor drains the sensor and F falls to
+44 % of that in four sweeps.)
+
+#### Leakage and charge-sharing compensation (default)
+The voltage at a conversion is not the charge that was generated: between two conversions of one sensor the node loses charge
+exponentially (R x C) through the bias resistor while the sensor is connected and through the insulation and mux / pin leakage while it
+floats, and at every connection the sensor shares its charge with the mux node. The tab recovers the **generated** charge from the
+system parameters and the timing:
+
+| Phase | Capacitance | Leak resistance to rest voltage | Constant current |
+| --- | --- | --- | --- |
+| connected (sensor joined with the mux node) | `Ct = Cs + Cn` | `R_conn` to `V_conn` (VMID) | `I_conn` |
+| floating | `Cs` = sensor + side parasitics | `R_float` to `V_float` (0 V) | `I_float` (positive discharges the node) |
+| re-connection (node parked on VMID) | | | `V -> rho V + (1 - rho) V_conn`, `rho = Cs / Ct` |
+
+What the node sees (breakdown of `C dV/dt`):
+
+| Part | Current into the node | Where the value comes from |
+| --- | --- | --- |
+| Charge from the PZT | `+q = d33 * dF/dt`, charge rate in A (the unknown; `dQ = q * T`) | `d33` |
+| Leakage through the bias resistor (connected) | `-(V - V_conn) / R_conn` | `R_conn` = bias resistor, `tau_conn = R_conn * Ct` |
+| Leakage from the mux drain / ADC pin (connected) | `-I_conn` (constant) | `I_conn` |
+| Insulation leakage (floating) | `-(V - V_float) / R_float` | `R_float` = insulation, `tau_float = R_float * Cs` |
+| Mux off-leakage / pin leakage (floating) | `-I_float` (constant) | `I_float` |
+| Charge sharing at every (re)connection | not a current: `V -> rho V + (1 - rho) V_conn` | `Cs`, `Cn`, `rho = Cs / Ct` |
+
+The op-amp input bias current is not a separate term; the follower bootstraps the op-amp differential capacitance, so only its
+common-mode capacitance is part of `Cn`.
+
+**Equation of one phase** of length `d`: `C dV/dt = q - (V - V_rest)/R - I`. Every term is a current (current balance at the node):
+`C dV/dt` charges the node capacitance, and `q` is the **charge rate of the PZT in amperes**, `q = d33 * dF/dt`, not a charge. Between
+two conversions `q` is assumed constant, so `q = dQ[k] / T` and the charge generated in the interval is `dQ[k] = q * T`. Without new charge (`q = 0`):
+`V(d) = V_inf + (V0 - V_inf) * a(d)`, `a(d) = exp(-d / tau)`, `tau = R C`, `V_inf = V_rest - I R` (no resistor: linear drift
+`V0 - I d / C`). A charge arriving at the rate `q` during the phase adds `g(d) * q` at its end, `g(d) = R (1 - a(d))` (`d / C` without
+a resistor).
+
+**With mux switching** (the sensor is released after conversion `k-1` and connected again before conversion `k`, `T = t[k] - t[k-1]`):
+
+```text
+connected,   d1 = t_off[k-1] - t[k-1]:   V1 = phase(V[k-1]; Ct, R_conn,  V_conn,  I_conn)    -> g1
+floating,    d2 = t_on[k]  - t_off[k-1]: V2 = phase(V1;      Cs, R_float, V_float, I_float)   -> a2, g2
+re-connect:                              V3 = rho V2 + (1 - rho) V_conn
+connected,   d3 = t[k]    - t_on[k]:     V_pred[k] = phase(V3; Ct, R_conn, V_conn, I_conn)   -> a3, g3
+h[k]  = g1 a2 rho a3 + g2 rho a3 + g3              (charge of phase 1 must survive phases 2..4, and so on)
+dQ[k] = T * (V[k] - V_pred[k]) / h[k]
+```
+
+**With a constant connection** (the sensor stays connected to the mux node, see *Park on VMID* off: no floating phase, no sharing):
+
+```text
+V_inf = V_conn - I_conn R_conn      tau_conn = R_conn Ct      a = exp(-T / tau_conn)
+V_pred[k] = V_inf + (V[k-1] - V_inf) a        h = R_conn (1 - a)
+dQ[k] = T * (V[k] - V_pred[k]) / h
+dQ[k] ~ Ct (V[k] - V[k-1]) + ((V[k-1] - V_conn) / R_conn + I_conn) T          (T << tau_conn)
+```
+
+The small-`T` limit is the charge seen in the ADC change plus the charge that leaked through `R_conn` and `I_conn` during `T`.
+
+In both cases `V_pred[k]` is the voltage the ADC would show without new charge, `dF[k] = dQ[k] / d33` and `F = cumsum(dF)`. The Force
+tab shows all of this with the numbers of the first extracted channel (`tau`, `rho`, `T`, `a`, `h`) and says how many conversions of
+that channel follow the switching case and how many the constant-connection case. The new charge is assumed to arrive uniformly
+during `T`.
+
+Without leakage and node capacitance this is exactly `dF = dV * C / d33`. The first conversion starts from the reference (VMID);
+with *Reference for the first sample = first sample* dF[0] is 0 as before. The model supplies, from the same config keys that build the
+netlist, `sensor_info()[address]["leak"]` (`c_side_F`, `c_node_F`, `r_conn_ohm`, `v_conn_V`, `i_conn_A`, `r_float_ohm`, `v_float_V`,
+`i_float_A`) and each conversion of `samples` carries `t_on`, `t_off` and `node_reset`. In the Force tab the checkbox, the sensor-side
+capacitance, `R_conn`, `R_float` and `I_float` can be overridden (empty = follow the model; the hint shows the model value) and the
+*Extra node capacitance* field is the mux node capacitance `Cn` in this mode. All of it replots without a run and is saved with the
+settings.
+
+Measured against real QSPICE runs of the models (0.05 N applied, 16-bit ADC):
+
+| Case | Ideal model | Compensated |
+| --- | --- | --- |
+| TestBoard_7953, 15 us pulse, first conversion | 0.0364 N | 0.0484 N |
+| TestBoard_7953, 200 us pulse, 4 conversions | 0.0364 -> 0.0162 N | 0.0484 -> 0.0461 N |
+| TestBoard_ADC124, 2 ms pulse, conversions 1..17 | 0.0368 -> 0.0013 N | 0.0499 -> 0.0526 N (within +5 %) |
+
+What the model does **not** compensate (it says so in the tab): the charge a previous channel left on the mux node when the mux goes
+from one sensor straight to the next without a VMID visit (`node_reset` false; the note counts those conversions), the voltage
+dependence of the leakage (evaluated at VMID), and any difference between the model's effective node capacitance and the real one;
+the remaining error is a few percent (slow creep in the table above). The op-amp differential capacitance is not counted in `Cn`
+because the follower bootstraps it.
 
 ### dF, F and Fcal/Fin traces, log scale
 Per channel the node tree lists `dF ch<k>` and `F ch<k>` (group *Calculated force [N]*) and `Fcal/Fin ch<k>` (group *Fcal / Fin
@@ -140,9 +228,15 @@ follows its group's setting; the single overlay panel is logarithmic only when e
 - ADC-Out / the noise / the force are derived from the *current* settings of `adc.bits`, noise and the force tab, with the reference
   voltage and VMID of the configuration the run used (they shape the circuit), so editing them replots without running.
 - The Force-tab override applies to every extracted sensor (the per-sensor values come from `sensor_info` of the adapter).
+- Leakage compensation is on by default; it assumes that the new charge arrives uniformly between two conversions and that the mux
+  node was parked on VMID before every connection (`node_reset`); a model without `leak` data or without connection times falls back to
+  the ideal formula and the tab says so.
 - Rounding is to nearest with halves up; a sample counts as clipped when the input (with noise) lies outside `v_low .. v_high`.
 - The default ratio threshold of 1 % of the largest |Fin| is a choice of this tool, editable in newtons on the Force tab.
 - The extra node capacitance defaults to 0 (the models do not report one); the sensor and parasitic capacitances of the netlist are not added.
+- TestBoard_ADC124 *Park on VMID* off: the last channel stays connected during the park time and a visit to the already connected channel has no settle
+  wait (assumed, as the MG24 dual-MUX firmware `muxSelect` skips an unchanged channel); the VMID visit and VMID settle settings are ignored and the tail keeps the channel connected.
+  The first connection of the run still pays the settle. TestBoard_7953 has no such toggle.
 
 ## Adding a model
 
@@ -160,7 +254,8 @@ Adapter contract (any extra files, models, libraries stay in the model folder; t
 def build(cfg: dict) -> dict:
     return {"netlist": "<SPICE text with a .tran statement>",
             "t_stop": 5.7e-4,                                  # seconds
-            "samples": [{"t": 1.2e-6, "label": "addr 0", "address": 0}],   # conversion instants (markers); "address" = sensor channel, needed by ADC-Out / Force
+            "samples": [{"t": 1.2e-6, "label": "addr 0", "address": 0,     # conversion instants (markers); "address" = sensor channel, needed by ADC-Out / Force
+                         "t_on": 0.03e-6, "t_off": 5.0e-6, "node_reset": True}],   # optional: connection window of the sensor (leakage compensation)
             "warnings": ["optional message shown above the plot"]}
     # raise ValueError("readable message") for invalid parameters
 
@@ -171,7 +266,9 @@ def field_hints(cfg: dict) -> dict[str, str]:                  # optional: place
     return {"sensor_defaults.cp_pF": "calculated: 60.7 pF"}
 
 def sensor_info(cfg: dict) -> dict[int, dict]:                 # optional (needs force_calc): per-sensor defaults of the Force tab
-    return {0: {"d33_C_per_N": 600e-12, "cp_F": 60.7e-12, "cextra_F": 0.0}}
+    return {0: {"d33_C_per_N": 600e-12, "cp_F": 60.7e-12, "cextra_F": 0.0,
+                "leak": {"c_side_F": 5e-12, "c_node_F": 13e-12, "r_conn_ohm": 470e3, "v_conn_V": 1.65, "i_conn_A": 1e-9,
+                         "r_float_ohm": 10e9, "v_float_V": 0.0, "i_float_A": 1e-9}}}   # "leak" optional: see "Leakage and charge-sharing compensation"
 ```
 
 Manifest keys:

@@ -32,6 +32,7 @@ bm = _load_sibling("build_model")
 def build(cfg: dict) -> dict:
     text, slots = bm.build(cfg, with_force=True)
     sensor = [s for s in slots if s["kind"] == "sensor"]
+    windows = bm.connection_windows(cfg, slots)
     warnings: list[str] = []
     rng = bm.adc_range(cfg)
     if rng["bipolar"]:
@@ -49,7 +50,9 @@ def build(cfg: dict) -> dict:
     return {
         "netlist": text,
         "t_stop": max(s["t1"] for s in slots),
-        "samples": [{"t": s["t_sample"], "label": f"addr {s['address']}", "address": s["address"]} for s in sensor],
+        "samples": [{"t": s["t_sample"], "label": f"addr {s['address']}", "address": s["address"],
+                     "t_on": windows[i][0], "t_off": windows[i][1], "node_reset": windows[i][2]}
+                    for i, s in enumerate(slots) if s["kind"] == "sensor"],
         "warnings": warnings,
     }
 
@@ -59,6 +62,20 @@ def adc_range_text(rng: dict) -> str:
     return f"{rng['v_low']:g} .. {rng['v_high']:g} V ({kind}), LSB {rng['lsb'] * 1e3:.4g} mV at {rng['bits']} bit"
 
 
+def _visit_text(info: dict, adc: dict) -> str:
+    """Connected time of the visits when parked on the last channel: a real switch pays the settle, a repeated visit does not."""
+    parts = sorted({round(v * 1e6, 4) for v in info["visits"]})
+    mux_switches = info["switches"]
+    return (" / ".join(f"{p:g}" for p in parts) + f" us  (settle only when the mux switches, then {adc['n_mux']} muxes x {adc['repeat']} words;"
+            f" {mux_switches} mux switch(es) per cycle)")
+
+
+def _duty_text(info: dict, cycle: float, busy: float) -> str:
+    """Share of the cycle in which sensor 0 is connected (first address; the last one also gets the park when parked on its channel)."""
+    conn = busy if info["on_vmid"] else info["visits"][0] + (info["park"] if len(info["visits"]) == 1 else 0.0)
+    return f"{conn / cycle * 100:.1f} %  (floating {(cycle - conn) * 1e6:.1f} us per cycle)"
+
+
 def summary(cfg: dict) -> list[tuple[str, str]]:
     t = cfg["timing"]
     us = 1e-6
@@ -66,12 +83,8 @@ def summary(cfg: dict) -> list[tuple[str, str]]:
     visit = bool(t["vmid_visit_after_each"])
     adc = bm.adc_timing(t)
     busy = adc["busy"]
-    settle_v = t["t_vmid_settle_us"] * us
-    park = t["t_vmid_park_us"] * us
-    if t.get("sampling_rate_hz"):
-        rate = float(t["sampling_rate_hz"])
-        park = (1.0 / rate / n - busy - settle_v) if visit else (1.0 / rate - n * busy)
-    cycle = n * (busy + settle_v + park) if visit else n * busy + park
+    info = bm.cycle_info(cfg)
+    park, cycle, on_vmid = info["park"], info["cycle"], info["on_vmid"]
     sp = bm.sensor_params(cfg, 0)
     out = [
         ("ADC word (conversion) time", f"{adc['word'] * 1e6:.3f} us  ({t['adc_word_clocks']} clocks at {t['adc_spi_clk_hz'] / 1e6:g} MHz)"),
@@ -79,12 +92,16 @@ def summary(cfg: dict) -> list[tuple[str, str]]:
         ("ADC acquisition before the hold", f"{adc['acq'] * 1e9:.1f} ns"),
         ("Hold of the retained sample after the command", f"{adc['hold_offset'] * 1e6:.4f} us  (settle + {adc['repeat'] - 1} extra words + acquisition)"),
         ("Wait on the channel while the other muxes are read", f"{adc['wait_others'] * 1e6:.3f} us  ({adc['n_mux'] - 1} muxes x {adc['repeat']} words)"),
-        ("Connected time per sensor visit", f"{busy * 1e6:.3f} us  (settle + {adc['n_mux']} muxes x {adc['repeat']} words)"),
-        ("VMID park time used", f"{park * 1e6:.2f} us" + (" after every address" if visit else " once per sweep")
+        ("Connected time per sensor visit", f"{busy * 1e6:.3f} us  (settle + {adc['n_mux']} muxes x {adc['repeat']} words)"
+         if on_vmid else _visit_text(info, adc)),
+        ("Park mode", "on VMID" if on_vmid else
+         f"stays on the last channel (addr {int(t['scan_order'][-1])}); no VMID visit, the VMID visit / VMID settle settings are not used"),
+        ("Park time used", f"{park * 1e6:.2f} us" + ((" after every address" if visit else " once per sweep") if on_vmid
+                                                      else " once per sweep, after the last address, channel kept connected")
          + ("  (derived from the sampling rate)" if t.get("sampling_rate_hz") else "")),
         ("Scan cycle", f"{cycle * 1e6:.2f} us"),
         ("Sampling rate per sensor", f"{1.0 / cycle:,.1f} Hz" if cycle > 0 else "n/a"),
-        ("Connected duty per sensor", f"{busy / cycle * 100:.1f} %  (floating {(cycle - busy) * 1e6:.1f} us per cycle)" if cycle > 0 else "n/a"),
+        ("Connected duty per sensor", _duty_text(info, cycle, busy) if cycle > 0 else "n/a"),
         ("Sensor capacitance (sensor 0)", f"{sp['cp'] * 1e12:.1f} pF ({sp['cp_source']})"),
         ("Sensitivity, open circuit", f"{sp['d33'] / sp['cp']:.2f} V/N"),
         ("Force for +/-1.65 V swing", f"{1.65 / (sp['d33'] / sp['cp']):.3f} N"),
@@ -108,5 +125,5 @@ def sensor_info(cfg: dict) -> dict[int, dict]:
     out = {}
     for k in range(7):
         sp = bm.sensor_params(cfg, k)
-        out[k] = {"d33_C_per_N": sp["d33"], "cp_F": sp["cp"], "cextra_F": 0.0}
+        out[k] = {"d33_C_per_N": sp["d33"], "cp_F": sp["cp"], "cextra_F": 0.0, "leak": bm.leak_info(cfg, k)}
     return out

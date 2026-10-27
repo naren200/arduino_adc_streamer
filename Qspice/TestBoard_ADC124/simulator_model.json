@@ -407,7 +407,14 @@
      "label": "VMID visit after every sensor",
      "unit": "",
      "type": "bool",
-     "tip": "On: after each sensor the mux goes to VMID (settle + park) before the next sensor. Off: sensors follow each other directly and the mux parks on VMID once per sweep."
+     "tip": "On: after each sensor the mux goes to VMID (settle + park) before the next sensor. Off: sensors follow each other directly and the mux parks on VMID once per sweep. Ignored when 'Park on VMID' is off (no VMID visits then)."
+    },
+    {
+     "path": "timing.park_on_vmid",
+     "label": "Park on VMID",
+     "unit": "",
+     "type": "bool",
+     "tip": "On: the park time is spent on VMID (the behaviour so far). Off: the mux is not switched to VMID; the last sampled channel stays connected for the park time, and also after the last cycle. With one mux and one channel the mux then never switches after the first connection (no settle wait, no charge injection or other switching effects) and the same channel is sampled again and again. A visit to a channel that is already connected needs no settle time. The VMID visit and the VMID settle time are not used in this mode."
     },
     {
      "path": "timing.t_start_us",
@@ -473,14 +480,14 @@
      "label": "VMID settle time",
      "unit": "us",
      "type": "float",
-     "tip": "VMID-visit settle time after every sensor (only used when the VMID visit is on)."
+     "tip": "VMID-visit settle time after every sensor (only used when the VMID visit is on and 'Park on VMID' is on)."
     },
     {
      "path": "timing.t_vmid_park_us",
-     "label": "VMID park time",
+     "label": "Park time",
      "unit": "us",
      "type": "float",
-     "tip": "Parked on VMID while other mux groups are sampled (placeholder). With a VMID visit after every sensor: after every address (following the VMID settle). Without it: once per sweep, after the last address. Ignored when a sampling rate is set."
+     "tip": "Time between the conversions of one sweep and the next while other mux groups are sampled and data is sent (placeholder). Park on VMID: the mux sits on VMID; with a VMID visit after every sensor it follows the VMID settle after every address, without it it comes once per sweep, after the last address. Park on VMID off: the last sampled channel stays connected for this time, once per sweep. Ignored when a sampling rate is set."
     }
    ]
   },
@@ -492,7 +499,7 @@
      "label": "Per-sensor sampling rate",
      "unit": "Hz",
      "type": "float",
-     "tip": "Optional per-sensor revisit rate. Empty = use the park time. When set, the VMID park time is derived so each sensor is revisited at this rate (error if too high).",
+     "tip": "Optional per-sensor revisit rate. Empty = use the park time. When set, the park time is derived so each sensor is revisited at this rate (error if too high).",
      "nullable": true
     }
    ]

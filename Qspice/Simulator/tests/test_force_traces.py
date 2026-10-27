@@ -65,6 +65,7 @@ def window(app):
     win.settings.clear()
     win.resize(1500, 900)
     win.show()
+    win.force["leak_comp"] = False             # synthetic ideal-sensor data: the ideal charge model is the reference here
     install_result(win, {"ain": _ain, "f2": _force, "f4": _force})
     yield win
     win.close()

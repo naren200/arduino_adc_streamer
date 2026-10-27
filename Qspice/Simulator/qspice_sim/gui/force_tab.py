@@ -19,11 +19,26 @@ SCHEMA = [
         {"path": "force.cp_pF", "label": "Sensor capacitance", "unit": "pF", "type": "float", "nullable": True,
          "tip": "Capacitance used for the calculation only. Empty = the capacitance of the sensor component (override or calculated)."},
         {"path": "force.cextra_pF", "label": "Extra node capacitance", "unit": "pF", "type": "float", "nullable": True,
-         "tip": "Capacitance the node adds in parallel to the sensor (C = sensor + extra). Empty = the model's value (0)."},
+         "tip": "Ideal model: capacitance the node adds in parallel to the sensor (C = sensor + extra), model value 0. "
+                "With leakage compensation: the capacitance C_n of the shared mux node that the sensor connects to "
+                "(empty = the model's value)."},
+    ]},
+    {"group": "Leakage and charge sharing (empty = follow the model)", "items": [
+        {"path": "force.leak_comp", "label": "Compensate leakage and charge sharing", "unit": "", "type": "bool",
+         "tip": "Recover the charge the sensor generated: the voltage decays exponentially (R x C) between two conversions, through "
+                "the bias resistor while the sensor is connected and through the insulation / mux leakage while it floats, and the "
+                "sensor shares its charge with the mux node at every connection. Off = the ideal charge model. Only effective when the "
+                "model gives the leakage data and the connection times of the conversions."},
+        {"path": "force.c_side_pF", "label": "Sensor-side parasitic capacitance", "unit": "pF", "type": "float", "nullable": True,
+         "tip": "Capacitance at the sensor pin besides the sensor itself (trace, off-state mux pin): C_s = sensor + this."},
+        {"path": "force.r_conn_ohm", "label": "Leak resistance, sensor connected", "unit": "ohm", "type": "float", "nullable": True,
+         "tip": "Resistance that pulls the connected node to VMID (the bias resistor). tau = R x (C_s + C_n)."},
+        {"path": "force.r_float_ohm", "label": "Leak resistance, sensor floating", "unit": "ohm", "type": "float", "nullable": True,
+         "tip": "Insulation resistance of the floating sensor (to ground). tau = R x C_s. Use a very large value for none."},
+        {"path": "force.i_float_nA", "label": "Leakage current, sensor floating", "unit": "nA", "type": "float", "nullable": True,
+         "tip": "Constant current drawn from the floating sensor node (mux off-leakage / pin leakage); positive discharges it."},
     ]},
     {"group": "Extraction", "items": [
-        {"path": "force.gain", "label": "Front-end gain G", "unit": "", "type": "float",
-         "tip": "Gain between the sensor voltage and the ADC input (1 = unity-gain buffer)."},
         {"path": "force.reference", "label": "Reference for the first sample", "unit": "", "type": "choice",
          "choices": [REF_VMID, REF_FIRST], "tip": "V[-1] of the first conversion of a sensor: VMID, or its own first sample (dF[0] = 0)."},
         {"path": "force.source", "label": "Voltage source", "unit": "", "type": "choice", "choices": [SRC_ADC_OUT, SRC_IDEAL],
@@ -53,7 +68,7 @@ class ForceTab(QtWidgets.QSplitter):
         lay.setContentsMargins(4, 0, 4, 4)
         self.formulas = QtWidgets.QTextBrowser()
         self.formulas.setMinimumHeight(150)
-        lay.addWidget(self.formulas, 2)
+        lay.addWidget(self.formulas, 5)
         self.note = QtWidgets.QLabel("")
         self.note.setWordWrap(True)
         lay.addWidget(self.note)
@@ -61,7 +76,8 @@ class ForceTab(QtWidgets.QSplitter):
         self.table.setHorizontalHeaderLabels(TABLE_HEADERS)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        lay.addWidget(self.table, 3)
+        self.table.setMinimumHeight(110)
+        lay.addWidget(self.table, 2)
         self.export_btn = QtWidgets.QPushButton("Export per-sample table…")
         self.export_btn.setToolTip("CSV with t, address, V, dF, F and the applied force Fin for every conversion of the extracted sensors")
         self.export_btn.clicked.connect(self.export_requested)
@@ -69,7 +85,7 @@ class ForceTab(QtWidgets.QSplitter):
         self.addWidget(bottom)
         self.setStretchFactor(0, 0)
         self.setStretchFactor(1, 1)
-        self.setSizes([370, 500])
+        self.setSizes([300, 570])
 
     def refresh(self) -> None:
         self.form.refresh()

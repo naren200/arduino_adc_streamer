@@ -78,7 +78,25 @@ Without the VMID visit (`vmid_visit_after_each = false`) the sequence is: sensor
 | `adc_acquisition_clocks` | 3 | Track clocks before the hold; the **sample instant** is `settle + acquisition`. |
 | `t_vmid_settle_us` | 5 | VMID-channel settle (separate variable). No conversion, like the current firmware; the model samples the end of it only as a ghosting diagnostic. |
 | `sampling_rate_hz` | not set | Optional per-sensor revisit rate. When set, the VMID park time is derived from it (error if the rate is too high for the other timing). |
-| `t_vmid_park_us` | 7 | **Placeholder.** Time parked on VMID while the other mux groups are sampled and data is sent. Replace with the real value. With `vmid_visit_after_each = true` it follows the VMID settle after every address; with `false` the sensors follow each other directly and the mux parks on VMID **once per sweep**, after the last address. |
+| `park_on_vmid` | true | **Park on VMID.** On: the park time is spent on VMID (the behaviour described above). Off: the mux is not switched to VMID, the last sampled channel stays connected for the park time (see *Parking on the last channel* below). |
+| `t_vmid_park_us` | 7 | **Park time** (placeholder; the key keeps its old name). Time between the conversions of one sweep and the next while the other mux groups are sampled and data is sent. Replace with the real value. Park on VMID: with `vmid_visit_after_each = true` it follows the VMID settle after every address; with `false` the sensors follow each other directly and the mux parks on VMID **once per sweep**, after the last address. Park on VMID off: the last channel of the sweep stays connected for this time, once per sweep. |
+
+### Parking on the last channel (`park_on_vmid = false`)
+
+With the toggle off (System tab, *Park on VMID*) the mux never goes to VMID after the first address command (also not in the tail after the last
+cycle): `vmid_visit_after_each` and `t_vmid_settle_us` are not used. A sweep is the addresses of `scan_order` in turn, each connected for
+settle + `n_mux` × `repeat` words, and the **last** address stays connected for the park time before the next sweep starts.
+
+A visit to the channel that is *already connected* needs no mux command and no settle wait (assumed: the MG24 dual-MUX firmware returns immediately when the requested
+channel is already selected; not checked for the ADC124 board firmware), so it costs only its `n_mux` × `repeat` words. With **one mux, one channel** this gives a continuous connection:
+the enable of the channel is switched on once at the first command and never again, so there is no break-before-make gap, no charge injection
+and no charge redistribution from re-connecting after the first conversion; the same channel is sampled again and again at a uniform period of
+`n_mux × repeat × word + park` (17 µs = 58.8 kHz for 1 mux, 10 repeats and the 7 µs park). The first connection of the run still pays the settle.
+With several channels every visit is a real switch (the cycle is the sum of the visits plus the park, with no VMID visit). `sampling_rate_hz`
+derives the park time as before (`1 / rate` minus the visits).
+
+For 1 mux, 1 channel, 10 repeats the real QSPICE run shows about 42 mV peak-to-peak on `ain` with VMID parking (the injection at every reconnect)
+against about 0.6 mV with the channel kept connected.
 
 The former `t_conversion_us`, `adc_acquisition_ns` and `t_after_conversion_us` keys are replaced by the derived values above. The saved results and
 reports in `results/` and `reports/` were generated **before** this change (7 µs connected per visit); rerun the scenarios to get results for the new
