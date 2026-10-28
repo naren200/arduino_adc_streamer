@@ -34,31 +34,42 @@ def test_default_config_has_an_empty_sine_table_and_manifest_entry(model):
     assert [c["key"] for c in spec["columns"]] == ["address", "t_start_us", "freq_hz", "cycles", "amp_N"]
 
 
-def test_sine_pwl_follows_amplitude_frequency_and_cycles(model):
-    bm = model.adapter.bm
+def _force_lines(model, cfg, addr=2):
+    text = model.build(cfg)["netlist"]
+    return [ln for ln in text.splitlines() if ln.startswith((f"Vf{addr} ", f"Vfs{addr} ", f"Vf{addr}_pulse"))]
+
+
+def test_sine_is_a_qspice_sin_source_with_the_row_parameters(model):
+    """The sine is QSPICE's own SIN source (smooth, no piecewise-linear corners); other sensors keep a flat PWL source."""
     cfg = _cfg(model)
-    pts = bm.force_pwl(cfg, 2, 200e-6)
-    t, v = np.array([p[0] for p in pts]), np.array([p[1] for p in pts])
-    assert np.all(v[t <= 20e-6] == 0.0) and np.all(v[t >= 20e-6 + 3 / 50e3] == 0.0)    # silent before the start and after the last cycle
-    assert v.max() == pytest.approx(0.05, rel=2e-3) and v.min() == pytest.approx(-0.05, rel=2e-3)
-    quarter = 20e-6 + 0.25 / 50e3
-    assert np.interp(quarter, t, v) == pytest.approx(0.05, rel=2e-3)                   # peak a quarter period after the start
-    zero_crossings = np.where(np.diff(np.sign(v[(t > 20e-6) & (t < 20e-6 + 3 / 50e3 - 1e-9)])) != 0)[0]
-    assert len(zero_crossings) == 5                                                    # 3 cycles: 5 interior zero crossings
-    assert bm.force_pwl(cfg, 3, 200e-6) == [(0.0, 0.0), (200e-6, 0.0)]                 # other sensors stay at rest
+    assert _force_lines(model, cfg) == ["Vf2 f2 0 SIN(0 5.000000000e-02 5.000000000e+04 2.000000000e-05 0 0 3.000000000e+00)"]
+    assert _force_lines(model, cfg, addr=3)[0].startswith("Vf3 f3 0 PWL(")
+    assert "SINE_POINTS" not in model.adapter.bm.__dict__ and not any("PWL" in ln for ln in _force_lines(model, cfg))
+
+
+def test_sine_reference_value_peaks_a_quarter_period_in(model):
+    bm = model.adapter.bm
+    row = _cfg(model)["forces_sin"][0]
+    assert abs(bm.sine_value(row, 20e-6)) < 1e-12 and bm.sine_value(row, 0.0) == 0.0         # silent before the start
+    assert bm.sine_value(row, 20e-6 + 0.25 / 50e3) == pytest.approx(0.05)                     # peak a quarter period after the start
+    assert abs(bm.sine_value(row, 20e-6 + 3 / 50e3)) < 1e-12 and abs(bm.sine_value(row, 1.0)) < 1e-12   # whole cycles end at zero
 
 
 def test_sine_adds_to_pulses_on_the_same_address(model):
-    bm = model.adapter.bm
+    """A sensor with pulses and a sine gets the pulse PWL source and the SIN source in series: V(f) = V(f_pulse) + sine."""
     cfg = _cfg(model)
     cfg["forces"] = [{"address": 2, "t_start_us": 0.0, "rise_us": 1.0, "width_us": 500.0, "fall_us": 1.0, "amp_N": 0.02}]
-    t, v = zip(*bm.force_pwl(cfg, 2, 200e-6))
-    assert np.interp(20e-6 + 0.25 / 50e3, t, v) == pytest.approx(0.07, rel=3e-3)
+    lines = _force_lines(model, cfg)
+    assert any(ln.startswith("Vf2 f2_pulse 0 PWL(") for ln in lines) and any(ln.startswith("Vfs2 f2 f2_pulse SIN(") for ln in lines)
 
 
-def test_sine_is_cut_at_the_end_of_the_run(model):
-    pts = model.adapter.bm.force_pwl(_cfg(model, cycles=100), 2, 60e-6)
-    assert pts[-1][0] == pytest.approx(60e-6) and max(t for t, _ in pts) <= 60e-6 + 1e-15
+def test_sine_ending_away_from_a_zero_crossing_is_flagged(model):
+    bm = model.adapter.bm
+    assert not any("zero crossing" in w for w in model.build(_cfg(model, cycles=2.5))["warnings"])
+    assert not any("zero crossing" in w for w in model.build(_cfg(model, cycles=3))["warnings"])
+    cfg = _cfg(model, cycles=2.25)
+    assert any("zero crossing" in w and "holds" in w for w in model.build(cfg)["warnings"])
+    assert bm.sine_value(cfg["forces_sin"][0], 1.0) == pytest.approx(0.05)                   # QSPICE holds the last value after the last cycle
 
 
 def test_invalid_sine_rows_are_rejected(model):
@@ -66,8 +77,12 @@ def test_invalid_sine_rows_are_rejected(model):
         model.build(_cfg(model, freq_hz=0.0))
     with pytest.raises(ValueError, match="positive"):
         model.build(_cfg(model, cycles=0))
-    with pytest.raises(ValueError, match="points"):
-        model.adapter.bm.force_pwl(_cfg(model, freq_hz=1e6, cycles=1e9), 2, 1.0)
+    cfg = _cfg(model)
+    cfg["forces_sin"].append({**SIN, "freq_hz": 1000.0})
+    with pytest.raises(ValueError, match="only one sine"):
+        model.build(cfg)
+    cfg["forces_sin"][1]["address"] = 3                                                      # another sensor may have its own sine
+    assert len(_force_lines(model, cfg, addr=3)) == 1
 
 
 def test_sine_amplitude_over_the_supply_is_flagged(model):
@@ -94,3 +109,21 @@ def test_real_run_shows_a_bipolar_sine_on_the_driven_sensor_only(tmp_path):
     assert p2.max() > p2[0] + 0.1 and p2.min() < p2[0] - 0.1
     assert (p3.max() - p3.min()) < 0.2 * (p2.max() - p2.min())      # an undriven neighbour only sees the mux charge sharing and leakage
     raw.close()
+
+
+def test_real_run_force_node_is_the_exact_sine_plus_the_pulse_and_holds_its_last_value(tmp_path):
+    qspice = _qspice_or_skip()
+    model = model_loader.load_model(QSPICE_DIR / "TestBoard_ADC124")
+    bm = model.adapter.bm
+    cfg = _cfg(model, address=0, t_start_us=5.0, freq_hz=20000.0, cycles=2.25, amp_N=0.02)       # ends on a peak: 112.5 us long
+    cfg["forces"] = [{"address": 0, "t_start_us": 0.0, "rise_us": 1.0, "width_us": 500.0, "fall_us": 1.0, "amp_N": 0.01}]
+    cfg["timing"].update(scan_order=[0], n_mux=1, run_duration_s=1.6e-4, num_cycles=5)
+    cfg["simulation"]["max_step_ns"] = 20.0
+    prepared = runner.prepare(model, cfg)
+    raw = runner.run_netlist(prepared.netlist, ["f0"], tmp_path, qspice)
+    t, f = raw.time, raw.column("f0")
+    raw.close()
+    probe = np.array([10e-6, 30e-6, 55e-6, 80e-6, 100e-6, 117e-6, 140e-6, 155e-6])             # the last two are after the sine ended
+    expected = np.array([0.01 + bm.sine_value(cfg["forces_sin"][0], x) for x in probe])
+    assert np.interp(probe, t, f) == pytest.approx(expected, abs=2e-5)
+    assert expected[-1] == pytest.approx(0.01 + 0.02, abs=1e-9)                                  # pulse + the held peak of the sine

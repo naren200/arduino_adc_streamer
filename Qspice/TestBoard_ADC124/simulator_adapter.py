@@ -38,6 +38,10 @@ def build(cfg: dict) -> dict:
     if rng["bipolar"]:
         warnings.append("VMID = 0: bipolar analog supply assumed, the buffer rails are -VDD .. +VDD "
                         "(real ADS7953 / ADC124S101 inputs cannot go below 0 V).")
+    for sn in cfg.get("forces_sin", []):
+        if bm.sine_ends_off_zero(sn):
+            warnings.append(f"Force sine on address {sn['address']}: {float(sn['cycles']):g} cycles end away from a zero crossing; QSPICE's SIN source "
+                            f"then holds its last value ({bm.sine_value(sn, 1e9):+.3g} N) after the last cycle.")
     for kind, f in [("pulse", f) for f in cfg.get("forces", [])] + [("sine", f) for f in cfg.get("forces_sin", [])]:
         sp = bm.sensor_params(cfg, int(f["address"]))
         v_open = sp["d33"] * float(f["amp_N"]) / sp["cp"]

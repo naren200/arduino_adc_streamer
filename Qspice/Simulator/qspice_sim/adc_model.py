@@ -12,24 +12,33 @@ import numpy as np
 
 @dataclass(frozen=True)
 class AdcParams:
-    """ADC resolution and range. The range is 0 .. vref when VMID is above 0 and -vref .. +vref (twice the span) when VMID is 0."""
+    """ADC resolution and range. The range is 0 .. vref when VMID is above 0 and -vref .. +vref (twice the span) when VMID is 0.
+
+    A model whose range is neither (adapter ``adc_range``) gives the lower limit explicitly in ``low``; the upper limit is vref.
+    """
 
     bits: int
     vref: float
     vmid: float
+    low: float | None = None
 
     def __post_init__(self) -> None:
         if int(self.bits) != self.bits or self.bits < 2:
             raise ValueError("the ADC resolution must be an integer of at least 2 bits")
-        if not self.vref > 0:
-            raise ValueError("the ADC reference voltage must be positive")
+        if self.low is None:
+            if not self.vref > 0:
+                raise ValueError("the ADC reference voltage must be positive")
+        elif not self.vref > self.low:
+            raise ValueError("the upper limit of the ADC range must be above the lower limit")
 
     @property
     def bipolar(self) -> bool:
-        return self.vmid == 0
+        return self.vmid == 0 if self.low is None else self.low < 0
 
     @property
     def v_low(self) -> float:
+        if self.low is not None:
+            return self.low
         return -self.vref if self.bipolar else 0.0
 
     @property
@@ -45,7 +54,7 @@ class AdcParams:
         return 2 ** int(self.bits) - 1
 
     def describe(self) -> str:
-        kind = "bipolar, VMID = 0" if self.bipolar else "unipolar"
+        kind = ("bipolar, VMID = 0" if self.low is None else "bipolar") if self.bipolar else "unipolar"
         return f"{self.v_low:g} .. {self.v_high:g} V ({kind}), LSB {self.lsb * 1e3:.4g} mV at {int(self.bits)} bit"
 
 

@@ -96,7 +96,34 @@ def main() -> None:
     full.close()
     show_tab(win, "Simulation")
     shot(win, "result_adc_force.png")
+    basic_model_screenshot()
     print("screenshots written to", DOCS)
+
+
+def basic_model_screenshot() -> None:
+    """Basic_Model: the default pulse with the bias on ground, held as the reference, then the same pulse with the bias on VMID."""
+    models = [m for m in model_loader.discover([SIM_DIR.parent]) if m.id == "Basic_Model"]
+    win = MainWindow(models)
+    win.settings.clear()
+    win.resize(1500, 920)
+    win.show()
+    win.viz["nodes"] = {"ain", "adcout_ch0", "f0"}
+    win.viz["show_noisy"] = False
+    win.viz["overlay_applied"] = False
+    win._populate_nodes()
+    win._apply_viz_widgets()
+    show_tab(win, "System")
+    win.run()
+    wait_for_run(win)
+    win.hold_reference()
+    win.cfg["circuit"]["bias_to"] = "vmid"
+    win._refresh_all_forms()
+    win._on_param_changed("circuit.bias_to")
+    show_tab(win, "Components")
+    win.run()
+    wait_for_run(win)
+    shot(win, "result_basic_model.png")
+    win.close()
 
 
 if __name__ == "__main__":

@@ -44,6 +44,18 @@ def log_magnitude(v: np.ndarray) -> np.ndarray:
     return out
 
 
+SI_UNITS = ("V", "A", "N", "s", "F", "Hz")
+
+
+def split_units(title: str) -> tuple[str, str | None]:
+    """"ADC input [V]" -> ("ADC input", "V"): the axis then scales itself with an SI prefix (1 mV) instead of "(x0.001)"."""
+    for u in SI_UNITS:
+        suffix = f" [{u}]"
+        if title.endswith(suffix):
+            return title[:-len(suffix)], u
+    return title, None
+
+
 class Log10Axis(pg.AxisItem):
     """Y axis of a logarithmic panel: the ticks show log10 of the value (0 = 1, 1 = 10, -1 = 0.1), like the plotted position,
     instead of the pyqtgraph default that labels a log axis with the real values and mixes 10^n with plain numbers."""
@@ -147,7 +159,11 @@ class PlotPanel(QtWidgets.QWidget):
             plot = self.glw.addPlot(row=i, col=0, title=title if (i == 0 and title) else None,
                                     axisItems={"left": Log10Axis("left")} if is_log else None)
             plot.showGrid(x=True, y=True, alpha=0.25)
-            plot.setLabel("left", f"log10 |{panel_title}|" if is_log else panel_title)
+            if is_log:
+                plot.setLabel("left", f"log10 |{panel_title}|")
+            else:
+                text, units = split_units(panel_title)
+                plot.setLabel("left", text, units=units)      # with a unit pyqtgraph writes "(mV)", without it "(x0.001)"
             if is_log:
                 plot.setLogMode(y=True)
             plot.addLegend(offset=(8, 4), labelTextSize="9pt")

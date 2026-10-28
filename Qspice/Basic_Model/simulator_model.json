@@ -1,0 +1,139 @@
+{
+ "name": "Basic_Model (ideal PZT, buffer and ADC)",
+ "description": "One PZT (SM311) -> ideal unity buffer with a bias resistor -> ideal ADC. No parasitics, no MUX, all components ideal; the only capacitance is the PZT. The bias resistor goes to ground (default, ADC range -VDD/2 .. +VDD/2) or to VMID (0 .. VDD); the ADC resolution and sampling rate are adjustable.",
+ "config": "config.json",
+ "adapter": "simulator_adapter.py",
+ "components": [
+  {
+   "group": "PZT sensor (SM311 / PZT-5H class, ideal: charge source || Cp)",
+   "items": [
+    {"path": "sensor_defaults.width_mm", "label": "Width", "unit": "mm", "type": "float", "tip": "Electrode width. Cp = eps0*eps33*W*L/t."},
+    {"path": "sensor_defaults.length_mm", "label": "Length", "unit": "mm", "type": "float", "tip": ""},
+    {"path": "sensor_defaults.thickness_mm", "label": "Thickness", "unit": "mm", "type": "float", "tip": "Element thickness."},
+    {"path": "sensor_defaults.eps33_r", "label": "Relative permittivity eps33T/eps0", "unit": "", "type": "float", "tip": "Steminc SM311: 3500 at 1 kHz."},
+    {"path": "sensor_defaults.cp_pF", "label": "Capacitance (override)", "unit": "pF", "type": "float", "nullable": true,
+     "tip": "empty = calculated from size, thickness and eps33. A value replaces the calculated sensor capacitance Cp."},
+    {"path": "sensor_defaults.d33_pC_per_N", "label": "d33 charge constant", "unit": "pC/N", "type": "float", "tip": "Steminc SM311: 600 pC/N."},
+    {"path": "sensor_defaults.force_gain", "label": "Force gain", "unit": "", "type": "float", "tip": "Scales the applied force (sensitivity scatter, force coupling)."}
+   ]
+  },
+  {
+   "group": "Bias network and supply",
+   "items": [
+    {"path": "circuit.vdd_v", "label": "Supply VDD", "unit": "V", "type": "float",
+     "tip": "System rail (3.3 V). An ideal buffer has no rails; VDD only sets the ADC range: -VDD/2 .. +VDD/2 with the bias on ground, 0 .. VDD with the bias on VMID."},
+    {"path": "circuit.bias_to", "label": "Bias resistor goes to", "unit": "", "type": "choice", "choices": ["ground", "vmid"],
+     "tip": "ground (default): the sensor node rests at 0 V and swings both ways, the ADC range is -VDD/2 .. +VDD/2 (-1.65 .. +1.65 V). vmid: the node rests at the VMID level and the ADC range is 0 .. VDD (0 .. 3.3 V)."},
+    {"path": "circuit.vmid_v", "label": "VMID reference", "unit": "V", "type": "float", "tip": "Level of the VMID source (used when the bias goes to VMID)."},
+    {"path": "circuit.r_bias_ohm", "label": "Bias resistor", "unit": "ohm", "type": "float",
+     "tip": "From the sensor node / buffer input to ground or VMID. With Cp it sets the decay time constant of the signal."},
+    {"path": "circuit.initial_sensor_node_v", "label": "Initial sensor node voltage", "unit": "V", "type": "float", "nullable": true,
+     "tip": "Start condition of the sensor node. Empty = the bias level (0 V on ground, VMID otherwise)."}
+   ]
+  },
+  {
+   "group": "ADC (ideal)",
+   "items": [
+    {"path": "adc.bits", "label": "Resolution (ADC-Out)", "unit": "bit", "type": "int",
+     "tip": "Bits of the derived ADC-Out value (default 12). LSB = (range span) / 2^bits; the span is VDD in both bias modes."}
+   ]
+  }
+ ],
+ "system": [
+  {
+   "group": "ADC sampling",
+   "items": [
+    {"path": "adc.sampling_rate_hz", "label": "ADC sampling rate", "unit": "Hz", "type": "float",
+     "tip": "The buffer output is sampled instantly every 1/rate. Type 50k for 50 kHz. The number of conversions is run duration x rate."},
+    {"path": "adc.t_first_sample_us", "label": "First sample at", "unit": "us", "type": "float",
+     "tip": "Time of the first conversion; the next ones follow every sampling period."}
+   ]
+  }
+ ],
+ "simulation": [
+  {
+   "group": "Measurement time",
+   "items": [
+    {"path": "simulation.run_duration_ms", "label": "Run duration", "unit": "ms", "type": "float",
+     "tip": "Length of the simulated time. Make it long enough for the force profile and for several conversions at the chosen rate."}
+   ]
+  },
+  {
+   "group": "Solver",
+   "items": [
+    {"path": "simulation.max_step_us", "label": "Maximum time step", "unit": "us", "type": "float", "nullable": true,
+     "tip": "Empty = automatic: 1/20 of the sampling period and 1/1000 of the run. The conversion instants and the force corners are solver breakpoints, so a coarser step stays accurate."},
+    {"path": "simulation.reltol", "label": "Relative tolerance", "unit": "", "type": "float",
+     "tip": "QSPICE solver tolerance. The QSPICE default 1e-3 leaves ~0.5 mV of error on a 0.5 V signal; 1e-6 brings it below 0.1 mV (below an LSB up to about 14 bit). Raise it for very long runs."}
+   ]
+  },
+  {
+   "group": "ADC output",
+   "items": [
+    {"path": "simulation.adc_noise_mV", "label": "White noise (RMS)", "unit": "mV", "type": "float",
+     "tip": "RMS (standard deviation) of independent Gaussian white noise added to the ADC input value at every conversion, before quantisation: v_out = quant(v_in + N(0, sigma)). It is applied at the conversion instants, so it needs no new simulation. 0 = off."},
+    {"path": "simulation.noise_seed", "label": "Noise seed", "unit": "", "type": "int",
+     "tip": "Seed of the noise generator: the same seed gives the same noise, so runs stay repeatable and comparable against a held reference."}
+   ]
+  }
+ ],
+ "tables": [
+  {
+   "path": "forces",
+   "title": "Input profile: force pulses",
+   "tip": "One row per trapezoidal force pulse on the sensor (address 0). Rows add up. With the bias on ground the swing limit is about 0.17 N for a 0.7 mm sensor (open circuit, before the bias resistor drains it).",
+   "columns": [
+    {"key": "address", "label": "Sensor address", "type": "int", "min": 0, "max": 0},
+    {"key": "t_start_us", "label": "Start [us]", "type": "float"},
+    {"key": "rise_us", "label": "Rise [us]", "type": "float"},
+    {"key": "width_us", "label": "Hold [us]", "type": "float"},
+    {"key": "fall_us", "label": "Fall [us]", "type": "float"},
+    {"key": "amp_N", "label": "Amplitude [N]", "type": "float"}
+   ],
+   "new_row": {"address": 0, "t_start_us": 100.0, "rise_us": 40.0, "width_us": 250.0, "fall_us": 40.0, "amp_N": 0.1}
+  },
+  {
+   "path": "forces_sin",
+   "title": "Input profile: sine waves",
+   "add_label": "Add sin",
+   "tip": "One row per sinusoidal force on the sensor (address 0): F = amplitude x sin(2 pi f t) for the given number of cycles starting at Start (zero before and after). Rows add up and also add to the pulses above.",
+   "columns": [
+    {"key": "address", "label": "Sensor address", "type": "int", "min": 0, "max": 0},
+    {"key": "t_start_us", "label": "Start [us]", "type": "float"},
+    {"key": "freq_hz", "label": "Frequency [Hz]", "type": "float", "min": 0},
+    {"key": "cycles", "label": "Cycles", "type": "float", "min": 0},
+    {"key": "amp_N", "label": "Amplitude [N]", "type": "float"}
+   ],
+   "new_row": {"address": 0, "t_start_us": 100.0, "freq_hz": 1000.0, "cycles": 3, "amp_N": 0.05}
+  }
+ ],
+ "plot_groups": [
+  {"id": "adc", "title": "ADC input [V]"},
+  {"id": "force", "title": "Applied force [N]"},
+  {"id": "other", "title": "Other nodes [V]"}
+ ],
+ "nodes": [
+  {"name": "ain", "label": "AIN (buffer output = ADC input)", "group": "adc", "default": true},
+  {"name": "p0", "label": "Sensor node / buffer input", "group": "adc"},
+  {"name": "vmid", "label": "VMID (bias on VMID only)", "group": "adc"},
+  {"name": "f0", "label": "Force on the sensor", "group": "force"}
+ ],
+ "sample_marker": {"node": "ain", "label": "ADC samples"},
+ "adc_out": {
+  "node": "ain",
+  "label": "ADC-Out (quantised)",
+  "group": "adc",
+  "channels": 1,
+  "bits_path": "adc.bits",
+  "vref_path": "circuit.vdd_v",
+  "vmid_path": "circuit.vmid_v",
+  "bipolar_rails": true,
+  "noise_mv_path": "simulation.adc_noise_mV",
+  "noise_seed_path": "simulation.noise_seed"
+ },
+ "force_calc": {
+  "enabled": true,
+  "force_node": "f{k}",
+  "force_tables": ["forces", "forces_sin"]
+ }
+}

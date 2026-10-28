@@ -158,8 +158,27 @@ class Model:
         the resolution from the live configuration (changing it only re-derives the ADC output, it needs no new run)."""
         spec = self.adc_out
         live = run_cfg if live_cfg is None else live_cfg
-        return AdcParams(bits=int(_get(live, spec["bits_path"])), vref=float(_get(run_cfg, spec["vref_path"])),
-                         vmid=float(_get(run_cfg, spec["vmid_path"])))
+        bits = int(_get(live, spec["bits_path"]))
+        rng = self._adc_range(run_cfg)
+        if rng is not None:
+            return AdcParams(bits=bits, vref=float(rng["v_high"]), vmid=float(rng.get("rest_v", 0.0)), low=float(rng["v_low"]))
+        return AdcParams(bits=bits, vref=float(_get(run_cfg, spec["vref_path"])), vmid=float(_get(run_cfg, spec["vmid_path"])))
+
+    @property
+    def has_adc_range(self) -> bool:
+        """The adapter defines the ADC range itself (``adc_range``), so the vref / vmid paths are not the range."""
+        return callable(getattr(self.adapter, "adc_range", None))
+
+    def _adc_range(self, cfg: dict) -> dict | None:
+        """Optional adapter.adc_range(cfg) -> {"v_low", "v_high", "rest_v"}: a range that is not 0 .. Vref / -Vref .. +Vref."""
+        return dict(self.adapter.adc_range(copy.deepcopy(cfg))) if self.has_adc_range else None
+
+    def rest_voltage(self, cfg: dict) -> float:
+        """Voltage the sensor node rests at (VMID, or ground for a bias to ground): the force calculation starts from it."""
+        rng = self._adc_range(cfg)
+        if rng is not None and "rest_v" in rng:
+            return float(rng["rest_v"])
+        return float(_get(cfg, self.adc_out["vmid_path"]))
 
     def all_paths(self) -> list[str]:
         paths = []

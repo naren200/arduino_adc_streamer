@@ -504,8 +504,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _calculate_force(self, table: SampleTable, notes: list[str] | None = None,
                          channels: list[int] | None = None) -> dict[int, ChannelForce]:
         r = self.result
-        vmid = float(get_path(r.cfg, self.model.adc_out["vmid_path"]))
         try:
+            vmid = self.model.rest_voltage(r.cfg)
             return compute_all(table, self._extraction_channels(table) if channels is None else channels,
                                self.model.sensor_info(r.cfg), self.force, vmid, self._applied_force, self._applied_peak)
         except ValueError as exc:
@@ -936,7 +936,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _range_warnings(self) -> list[str]:
         """A model that cannot switch to a bipolar supply keeps its single rails: values below 0 V are clipped by the ADC."""
         spec = self.model.adc_out
-        if not spec or spec.get("bipolar_rails"):
+        if not spec or spec.get("bipolar_rails") or self.model.has_adc_range:
             return []
         try:
             vmid = float(get_path(self.cfg, spec["vmid_path"]))

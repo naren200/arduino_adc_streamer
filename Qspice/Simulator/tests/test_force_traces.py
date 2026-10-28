@@ -186,6 +186,16 @@ def test_log_scale_shows_magnitudes_and_survives_zeros_and_negatives(window):
     window.log_checks["fratio"].setChecked(False)
 
 
+def test_unit_in_a_panel_title_becomes_an_axis_unit_so_pyqtgraph_writes_mV_not_x0_001(window):
+    from qspice_sim.gui.plot_panel import split_units
+    assert split_units("ADC input [V]") == ("ADC input", "V")
+    assert split_units("Applied force [N]") == ("Applied force", "N")
+    assert split_units("Force ratio") == ("Force ratio", None) and split_units("Counts [code]") == ("Counts [code]", None)
+    tick(window, "fcal_ch2")
+    axis = next(p for p in window.plot._panels if not p["log"])["plot"].getAxis("left")
+    assert axis.labelUnits == "N" and axis.labelText == "Calculated force"
+
+
 def test_ratio_panel_has_a_marker_at_one_in_linear_and_log_mode(window):
     tick(window, "fratio_ch2")
 
