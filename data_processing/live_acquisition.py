@@ -6,6 +6,7 @@ import time
 from PyQt6.QtCore import QTimer, QCoreApplication, QEventLoop
 
 from data_processing.acquisition_worker import AcquisitionWorker
+from data_processing.normal_force_recorder import ensure_normal_force_recorder
 
 
 class LiveAcquisitionMixin:
@@ -47,7 +48,8 @@ class LiveAcquisitionMixin:
         self._block_timing_file = None
         worker = AcquisitionWorker(self.array_capture_descriptor, self._capture_generation,
             self.buffer_lock, self.MAX_SWEEPS_BUFFER, self._archive_writer,
-            ghost_enabled=self.should_remove_pzt_ghost(), attenuation=self.pzt_ghost_attenuation)
+            ghost_enabled=self.should_remove_pzt_ghost(), attenuation=self.pzt_ghost_attenuation,
+            normal_force_recorder=ensure_normal_force_recorder(self))
         self._acquisition_worker = worker
         self.samples_per_sweep = worker.width
         self.raw_data_buffer, self.processed_data_buffer, self.sweep_timestamps_buffer = worker.raw, worker.processed, worker.times

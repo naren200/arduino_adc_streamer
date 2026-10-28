@@ -58,6 +58,9 @@ class CaptureLifecycleMixin:
         state = get_force_runtime_state(self)
         state.data.clear()
         state.start_time = None
+        normal_force_recorder = getattr(self, "normal_force_recorder", None)
+        if normal_force_recorder is not None:
+            normal_force_recorder.clear()
 
     def _restart_force_baseline_measurement_if_connected(self):
         """Re-zero the force baseline from fresh raw samples at capture start."""

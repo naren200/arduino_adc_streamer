@@ -13,6 +13,7 @@ import numpy as np
 from PyQt6.QtWidgets import QMessageBox
 
 from config.boards.capture import adc_resolution_bits, attach_capture_context
+from constants.force import PRESSURE_MAP_NORMAL_FORCE_COLUMN, PRESSURE_MAP_NORMAL_FORCE_SENSOR
 from constants.pzt_rs import extract_archive_rs_units, get_pzt_rs_ohms_per_wire_unit
 from data_processing.force_state import get_force_runtime_state
 from data_processing.adc_mux_timing import adc_mux_timing_log, calculate_adc_mux_timing_for_acquisition
@@ -21,6 +22,7 @@ from file_operations.force_export_alignment import (
     build_force_export_series,
     format_export_clock_time,
     get_nearest_force_values,
+    get_nearest_normal_force,
     resolve_export_start_datetime,
 )
 from file_operations.export_metadata import build_vmid_noise_metadata
@@ -35,11 +37,13 @@ def build_export_row(
     is_555_mode,
     force_series,
     export_start_datetime,
+    normal_force_series=None,
 ):
     """Build one CSV row: RS rounding, column selection, time columns, force values.
 
     Shared by the archive-streaming and in-memory export paths so their column
-    layouts cannot drift apart.
+    layouts cannot drift apart. ``normal_force_series`` adds one trailing
+    Pressure Map Normal force cell (blank where nothing was recorded).
     """
     row = np.asarray(sweep).tolist()
     if rs_round_indices:
@@ -52,6 +56,9 @@ def build_export_row(
     if is_555_mode:
         row.insert(1, float(row_time if row_time is not None else 0.0))
     row.extend(list(get_nearest_force_values(force_series, row_time)))
+    if normal_force_series is not None:
+        normal_force_n = get_nearest_normal_force(normal_force_series, row_time)
+        row.append("" if normal_force_n is None else normal_force_n)
     return row
 
 
@@ -149,6 +156,30 @@ class DataExporterMixin:
                 else "Ground sampling was disabled, so no ground-read time is included."
             ),
             "timing_source": "Capture-wide MCU block timestamps",
+        }
+
+    def _build_normal_force_export_series(self):
+        """Return the recorded Pressure Map Normal force for the displayed array, if any."""
+        recorder = getattr(self, "normal_force_recorder", None)
+        if recorder is None:
+            return None
+        array_id = getattr(self, "display_array_id", 1)
+        return recorder.series([f"A{array_id}_{PRESSURE_MAP_NORMAL_FORCE_SENSOR}", PRESSURE_MAP_NORMAL_FORCE_SENSOR])
+
+    @staticmethod
+    def _build_normal_force_metadata(normal_force_series) -> dict:
+        recorded = normal_force_series is not None
+        return {
+            "included_in_csv": recorded,
+            "column_name": PRESSURE_MAP_NORMAL_FORCE_COLUMN if recorded else None,
+            "sensor": PRESSURE_MAP_NORMAL_FORCE_SENSOR,
+            "units": "N",
+            "recorded_sweeps": int(len(normal_force_series.timestamps_s)) if recorded else 0,
+            "source": "Live Pressure Map package Normal force, sampled once per sweep",
+            "note": (
+                "Blank cells mark sweeps before the Pressure Map force display produced a value. "
+                "The force display only runs while the Pressure Map tab has been shown during capture."
+            ),
         }
 
     def _show_save_data_notice(self, label_text: str = "Saving data...") -> None:
@@ -378,6 +409,7 @@ class DataExporterMixin:
         apply_filter: bool,
         rs_round_indices: list | None = None,
         export_column_indices: list[int] | None = None,
+        normal_force_series=None,
     ):
         """Stream archived sweeps to CSV, optionally filtering in bounded chunks."""
         chunk_size = 4096
@@ -448,6 +480,7 @@ class DataExporterMixin:
                     is_555_mode=is_555_mode,
                     force_series=force_series,
                     export_start_datetime=export_start_datetime,
+                    normal_force_series=normal_force_series,
                 ))
                 saved_index += 1
 
@@ -625,7 +658,8 @@ class DataExporterMixin:
 
             force_state = get_force_runtime_state(self)
             force_series = build_force_export_series(force_state.data)
-            archive_metadata = self._read_archive_metadata(archive_path) if archive_path is not None else {}
+            normal_force_series = self._build_normal_force_export_series()
+            archive_metadata =self._read_archive_metadata(archive_path) if archive_path is not None else {}
             archive_metadata_block = archive_metadata.get("metadata", {})
             archive_start_time_iso = None
             if isinstance(archive_metadata_block, dict):
@@ -690,6 +724,8 @@ class DataExporterMixin:
                 if is_555_mode:
                     header.insert(1, "Timestamp_s")
                 header.extend(["Force_X_N", "Force_Z_N"])
+                if normal_force_series is not None:
+                    header.append(PRESSURE_MAP_NORMAL_FORCE_COLUMN)
                 writer.writerow(header)
 
                 # Precompute capture duration for approximate timestamp mapping
@@ -711,6 +747,7 @@ class DataExporterMixin:
                         apply_filter=bool(applied_filter_to_csv),
                         rs_round_indices=rs_round_indices,
                         export_column_indices=export_column_indices,
+                        normal_force_series=normal_force_series,
                     )
                 else:
                     # Determine how many sweeps will be saved (respecting range selection)
@@ -734,6 +771,7 @@ class DataExporterMixin:
                             is_555_mode=is_555_mode,
                             force_series=force_series,
                             export_start_datetime=export_start_datetime,
+                            normal_force_series=normal_force_series,
                         ))
 
                     saved_index = saved_total
@@ -788,6 +826,7 @@ class DataExporterMixin:
                     "calibration_offset_z": force_state.calibration_offset['z'],
                     "note": "Force data not available" if not force_state.data else "Force data synchronized with ADC samples and exported in Newtons (calibrated to zero at connection)"
                 },
+                "pressure_map_normal_force": self._build_normal_force_metadata(normal_force_series),
                 "row_timestamp": {
                     "included_in_csv": True,
                     "column_name": "Timestamp",

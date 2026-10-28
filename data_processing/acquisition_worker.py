@@ -16,8 +16,10 @@ from data_processing.pzt_ghost_removal import PztGhostRemovalMixin
 
 
 class AcquisitionWorker(threading.Thread, PztGhostRemovalMixin, PztBlipFilterMixin):
-    def __init__(self, descriptor, generation, buffer_lock, capacity, writer, *, ghost_enabled=False, attenuation=0.1):
+    def __init__(self, descriptor, generation, buffer_lock, capacity, writer, *, ghost_enabled=False, attenuation=0.1,
+                 normal_force_recorder=None):
         super().__init__(name='ADCAcquisition', daemon=True)
+        self.normal_force_recorder = normal_force_recorder
         self.descriptor = deepcopy(descriptor)
         self.generation = generation
         self.buffer_lock = buffer_lock
@@ -267,7 +269,9 @@ class AcquisitionWorker(threading.Thread, PztGhostRemovalMixin, PztBlipFilterMix
         if force['revision'] != self._force_signature:
             from data_processing.force_block_worker import ForceBlockWorker
             from data_processing.pressure_force_display import PressureForceDisplayEngine
-            self._force_consumer = ForceBlockWorker(PressureForceDisplayEngine(geometry=force['geometry'], settings=force['settings']))
+            self._force_consumer = ForceBlockWorker(
+                PressureForceDisplayEngine(geometry=force['geometry'], settings=force['settings']),
+                self.normal_force_recorder)
             self._force_signature = force['revision']
         from data_processing.force_block_worker import ForceBlockBatch
         baselines = force['baselines']

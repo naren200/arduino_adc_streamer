@@ -329,6 +329,10 @@ class PressureForceDisplayEngine:
         package.accumulated_force_grid_n = np.zeros_like(package.accumulated_force_grid_n)
         package.applied_load_n = 0.0
 
+    def normal_forces_n(self) -> dict[str, float]:
+        """Return each package's current displayed Normal force without copying grids."""
+        return {sensor_id: float(state.normal_force_n) for sensor_id, state in self._packages.items()}
+
     def package_results(self) -> list[ForceMapPackageResult]:
         return [
             ForceMapPackageResult(

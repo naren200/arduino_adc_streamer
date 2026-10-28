@@ -215,6 +215,7 @@ from constants.shear import (
 )
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
 from data_processing.normal_force_calculator import NormalForceCalculator, NormalForceResult
+from data_processing.normal_force_recorder import ensure_normal_force_recorder
 from data_processing.pressure_map_generator import PressureMapGenerator, PressureMapResult
 from data_processing.pressure_map_array_generator import (
     PressureMapArrayGenerator,
@@ -1627,7 +1628,7 @@ class PressureMapPanelMixin:
         self._pressure_force_last_processed_sweep_count = int(getattr(self, "sweep_count", 0))
         worker = getattr(self, "_force_worker", None)
         if worker is None:
-            self._force_worker = ForceBlockWorker(new_engine)
+            self._force_worker = ForceBlockWorker(new_engine, ensure_normal_force_recorder(self))
             self._force_worker.result_ready.connect(lambda r: self._on_force_result_ready(r))
             self._force_worker.worker_error.connect(self._on_force_worker_error)
             self._force_worker.start()

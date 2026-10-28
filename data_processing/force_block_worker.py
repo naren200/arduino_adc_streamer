@@ -8,6 +8,7 @@ from enum import Enum
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from data_processing.normal_force_recorder import NormalForceRecorder
 from data_processing.pressure_force_display import PressureForceDisplayEngine
 
 
@@ -61,9 +62,12 @@ class ForceBlockWorker(QThread):
     result_ready = pyqtSignal(object)
     worker_error = pyqtSignal(str)
 
-    def __init__(self, engine: PressureForceDisplayEngine) -> None:
+    def __init__(
+        self, engine: PressureForceDisplayEngine, normal_force_recorder: NormalForceRecorder | None = None
+    ) -> None:
         super().__init__()
         self._engine = engine
+        self._normal_force_recorder = normal_force_recorder
         self._queue: queue.Queue[object] = queue.Queue(maxsize=1)
         self._state = WorkerState.RUNNING
 
@@ -215,6 +219,14 @@ class ForceBlockWorker(QThread):
         """Integrate every sweep in batch through the force engine."""
         for row_index in range(batch.sweeps.shape[0]):
             self._integrate_sweep(batch, row_index)
+            self._record_normal_forces(float(batch.timestamps[row_index]))
+
+    def _record_normal_forces(self, sweep_timestamp_s: float) -> None:
+        """Log each package's displayed Normal force against the archived sweep time."""
+        if self._normal_force_recorder is None:
+            return
+        for sensor_id, normal_force_n in self._engine.normal_forces_n().items():
+            self._normal_force_recorder.record(sensor_id, sweep_timestamp_s, normal_force_n)
 
     def _integrate_sweep(self, batch: ForceBlockBatch, row_index: int) -> None:
         """Integrate one sweep (all repeat slots) into the engine."""

@@ -14,6 +14,10 @@ MAX_FORCE_SAMPLES = 50000
 X_FORCE_SENSOR_TO_NEWTON = 44600.0
 Z_FORCE_SENSOR_TO_NEWTON = 44900.0
 
+# Pressure Map package whose live normal force is exported to the capture CSV
+PRESSURE_MAP_NORMAL_FORCE_SENSOR = "PZT3"
+PRESSURE_MAP_NORMAL_FORCE_COLUMN = f"PressureMap_Normal_Force_{PRESSURE_MAP_NORMAL_FORCE_SENSOR}_N"
+
 # Plot-only force deadband
 FORCE_PLOT_ZERO_THRESHOLD_MN = 20.0
 

@@ -12,6 +12,10 @@ from datetime import datetime, timedelta
 import numpy as np
 
 from constants.force import X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
+from data_processing.normal_force_recorder import NormalForceSeries
+
+# Float round-off slack when deciding whether a row time lies inside the recording.
+_RECORDING_SPAN_TOLERANCE_S = 1e-9
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +93,29 @@ def format_export_clock_time(
     offset_s = 0.0 if row_offset_s is None else float(row_offset_s)
     row_datetime = export_start_datetime + timedelta(seconds=offset_s)
     return row_datetime.strftime("%H:%M:%S.%f")
+
+
+def get_nearest_normal_force(
+    normal_force_series: NormalForceSeries | None,
+    sweep_time_s: float | None,
+) -> float | None:
+    """Return the recorded Normal force nearest one row, or None outside the recording.
+
+    Rows before the force display produced its first value (or after its last)
+    have no honest value, so they stay blank instead of being clamped.
+    """
+    if normal_force_series is None or sweep_time_s is None or len(normal_force_series.timestamps_s) == 0:
+        return None
+
+    timestamps = normal_force_series.timestamps_s
+    time_s = float(sweep_time_s)
+    if time_s < timestamps[0] - _RECORDING_SPAN_TOLERANCE_S or time_s > timestamps[-1] + _RECORDING_SPAN_TOLERANCE_S:
+        return None
+
+    insert_at = int(np.searchsorted(timestamps, time_s, side="left"))
+    candidates = range(max(insert_at - 1, 0), min(insert_at + 1, len(timestamps)))
+    closest_index = min(candidates, key=lambda index: abs(float(timestamps[index]) - time_s))
+    return float(normal_force_series.normal_force_n[closest_index])
 
 
 def get_nearest_force_values(

@@ -19,7 +19,11 @@ from typing import Iterable, Mapping
 
 import numpy as np
 
-from constants.force import X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
+from constants.force import (
+    PRESSURE_MAP_NORMAL_FORCE_COLUMN,
+    X_FORCE_SENSOR_TO_NEWTON,
+    Z_FORCE_SENSOR_TO_NEWTON,
+)
 from constants.plotting import IADC_RESOLUTION_BITS
 from constants.pressure_map import DEFAULT_HPF_CUTOFF_HZ, DEFAULT_INTEGRATION_WINDOW_SAMPLES
 from constants.shear import SHEAR_SENSOR_POSITIONS
@@ -34,7 +38,9 @@ from data_processing.signal_integrator import SignalIntegrator
 
 
 ANALYSIS_TIMESTAMP_COLUMNS = {"timestamp", "timestamp_s"}
-ANALYSIS_FORCE_COLUMNS = {"force_x", "force_z", "force_x_n", "force_z_n"}
+ANALYSIS_FORCE_COLUMNS = {
+    "force_x", "force_z", "force_x_n", "force_z_n", PRESSURE_MAP_NORMAL_FORCE_COLUMN.lower(),
+}
 
 
 @dataclass(slots=True)
