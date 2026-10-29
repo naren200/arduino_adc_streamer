@@ -351,6 +351,31 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.assertAlmostEqual(right[1], 0.0)
         self.assertFalse(abs(right[0] - center[0]) < 4.8 and abs(right[1] - center[1]) < 2.6)
 
+    def test_force_array_mask_raster_is_reused_until_the_mask_changes(self):
+        x_values = np.linspace(-5.0, 5.0, 21)
+        y_values = np.linspace(-5.0, 5.0, 21)
+
+        def frame(frame_id):
+            grid = np.zeros((y_values.size, x_values.size))
+            return ForceMapArrayResult(
+                force_grid_n=grid, magnitude_force_grid_n=grid.copy(),
+                x_coordinates_mm=x_values, y_coordinates_mm=y_values,
+                package_centers={}, frame_id=frame_id,
+            )
+
+        square = ((-3.0, -3.0), (3.0, -3.0), (3.0, 3.0), (-3.0, 3.0))
+        smaller_square = ((-2.0, -2.0), (2.0, -2.0), (2.0, 2.0), (-2.0, 2.0))
+        self.widget.configure_mask(mask_enabled=True, mask_points_mm=square)
+
+        with patch("gui.pressure_map_widget.mask_inside_grid", wraps=mask_inside_grid) as raster:
+            self.widget.update_force_array_display(frame(1), [])
+            self.widget.update_force_array_display(frame(2), [])
+            self.assertEqual(raster.call_count, 1)
+
+            self.widget.configure_mask(mask_points_mm=smaller_square)
+            self.widget.update_force_array_display(frame(3), [])
+            self.assertEqual(raster.call_count, 2)
+
     def test_update_display_skips_unchanged_image_upload(self):
         normal_result = self.calculator.compute({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
         pressure_result = self.generator.generate(normal_result.normalized)
