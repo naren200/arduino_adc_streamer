@@ -1400,7 +1400,7 @@ class PressureMapPanelMixin:
         layout.addWidget(QLabel("Force refresh:"), 7, 0)
         self.force_refresh_rate_spin = QSpinBox()
         self.force_refresh_rate_spin.setRange(1, 60)
-        self.force_refresh_rate_spin.setValue(20)
+        self.force_refresh_rate_spin.setValue(int(PZT_FORCE_DEFAULT_SETTINGS["force_refresh_rate_hz"]))
         self.force_refresh_rate_spin.setSuffix(" Hz")
         self.force_refresh_rate_spin.setToolTip(
             "Rate at which accumulated sweeps are dispatched to the force worker. "
@@ -1439,10 +1439,11 @@ class PressureMapPanelMixin:
         return group
 
     def _on_force_refresh_rate_changed(self, _value: int = 0) -> None:
-        """Reset drop counters when refresh rate changes."""
+        """Reset drop counters and persist the rate when it changes."""
         self._force_drop_count = 0
         self._force_drops_per_sec = 0.0
         self._force_drop_window_start = time.monotonic()
+        self.save_last_shear_settings()
 
     def _pzt_force_settings(self) -> dict[str, object]:
         return {
@@ -1455,6 +1456,7 @@ class PressureMapPanelMixin:
             "off_mux_leak_enabled": self._check_bool("force_pzt_off_mux_check", False),
             "off_mux_rleak_ohm": self._spin_float("force_pzt_off_mux_rleak_spin", float(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])),
             "display_max_force_n": self._spin_float("force_display_max_n_spin", float(PZT_FORCE_DEFAULT_SETTINGS["display_max_force_n"])),
+            "force_refresh_rate_hz": self._spin_int("force_refresh_rate_spin", int(PZT_FORCE_DEFAULT_SETTINGS["force_refresh_rate_hz"])),
             "force_arrow_gain_mm_per_n": self._spin_float("force_arrow_gain_spin", float(PZT_FORCE_DEFAULT_SETTINGS["force_arrow_gain_mm_per_n"])),
             "force_arrow_min_threshold_n": self._spin_float("force_arrow_threshold_spin", float(PZT_FORCE_DEFAULT_SETTINGS["force_arrow_min_threshold_n"])),
             "stuck_force_failsafe_enabled": self._check_bool("force_pzt_stuck_failsafe_check", bool(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"])),
@@ -3108,6 +3110,7 @@ class PressureMapPanelMixin:
         changed |= self._set_spin_value("force_pzt_quiet_release_spin", pzt_force, "quiet_hold_release_fraction", float)
         changed |= self._set_spin_value("force_pzt_quiet_hold_spin", pzt_force, "quiet_hold_clear_s", float)
         changed |= self._set_spin_value("force_display_max_n_spin", pzt_force, "display_max_force_n", float)
+        changed |= self._set_spin_value("force_refresh_rate_spin", pzt_force, "force_refresh_rate_hz", int)
         changed |= self._set_spin_value("force_arrow_gain_spin", pzt_force, "force_arrow_gain_mm_per_n", float)
         changed |= self._set_spin_value("force_arrow_threshold_spin", pzt_force, "force_arrow_min_threshold_n", float)
 
