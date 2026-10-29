@@ -1381,6 +1381,25 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness._rebuild_pressure_force_engine()
         self.assertEqual(harness.pressure_force_engine.settings["force_zero_band_min_n"], 0.05)
 
+    def test_force_refresh_rate_round_trips_through_saved_settings(self):
+        harness = SignalIntegrationPanelHarness()
+        self._install_shear_setting_widgets(harness)
+        harness.force_refresh_rate_spin = DummySpinBox(PZT_FORCE_DEFAULT_SETTINGS["force_refresh_rate_hz"])
+
+        self.assertEqual(
+            harness._pzt_force_settings()["force_refresh_rate_hz"],
+            PZT_FORCE_DEFAULT_SETTINGS["force_refresh_rate_hz"],
+        )
+
+        changed = harness._apply_shear_settings({"pzt_force": {"force_refresh_rate_hz": 30}})
+        self.assertTrue(changed)
+        self.assertEqual(harness.force_refresh_rate_spin.value(), 30)
+        self.assertEqual(harness._pzt_force_settings()["force_refresh_rate_hz"], 30)
+
+        # A payload saved before this setting existed must keep the current rate.
+        harness._apply_shear_settings({"pzt_force": {"rleak_ohm": 2e6}})
+        self.assertEqual(harness.force_refresh_rate_spin.value(), 30)
+
     def test_invalid_pzt_force_settings_revert_to_last_good_and_warn(self):
         """An invalid d33 (<= 0) must never crash the engine rebuild: the
         rebuild falls back to the last working settings, the widget that
