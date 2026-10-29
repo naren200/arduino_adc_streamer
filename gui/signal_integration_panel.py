@@ -1776,6 +1776,7 @@ class PressureMapPanelMixin:
             self._force_last_print_time = 0.0
             self._latest_jerk_package_displays = []
             self._jerk_updates_since_dispatch = 0
+        self._reset_force_if_acquisition_layout_changed(block, complete_packages)
         accumulator = self._force_sweep_accumulator
         if not accumulator:
             self._force_accumulator_first_sweep_id = first_sweep_id
@@ -1791,6 +1792,25 @@ class PressureMapPanelMixin:
         self._force_dispatch_accumulated(avg_sample_time_us, complete_packages)
         self._force_update_drop_window(now)
         self._force_maybe_print_drop_warning(now)
+
+    def _reset_force_if_acquisition_layout_changed(
+        self, block: np.ndarray, complete_packages: dict
+    ) -> None:
+        """Drop buffered sweeps and integrals when the selected sensors change.
+
+        Reconfiguring the microcontroller changes the block width and which
+        sensors are read.  Rows of different widths cannot be stacked into one
+        batch, and an integral is meaningless across a different sensor set.
+        """
+        layout = (int(block.shape[1]), tuple(sorted(complete_packages)))
+        previous_layout = getattr(self, "_force_acquisition_layout", None)
+        self._force_acquisition_layout = layout
+        if previous_layout is None or previous_layout == layout:
+            return
+        self._force_sweep_accumulator = []
+        if getattr(self, "pressure_force_engine", None) is not None:
+            self._rebuild_pressure_force_engine()
+            self._render_pressure_force_display()
 
     def _force_dispatch_accumulated(
         self, avg_sample_time_us: float, complete_packages: dict
