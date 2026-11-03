@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "comment": "Boards the CapTest application offers. 'descriptor' is relative to this file's folder; every other path is relative to the repository root (the parent of this folder). Adding a board: see README.md.",
+  "boards": [
+    {
+      "id": "TestBoard_7953",
+      "name": "TestBoard_7953 (4 x ADS7953, Teensy 4.1)",
+      "descriptor": "boards/TestBoard_7953.json",
+      "driver": "captest.boards.testboard_7953",
+      "firmware": {
+        "test_project": "Arduino_Sketches/TestBoard_7953_CapTest",
+        "test_env": "teensy41_captest",
+        "firmware_name": "TestBoard_7953_CapTest",
+        "production_project": "Arduino_Sketches/TestBoard_7953",
+        "production_env": "teensy41",
+        "production_mcu": "TestBoard_7953",
+        "flash_scripts": {
+          "test": "Arduino_Sketches/TestBoard_7953_CapTest/scripts/flash_test",
+          "production": "Arduino_Sketches/TestBoard_7953_CapTest/scripts/flash_production"
+        }
+      },
+      "docs": {
+        "protocol": "docs/architecture/firmware/TESTBOARD_7953_CAPTEST.md",
+        "user_guide": "docs/guides/TESTBOARD_7953_CAPTEST_USER_GUIDE.md",
+        "checklist": "docs/guides/TESTBOARD_7953_CAPTEST_VERIFICATION_CHECKLIST.md"
+      }
+    },
+    {
+      "id": "TestBoard_ADC124",
+      "name": "TestBoard_ADC124 (2 x ADC124S101 + 8 external muxes, Teensy 4.1)",
+      "descriptor": "boards/TestBoard_ADC124.json",
+      "driver": "captest.boards.testboard_adc124",
+      "firmware": {
+        "test_project": "Arduino_Sketches/TestBoard_ADC124_CapTest",
+        "test_env": "teensy41_captest",
+        "firmware_name": "TestBoard_ADC124_CapTest",
+        "production_project": "Arduino_Sketches/TestBoard_ADC124",
+        "production_env": "teensy41",
+        "production_mcu": "TestBoard_ADC124",
+        "diagnostic_mcu": "ADC124_PCB_DIAGNOSTIC",
+        "flash_scripts": {
+          "test": "Arduino_Sketches/TestBoard_ADC124_CapTest/scripts/flash_test",
+          "production": "Arduino_Sketches/TestBoard_ADC124_CapTest/scripts/flash_production"
+        }
+      },
+      "docs": {
+        "protocol": "docs/architecture/firmware/TESTBOARD_ADC124_CAPTEST.md",
+        "user_guide": "docs/guides/TESTBOARD_ADC124_CAPTEST_USER_GUIDE.md",
+        "checklist": "docs/guides/TESTBOARD_ADC124_CAPTEST_VERIFICATION_CHECKLIST.md"
+      }
+    }
+  ]
+}
