@@ -18,7 +18,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from . import capfit, protocol
+from . import baseline as baseline_module, capfit, protocol
 from .boards import DEFAULT_BOARD_ID, BoardDriver, Connection, load_driver
 from .client import CapTestClient
 from .link import LinkError
@@ -43,6 +43,8 @@ class ChannelResult:
     label: str = ""
     group: int = 0                               # grid group (7953: ADC, ADC124: array)
     chart_group: str = ""                        # bar-chart group label
+    baseline: Optional[baseline_module.BaselineEntry] = None   # board baseline of this input, when subtracting
+    baseline_note: str = ""                      # why there is no baseline for this input
 
     def __post_init__(self) -> None:
         if self.ref is None:
@@ -83,6 +85,34 @@ class ChannelResult:
         """False when V0 and the step ratio of the used bursts have no valid basis."""
         return all(m.step_valid for m in self.used)
 
+    @property
+    def c_board_pf(self) -> float:
+        """Board baseline of this input in pF (NaN without one)."""
+        return self.baseline.c_total_pf if self.baseline is not None else float("nan")
+
+    @property
+    def c_net_pf(self) -> float:
+        """C_total minus the board baseline. NaN without a baseline, and when the baseline was
+        taken by another method than this result (they are never subtracted from each other)."""
+        entry = self.baseline
+        total = self.aggregate.mean["c_total"] * 1e12 if self.aggregate else float("nan")
+        if entry is None or self.failed or not np.isfinite(total):
+            return float("nan")
+        if entry.method and entry.method != self.c_total_method:
+            return float("nan")
+        return float(total - entry.c_total_pf)
+
+    @property
+    def net_note(self) -> str:
+        """Why C_net is empty or doubtful ('' when it is fine or no baseline is in use)."""
+        entry = self.baseline
+        if entry is None:
+            return self.baseline_note
+        if entry.method and entry.method != self.c_total_method and not self.failed:
+            return "baseline by %s, result by %s" % (entry.method, self.c_total_method)
+        net = self.c_net_pf
+        return "C_net is not positive" if np.isfinite(net) and net <= 0 else ""
+
     def row(self, tolerance: float = 0.01) -> Dict[str, object]:
         m, s = self.aggregate.mean, self.aggregate.std
         pf = 1e12
@@ -90,6 +120,7 @@ class ChannelResult:
             **self.identity, "tau_us": m["tau"] * 1e6,
             "c_total_pf": m["c_total"] * pf, "c_total_std_pf": s["c_total"] * pf,
             "c_total_method": self.c_total_method,
+            "c_board_pf": self.c_board_pf, "c_net_pf": self.c_net_pf,
             "c_total_tol_pf": m["c_total"] * pf * tolerance if np.isfinite(m["c_total"]) else float("nan"),
             "ratio": m["ratio"], "ratio_std": s["ratio"], "c_d_pf": m["c_d"] * pf,
             "c_share_ratio": m["c_share_ratio"], "c_share_pf": m["c_share"] * pf,
@@ -228,7 +259,52 @@ class MeasurementSession:
         self.on_progress: Callable[[Progress], None] = lambda p: None
         self.on_vinf: Callable[[capfit.VinfReading], None] = lambda reading: None
         self.vinf_readings: Dict[Channel, capfit.VinfReading] = {}
+        self.baseline: Optional[baseline_module.Baseline] = None    # loaded when subtracting
+        self._baseline_reported = False
         self.should_stop: Callable[[], bool] = lambda: False
+
+    # ------------------------------------------------------------ board baseline
+    def active_baseline(self) -> Optional[baseline_module.Baseline]:
+        """The board baseline to subtract: None unless the setting is on and a file exists."""
+        if not self.settings.subtract_baseline:
+            return None
+        if self.baseline is None:
+            try:
+                self.baseline = baseline_module.load(self.settings.board_id)
+            except baseline_module.BaselineError as exc:
+                self.baseline = None
+                self.on_warning("Board baseline not used: %s" % exc)
+        if not self._baseline_reported:
+            self._baseline_reported = True
+            if self.baseline is None:
+                self.on_warning("Subtract board baseline is on, but no baseline is saved for %s: "
+                                "run the channels with no sensor connected and save the results "
+                                "as the board baseline." % self.settings.board_id)
+            else:
+                for note in self.baseline.mismatches(self.settings):
+                    self.on_warning("Board baseline was measured with other settings (%s)." % note)
+        return self.baseline
+
+    def apply_baseline(self, reload: bool = False) -> List[Channel]:
+        """Attach (or remove) the baseline entry of every result, e.g. after the setting changed
+        or a new baseline was saved. Nothing is measured again."""
+        if reload:
+            self.baseline, self._baseline_reported = None, False
+        baseline = self.active_baseline()
+        for result in self.results.values():
+            baseline_module.attach(result, baseline)
+        return list(self.results)
+
+    def save_baseline(self, path=None, source: str = "") -> Path:
+        """Save the current results as the board baseline. Run it after measuring every input
+        with no sensor connected."""
+        done = baseline_module.from_results(list(self.results.values()), self.settings, source)
+        if not done.entries:
+            raise baseline_module.BaselineError("no usable results to save as a baseline")
+        saved = baseline_module.save(done, path)
+        self.baseline, self._baseline_reported = done, True
+        self.apply_baseline()
+        return saved
 
     # --------------------------------------------------------------- boot state
     def refresh_boot(self) -> protocol.DeviceStatus:
@@ -361,6 +437,7 @@ class MeasurementSession:
                                chart_group=driver.chart_group(channel))
         if result.failed:
             result.message = "no usable burst (%s)" % ", ".join(agg.flags)
+        baseline_module.attach(result, self.active_baseline())
         self.results[channel] = result
         for other in self.apply_start_voltage():
             if other != channel:
@@ -590,7 +667,8 @@ class MeasurementSession:
             raws = result.raw_bursts
             if not raws:
                 continue
-            self.results[channel] = analyze_recorded(channel, raws, self.settings, self.driver)
+            self.results[channel] = analyze_recorded(channel, raws, self.settings, self.driver,
+                                                     baseline=self.active_baseline())
             redone.append(channel)
         self.apply_start_voltage()
         if self.latest is not None and self.latest.source is not None:
@@ -779,7 +857,8 @@ def load_raw(path) -> Tuple[Settings, List[RawBurst]]:
 
 def analyze_recorded(channel: Channel, raws: Sequence["RawBurst"], settings: Settings,
                      driver: Optional[BoardDriver] = None,
-                     method: Optional[str] = None) -> ChannelResult:
+                     method: Optional[str] = None,
+                     baseline: Optional[baseline_module.Baseline] = None) -> ChannelResult:
     """Analyse the recorded packets of one channel with `settings` (no device needed).
 
     Bursts of different methods are never averaged together: one method is used (`method`, or
@@ -804,6 +883,7 @@ def analyze_recorded(channel: Channel, raws: Sequence["RawBurst"], settings: Set
                            failed=agg.count == 0, ref=channel, identity=driver.identity(channel),
                            label=driver.display(channel), group=driver.group_of(channel),
                            chart_group=driver.chart_group(channel))
+    baseline_module.attach(result, baseline)
     if result.failed:
         result.message = "no usable burst (%s)" % ", ".join(agg.flags)
     elif capfit.MIXED_METHODS in agg.flags:
@@ -813,8 +893,8 @@ def analyze_recorded(channel: Channel, raws: Sequence["RawBurst"], settings: Set
     return result
 
 
-def reanalyze(path, settings: Optional[Settings] = None,
-              all_methods: bool = False) -> List[ChannelResult]:
+def reanalyze(path, settings: Optional[Settings] = None, all_methods: bool = False,
+              baseline: Optional[baseline_module.Baseline] = None) -> List[ChannelResult]:
     """Offline re-analysis of a saved raw file (optionally with new settings). A channel recorded
     by several methods gives one result of the preferred method (flag MIXED_METHODS), or with
     `all_methods` one result per method."""
@@ -824,14 +904,16 @@ def reanalyze(path, settings: Optional[Settings] = None,
         raise ValueError("raw file is from board %s, settings are for %s"
                          % (saved.board_id, settings.board_id))
     driver = load_driver(settings.board_id)
+    if baseline is None and settings.subtract_baseline:
+        baseline = baseline_module.load(settings.board_id)       # None when none is saved
     grouped: Dict[Channel, List[RawBurst]] = {}
     for raw in bursts:
         grouped.setdefault(raw.ref, []).append(raw)
     results: List[ChannelResult] = []
     for channel, raws in sorted(grouped.items()):
-        result = analyze_recorded(channel, raws, settings, driver)
+        result = analyze_recorded(channel, raws, settings, driver, baseline=baseline)
         if all_methods and len(result.aggregate.methods_seen) > 1:
-            results.extend(analyze_recorded(channel, raws, settings, driver, method=name)
+            results.extend(analyze_recorded(channel, raws, settings, driver, method=name, baseline=baseline)
                            for name in sorted(result.aggregate.methods_seen))
         else:
             results.append(result)

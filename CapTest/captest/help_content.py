@@ -21,6 +21,8 @@ COLUMN_HELP = {
     "c_total_1exp_pf": "tau_1exp / R_bias in pF, from the single-exponential fit to the same retained samples.",
     "c_total_2exp_pf": "tau_slow / R_bias in pF, from the valid two-exponential fit to the same retained samples, even if that fit was not selected. A dash means no valid two-exponential fit.",
     "c_total_method": "How C_total was obtained. tau_over_r: tau / R_bias of one connection. On the TestBoard_7953 this reads low, because a charge moves into the node every frame (FRAME_DEPENDENT), so use it to compare channels, not as a capacitance. vmid_cycles: the 7953 fit of the cycle-to-cycle approach to VMID, which does not depend on the frame period.",
+    "c_board_pf": "Board baseline: the C_total this input read with no sensor connected (PCB routing, the MXO path to the op-amp and the mux and op-amp inputs), from the saved baseline. Empty unless 'Subtract board baseline' is on and the baseline has this input.",
+    "c_net_pf": "C_net = C_total - board baseline of the same input, in pF: the capacitance the sensor and its strip add. It assumes the board and sensor capacitances add (checked on small sensors; on the large ones about 4 pF is left over). Empty without a baseline for this input, or when the baseline was taken by another C_total method (hover the cell for the reason). C_total itself is not changed. The tolerance and standard deviation columns belong to C_total.",
     "ratio": "C_D / C_total = (V0 - V_s0) / (V_D - V_s0). V0 is extrapolated from the selected fit; V_D is the measured pre-connect baseline; V_s0 is the assumed sensor start voltage in Settings. Undefined when the baseline is missing or the denominator is effectively zero. Only physically meaningful when V_s0 and the charge-sharing model are valid. Empty for one connection per burst on the 7953 (FRAME_DEPENDENT) and for Vmid between samples, which reports C_share instead.",
     "ratio_1exp": "(V0_1exp - V_s0) / (V_D - V_s0), using the single-exponential fit. Uses the same baseline and start-voltage assumption as the selected ratio.",
     "ratio_2exp": "(V0_2exp - V_s0) / (V_D - V_s0), using the valid two-exponential fit. A dash means that value is unavailable.",
@@ -163,7 +165,19 @@ def build_help_html(driver, columns, field_specs):
                "alternating one to equal short cycles and the held one to a continuous connection, and the node's offset "
                "below V_D depends on the frame period, so differences between them are expected. VINF_ALT_NOT_SETTLED and "
                "VINF_NOT_SETTLED say the sensor was still moving at the end of the alternating or held burst."),
-        _entry("Charge sharing and assumptions", "C_D / C_total = (V0 - V_s0) / (V_D - V_s0). "
+        _entry("Board baseline (Settings tab)", "The PCB itself adds capacitance to every reading: routing of the "
+               "sensor net, the path from the mux output to the op-amp (longer, and partly through the back "
+               "plane, on some ADCs) and the input parts. It differs per ADC and channel (about 13-19 pF on the "
+               "TestBoard_7953, roughly 0.12 pF per mm of channel route). To measure it, run every input with no "
+               "sensor connected (Auto tab, all channels, a few bursts) and press 'Save current results as "
+               "board baseline'; the file is settings/<board>_baseline.json. With 'Subtract board baseline' on, "
+               "each result also shows its baseline and C_net = C_total - baseline, and the bar chart shows C_net. "
+               "The measured C_total is never changed, and the switch can be turned on or off for results already "
+               "on screen. It is only subtracted between values from the same C_total method, so a baseline taken "
+               "with Vmid between samples does not apply to one-connection results. Take the baseline with the same "
+               "method and frame settings as the measurements (the Settings tab says when they differ). "
+               "Command line: --make-baseline RESULTS.json, --save-baseline, --subtract-baseline."),
+        _entry("Charge sharing and assumptions","C_D / C_total = (V0 - V_s0) / (V_D - V_s0). "
                "C_D is the shared output-node capacitance; the remaining capacitance belongs "
                "to the sensor side. V_s0 is an assumption, not a voltage measured before each "
                "connection. Stored sensor charge, charge injection and timing errors can make "

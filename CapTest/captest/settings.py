@@ -112,6 +112,8 @@ class Settings:
     method: str = "alternate"
     vmid_frames: int = 1
     gap_long_ns: int = 0                   # 0 = automatic, see long_gap_ns
+    # Report C_net = C_total - the board baseline (a run with no sensors, see baseline.py).
+    subtract_baseline: bool = False
     # Used by boards whose mux is switched by GPIO (TestBoard_ADC124).
     board_id: str = DEFAULT_BOARD_ID
     pre_samples: int = 8                   # frames taken before the connection (the V_D baseline)
@@ -187,6 +189,8 @@ class Settings:
         if self.board_id == DEFAULT_BOARD_ID:
             for name in BOARD_EXTRA_FIELDS:
                 data.pop(name)
+        if not self.subtract_baseline:
+            data.pop("subtract_baseline")      # saved files keep their earlier layout unless it is used
         return json.dumps(data, indent=2, sort_keys=True)
 
     @classmethod

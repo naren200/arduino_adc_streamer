@@ -15,7 +15,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui, QtWidgets
 
-from . import __version__, capfit, flasher, runner
+from . import __version__, baseline as baseline_module, capfit, flasher, runner
 from .help_content import COLUMN_HELP, build_help_html
 from . import settings as settings_module
 from .boards import DEFAULT_BOARD_ID, BoardDriver, get_registry, load_driver
@@ -25,7 +25,13 @@ from .settings import Channel, Settings
 from .simbase import SimLink
 
 TOOLTIPS = {
-    "r_bias": "R_bias tolerance maps 1:1 to C_total (C_total = tau / R_bias). Confirm the "
+    "baseline_subtract": "Reports C_net = C_total minus the C_total this input read with no sensor connected "
+                         "(the PCB routing and mux/op-amp path, a few to about 20 pF, different per ADC and "
+                         "channel). Needs a saved board baseline taken by the same method. The C_total columns "
+                         "stay as measured; the bar chart shows C_net while this is on.",
+    "baseline_save": "Stores the results on screen as the board baseline of this board "
+                     "(settings/<board>_baseline.json). Measure every input with NO sensor connected first.",
+    "r_bias":"R_bias tolerance maps 1:1 to C_total (C_total = tau / R_bias). Confirm the "
               "resistor values with a meter.",
     "v_s0": "Assumed sensor start voltage. Use 0 V only when the sensor is known to be uncharged. "
             "A power cycle or the configured discharge wait does not guarantee this.",
@@ -80,6 +86,7 @@ COMMON_COLUMNS: List[Tuple[str, str, str]] = [
     ("Fast part [%]", "fast_pct", "%.0f"),
     ("C_total [pF]", "c_total_pf", "%.2f"), ("+/- tol [pF]", "c_total_tol_pf", "%.2f"),
     ("C_total from", "c_total_method", "%s"),
+    ("Board baseline [pF]", "c_board_pf", "%.2f"), ("C_net [pF]", "c_net_pf", "%.2f"),
     ("C_total vs 1 exp [%]", "c_total_shift_pct", "%+.0f"),
     ("C_total 1 exp [pF]", "c_total_1exp_pf", "%.2f"), ("C_total 2 exp [pF]", "c_total_2exp_pf", "%.2f"),
     ("C_D/C_total", "ratio", "%.3f"),
@@ -638,6 +645,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._field_names.append(name)
             form.addRow(spec.label + ":", widget)
         layout.addLayout(form)
+        layout.addWidget(self._build_baseline_box())
         layout.addWidget(QtWidgets.QLabel("R_bias per channel (%s) [ohm] (editable):" % driver.syntax))
         self.bias_table = QtWidgets.QTableWidget(0, 2)
         self.bias_table.setHorizontalHeaderLabels([driver.syntax, "R_bias [ohm]"])
@@ -653,6 +661,75 @@ class MainWindow(QtWidgets.QMainWindow):
         caveat.setWordWrap(True)
         layout.addWidget(caveat)
         return tab
+
+    def _build_baseline_box(self) -> QtWidgets.QGroupBox:
+        """Board baseline: C_total of every input with no sensor connected, subtracted on request."""
+        box = QtWidgets.QGroupBox("Board baseline (PCB routing capacitance)")
+        layout = QtWidgets.QVBoxLayout(box)
+        self.s_subtract_baseline = QtWidgets.QCheckBox("Subtract board baseline (report C_net = C_total - baseline)")
+        self.s_subtract_baseline.setToolTip(TOOLTIPS["baseline_subtract"])
+        self.s_subtract_baseline.toggled.connect(self.on_subtract_baseline_toggled)
+        layout.addWidget(self.s_subtract_baseline)
+        self.baseline_label = QtWidgets.QLabel()
+        self.baseline_label.setWordWrap(True)
+        layout.addWidget(self.baseline_label)
+        self.baseline_save_button = QtWidgets.QPushButton("Save current results as board baseline...")
+        self.baseline_save_button.setToolTip(TOOLTIPS["baseline_save"])
+        self.baseline_save_button.clicked.connect(self.save_board_baseline)
+        layout.addWidget(self.baseline_save_button)
+        return box
+
+    def refresh_baseline_label(self) -> None:
+        """One line on the saved baseline of this board and whether it is in use."""
+        try:
+            saved = baseline_module.load(self.driver.id)
+            error = ""
+        except baseline_module.BaselineError as exc:
+            saved, error = None, str(exc)
+        if error:
+            text = "Baseline file cannot be used: %s" % error
+        elif saved is None:
+            text = "No board baseline saved for %s. Measure the inputs with no sensor connected, then save the results." % self.driver.id
+        else:
+            text = "Saved baseline: %s." % saved.summary()
+            notes = saved.mismatches(self.settings)
+            if notes:
+                text += " Measured with other settings: %s." % "; ".join(notes)
+        self.baseline_label.setText(text)
+
+    def on_subtract_baseline_toggled(self, checked: bool) -> None:
+        """Switch C_net on or off for the results already on screen (nothing is measured again)."""
+        self.settings.subtract_baseline = bool(checked)
+        self.refresh_baseline_label()
+        if self.session is not None:
+            self.session.settings.subtract_baseline = bool(checked)
+            self.session.apply_baseline(reload=True)
+            self.rebuild_results_view()
+
+    def save_board_baseline(self) -> bool:
+        """Save the results on screen as the board baseline."""
+        if self.session is None or not self.session.results:
+            self.append_log("Nothing to save: measure the inputs with no sensor connected first.")
+            return False
+        if self.worker is not None and self.worker.isRunning():
+            self.append_log("Wait for the running measurement before saving a baseline.")
+            return False
+        count = len([r for r in self.session.results.values() if not r.failed])
+        if not self._confirm(
+                "Save the %d usable results as the board baseline of %s?\n\nThey must come from a run with "
+                "NO sensor connected; the file replaces any earlier baseline." % (count, self.driver.id),
+                "Save board baseline"):
+            return False
+        try:
+            path = self.session.save_baseline(source="GUI")
+        except (baseline_module.BaselineError, OSError) as exc:
+            self.append_log("Cannot save the baseline: %s" % exc)
+            return False
+        self.append_log("Board baseline saved to %s (%s)." % (path, self.session.baseline.summary()))
+        self.refresh_baseline_label()
+        if self.settings.subtract_baseline:
+            self.rebuild_results_view()
+        return True
 
     def _build_help_tab(self) -> QtWidgets.QWidget:
         tab = QtWidgets.QWidget()
@@ -918,6 +995,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 widget.blockSignals(False)
             else:
                 widget.setValue(value)
+        self.s_subtract_baseline.blockSignals(True)
+        self.s_subtract_baseline.setChecked(bool(s.subtract_baseline))
+        self.s_subtract_baseline.blockSignals(False)
+        self.refresh_baseline_label()
         self.auto_bursts.setValue(s.bursts)
         self.manual_bursts.setValue(s.bursts)
         self.auto_per_address.blockSignals(True)
@@ -954,6 +1035,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 setattr(s, name, int(widget.value()))
             else:
                 setattr(s, name, widget.value())
+        s.subtract_baseline = bool(self.s_subtract_baseline.isChecked())
         for row in range(self.bias_table.rowCount()):
             try:
                 s.bias[self.bias_table.item(row, 0).text()] = float(self.bias_table.item(row, 1).text())
@@ -1385,6 +1467,8 @@ class MainWindow(QtWidgets.QMainWindow):
             item.setBackground(colour)
             item.setForeground(QtGui.QColor("#111827"))   # dark text: readable on the pastel row colours in any theme
             item.setData(QtCore.Qt.ItemDataRole.UserRole, channel)
+            if name == "c_net_pf" and result.net_note:
+                item.setToolTip(result.net_note)
             self.table.setItem(row_index, column, item)
 
     # --------------------------------------------------- re-analysis of recorded data
@@ -1487,6 +1571,15 @@ class MainWindow(QtWidgets.QMainWindow):
             previous = r.chart_group
         x = np.array(x)
         c_total = np.array([r.aggregate.mean["c_total"] * 1e12 for r in results])
+        # With a board baseline in use the first chart shows C_net: C_total minus the baseline.
+        net = np.array([r.c_net_pf for r in results])
+        if self.settings.subtract_baseline and np.isfinite(net).any():
+            c_total = net
+            self.bar_total.setTitle("C_net per channel (C_total minus board baseline)")
+            self.bar_total.setLabel("left", "C_net", "pF")
+        else:
+            self.bar_total.setTitle("C_total per channel")
+            self.bar_total.setLabel("left", "C_total", "pF")
         # Vmid between samples gives C_share, an effective connection capacitance, in place of
         # the node capacitance C_D: the second chart shows whichever the row has, and says so.
         shares = [r.c_total_method == capfit.C_TOTAL_VMID_CYCLES for r in results]

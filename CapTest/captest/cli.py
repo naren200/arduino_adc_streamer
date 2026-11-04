@@ -6,7 +6,7 @@ import argparse
 import sys
 from typing import List, Optional, Sequence
 
-from . import runner
+from . import baseline as baseline_module, runner
 from .boards import DEFAULT_BOARD_ID, get_registry
 from .client import CapTestClient
 from .link import RealClock, SerialLink, VirtualClock
@@ -61,19 +61,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vinf", action="store_true",
                    help="Vinf mode (TestBoard_7953): settling voltage measured (alternating with Vmid, held) and calculated of the "
                         "--channels; --csv writes the table")
+    p.add_argument("--subtract-baseline", action="store_true",
+                   help="also report C_net = C_total minus the board baseline saved for the board "
+                        "(settings/<board>_baseline.json)")
+    p.add_argument("--save-baseline", action="store_true",
+                   help="after the run, save its results as the board baseline: run it with no "
+                        "sensor connected")
+    p.add_argument("--make-baseline", metavar="RESULTS.json",
+                   help="save the board baseline from a results JSON of a run with no sensor "
+                        "connected and exit")
     p.add_argument("--reanalyze", metavar="RAW.json", help="re-analyse saved raw bursts offline")
     return p
 
 
 def _table(results: Sequence[runner.ChannelResult], tolerance: float) -> str:
-    lines = ["%-8s %-5s %9s %9s %9s %7s %8s %9s %9s %8s %7s %6s %s" % (
-        "channel", "fit", "tau[us]", "tauF[us]", "Ctot[pF]", "ratio", "CD[pF]", "Cshare[pF]", "Cside[pF]", "res[LSB]",
-        "Vs0[V]", "M", "flags")]
+    net = any(r.baseline is not None for r in results)       # a board baseline is in use: add C_net
+    lines = ["%-8s %-5s %9s %9s %9s %s%7s %8s %9s %9s %8s %7s %6s %s" % (
+        "channel", "fit", "tau[us]", "tauF[us]", "Ctot[pF]", "%9s " % "Cnet[pF]" if net else "", "ratio", "CD[pF]",
+        "Cshare[pF]", "Cside[pF]", "res[LSB]", "Vs0[V]", "M", "flags")]
     for r in results:
         row = r.row(tolerance)
         key = ":".join(str(x) for x in r.ref)
-        lines.append("%-8s %-5s %9.2f %9.2f %9.2f %7.3f %8.2f %9.2f %9.2f %8.2f %7.3f %6d %s" % (
+        lines.append("%-8s %-5s %9.2f %9.2f %9.2f %s%7.3f %8.2f %9.2f %9.2f %8.2f %7.3f %6d %s" % (
             key, row["fit_model"], row["tau_us"], row["tau_fast_us"], row["c_total_pf"],
+            "%9.2f " % row["c_net_pf"] if net else "",
             row["ratio"], row["c_d_pf"], row["c_share_pf"], row["c_sensor_pf"], row["residual_rms_lsb"],
             row["vs0_est_v"], r.aggregate.count, row["flags"]))
     return "\n".join(lines)
@@ -161,7 +172,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(list_boards())
         return 0
     actions = (args.auto or args.channels or args.status or args.detect or args.vmid
-               or args.discharge_check or args.reanalyze or args.vinf)
+               or args.discharge_check or args.reanalyze or args.vinf or args.make_baseline)
     if args.gui or not (actions or args.simulate or args.port):
         from . import gui
         return gui.run(args)
@@ -185,6 +196,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         settings.fit_model = args.fit
     if args.method:
         settings.method = args.method
+    if args.subtract_baseline:
+        settings.subtract_baseline = True
     if args.per_address is not None:
         settings.per_address = args.per_address
     if args.save_settings:
@@ -192,6 +205,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     def log(text: str) -> None:
         print(text, file=sys.stderr)
+
+    if args.make_baseline:
+        try:
+            made = baseline_module.from_results_file(args.make_baseline)
+            path = baseline_module.save(made)
+        except (OSError, ValueError) as exc:
+            print("Cannot make a baseline: %s" % exc, file=sys.stderr)
+            return 2
+        print("Wrote %s (%s)" % (path, made.summary()), file=sys.stderr)
+        return 0
 
     if args.reanalyze:
         results = runner.reanalyze(args.reanalyze, settings if args.settings else None, all_methods=True)
@@ -262,6 +285,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if failed:
             print("%d channel(s) failed: %s" % (
                 len(failed), ", ".join(driver.key(r.ref) for r in failed)))
+            exit_code = 1
+    if args.save_baseline:
+        try:
+            path = session.save_baseline(source="command line")
+            print("Board baseline saved to %s (%s)" % (path, session.baseline.summary()), file=sys.stderr)
+        except baseline_module.BaselineError as exc:
+            print("Cannot save a baseline: %s" % exc, file=sys.stderr)
             exit_code = 1
     for option, save in ((args.out, session.save_results), (args.csv, session.save_csv),
                          (args.raw_out, session.save_raw)):

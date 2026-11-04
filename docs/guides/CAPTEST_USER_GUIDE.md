@@ -65,7 +65,12 @@ python -m captest --board <id> --port COM3 --channels <list in the board's synta
 python -m captest --board <id> --port COM3 --discharge-check <channel>
 python -m captest --board <id> --simulate ...    # emulated board, virtual clock (instant discharge waits); --sim-realtime waits for real
 python -m captest --reanalyze raw.json [--settings s.json] --out results.json
+python -m captest --board <id> --port COM3 --auto --save-baseline    # no sensor connected: board baseline
+python -m captest --board <id> --port COM3 --auto --subtract-baseline # adds c_board_pf and c_net_pf
+python -m captest --make-baseline results_no_sensors.json            # baseline from an earlier results file
 ```
+
+**Board baseline.** The Settings tab has `Subtract board baseline`: the C_total each input reads with no sensor connected (PCB routing, mux and op-amp path), saved in `CapTest/settings/<board id>_baseline.json` from a run with all sensors unplugged (`Save current results as board baseline...`). With it on, the table gets `Board baseline [pF]` and `C_net [pF]` (C_total minus the baseline of the same input), and the bar chart shows C_net. C_total itself is unchanged, and baseline and measurement must use the same C_total method. Only the TestBoard_7953 baseline has been measured so far.
 
 Without `--board` the CLI uses the first board of `boards.json` (or the board of `--settings`). A bare output file name is written to `CapTest/Results/<board id>/`. Exit code 0 = all channels measured, 1 = some channel failed, 2 = the capacitance-test firmware of the selected board is not running.
 
