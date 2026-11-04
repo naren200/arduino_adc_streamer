@@ -22,6 +22,7 @@ always kept so its effect on C_total can be reported.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 
@@ -58,6 +59,12 @@ STAMP_GAP = "STAMP_GAP"                    # ADC124: a stalled frame (interrupt)
 CLOCK_OUT_OF_SPEC = "CLOCK_OUT_OF_SPEC"    # SPI clock outside the ADC's specified range
 SHORT_WINDOW = "SHORT_WINDOW"              # the burst is shorter than 4 tau: raise the sample count
 V0_OUT_OF_RANGE = "V0_OUT_OF_RANGE"        # fitted V0 outside 0..VREF: not physically possible
+FRAME_DEPENDENT = "FRAME_DEPENDENT"        # tau/R_bias depends on the frame period: a relative reading, not a capacitance
+MIXED_METHODS = "MIXED_METHODS"            # bursts taken by different methods: only one method is averaged
+VMID_RESET_FAILED = "VMID_RESET_FAILED"    # Vmid between samples: the node did not return to V_D after a cycle
+VINF_NOT_SETTLED = "VINF_NOT_SETTLED"      # Vinf mode: the held sensor was still moving at the end of the burst
+VINF_ALT_NOT_SETTLED = "VINF_ALT_NOT_SETTLED"  # Vinf mode: the sensor alternating with Vmid was still moving at the end
+UNSTABLE_TAU = "UNSTABLE_TAU"              # tau differs between the repeated bursts of one channel
 
 LOW_AMPLITUDE_LSB = 50.0
 HIGH_RESIDUAL_LSB = 2.0
@@ -76,8 +83,15 @@ FIT_ALT = "alt"                    # Vmid between samples (capalt), see analyze_
 ALT_MIN_DISTANCE_V = 0.006         # alternate fit: cycles still this far below V_D (about 10 LSB)
 ALT_MIN_PAIRS = 6                  # ... at least this many cycle-to-cycle pairs
 ALT_MIN_CONTRAST = 1.2             # longest / shortest connected time needed for tau
+ALT_RESET_TOLERANCE_V = 0.005      # the Vmid reading closing a cycle may differ this much from V_D (board: < 1 mV)
 ALT_MIN_START_V = 0.3              # first sample at least this far below V_D (sensor rested)
 ALT_SMALL_RANGE = "ALT_SMALL_RANGE"  # alternate burst started too close to V_D: excluded
+# How C_total was obtained (exported as c_total_method).
+C_TOTAL_TAU_OVER_R = "tau_over_r"  # tau / R_bias of one connection: a lower bound on the 7953 (frame effect)
+C_TOTAL_VMID_CYCLES = "vmid_cycles"  # tau of the cycle-to-cycle fit with Vmid between samples
+UNSTABLE_TAU_FRACTION = 0.05
+VINF_TAIL_FRACTION = 0.25          # Vinf mode: the median is taken over the last quarter of the held burst ...
+VINF_SETTLE_LSB = 3.0              # ... and must agree with the quarter before it to within this many LSB       # sd / mean of tau over the bursts of a channel
 # The second exponential is only used when it is clearly needed.
 MIN_TAU_RATIO = 1.4                # tau_slow / tau_fast
 MIN_RMS_IMPROVEMENT = 0.85         # rms(2 exp) must be below this fraction of rms(1 exp) ...
@@ -372,6 +386,20 @@ class Measurement:
     other_label: str = ""
     vs0_est_v: float = np.nan           # set by start_voltage_check across the channels of an ADC
     ref: tuple = ()                     # board channel id, e.g. (adc, channel) or (array, mux, input)
+    c_total_method: str = C_TOTAL_TAU_OVER_R
+    # Vmid between samples: the effective connection capacitance at V_D (c0 * C_total) and its
+    # fraction of C_total. It is not the node capacitance C_D, so ratio and c_d stay empty there.
+    c_share_ratio: float = np.nan
+    c_share: float = np.nan
+    # Vmid between samples, one entry per cycle: the connected time accumulated up to the cycle's
+    # last sensor sample (s), the distance below V_D there (V, NaN where the cycle is not usable)
+    # and the fitted model run freely from the first cycle (V).
+    alt_connected_s: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    alt_d_v: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    alt_d_model_v: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    # False: V0, the step ratio and what derives from it (C_D, C sensor, C_PZT) have no valid
+    # basis for this burst. The values stay on the Measurement; aggregate() leaves them out.
+    step_valid: bool = True
     label: str = ""
     pre_t: np.ndarray = field(default_factory=lambda: np.zeros(0))   # pre-connect baseline samples (s, V)
     pre_v: np.ndarray = field(default_factory=lambda: np.zeros(0))
@@ -390,6 +418,10 @@ def analyze_burst(burst: protocol.BurstData, r_bias: float,
     m = Measurement(burst.adc, burst.channel, float(r_bias))
     lsb = settings.vref / 4096.0
     _header_checks(m, burst, settings, since_last_ms, discharge_ms)
+    # On the 7953 tau depends on the frame period (a charge per frame), so tau / R_bias of a
+    # single connection reads low, and V0 does not follow the charge-sharing model.
+    m.step_valid = False
+    m.flags.append(FRAME_DEPENDENT)
 
     # Samples: frame 2+i, discard the first K and any with a wrong tag.
     words = burst.words[protocol.LEAD_FRAMES:]
@@ -447,6 +479,32 @@ def _header_checks(m: Measurement, burst: protocol.BurstData, settings: Analysis
         m.flags.append(NO_VMID)
 
 
+def _alternate_equilibrium(keep: float, curve: float, q: float, tc: np.ndarray, tau: float):
+    """Distances below V_D (d_short, d_long) at which the sensor settles after a short and after
+    a long cycle, from iterating the fitted model d' = exp(-Tc / tau) * (keep d + curve d^2 + q)
+    through the alternating sequence (Tc: mean of the shorter and of the longer half of the
+    connected times). It is the nonlinear model's own fixed cycle, not a constant-Tc formula.
+    A fit whose map has no stable cycle (a positive curvature with a large offset, from noisy
+    data) diverges: the result is (nan, nan) instead of a made-up level."""
+    keep, curve, q, tau = float(keep), float(curve), float(q), float(tau)
+    middle = 0.5 * (tc.min() + tc.max())
+    t_short, t_long = float(tc[tc <= middle].mean()), float(tc[tc > middle].mean())
+    decay_short, decay_long = math.exp(-t_short / tau), math.exp(-t_long / tau)
+    d_short = d_long = 0.0
+    for _ in range(500):
+        d_short_new = decay_short * (keep * d_long + curve * d_long * d_long + q)
+        d_long_new = decay_long * (keep * d_short_new + curve * d_short_new * d_short_new + q)
+        if not (abs(d_short_new) < 100.0 and abs(d_long_new) < 100.0):
+            return float("nan"), float("nan")
+        done = abs(d_short_new - d_short) + abs(d_long_new - d_long) < 1e-9
+        d_short, d_long = d_short_new, d_long_new
+        if done:
+            break
+    else:
+        return float("nan"), float("nan")       # still moving after 500 cycles: no settling level
+    return d_short, d_long
+
+
 def analyze_alternate(burst: protocol.BurstData, r_bias: float,
                       settings: Optional[AnalysisSettings] = None,
                       since_last_ms: Optional[float] = None,
@@ -463,12 +521,14 @@ def analyze_alternate(burst: protocol.BurstData, r_bias: float,
     constant c biased C_total by up to 6 %). One connected time cannot separate c from
     tau, so the burst must contain two (firmware 1.3.0 stretches every second cycle).
     For a given tau the model is linear in (1 - c0), c1 and q; tau is the one that
-    minimises the squared error. C_total = tau / R_bias; C_D reports C_share at V_D.
+    minimises the squared error. C_total = tau / R_bias; c_share reports C_share at V_D (not the
+    node capacitance C_D).
     The sensor start voltage does not enter, but it must leave a range: a sensor that
     starts within ALT_MIN_START_V of V_D (not rested) leaves tau undetermined."""
     settings = settings or AnalysisSettings()
     m = Measurement(burst.adc, burst.channel, float(r_bias))
     m.fit_model_requested = m.fit_model_used = FIT_ALT
+    m.c_total_method = C_TOTAL_VMID_CYCLES
     lsb = settings.vref / 4096.0
     _header_checks(m, burst, settings, since_last_ms, discharge_ms)
     pattern = protocol.alternate_pattern(burst)
@@ -497,14 +557,24 @@ def analyze_alternate(burst: protocol.BurstData, r_bias: float,
     connected = t_all[starts + sensor_run + 1] - t_all[starts + 1]
     valid = tags[last] == burst.channel
     m.t, m.v = t_u[valid], u[valid]
+    # The model starts every cycle from V_D, so the reading that closes a cycle (its last Vmid
+    # frame, tag 15) has to show the node back at V_D. A cycle that did not reset leaves its
+    # successor starting from another level: that pair is left out.
+    reset_index = starts + length - 1
+    reset_ok = tags[reset_index] == protocol.VMID_CHANNEL
+
     m.v0 = float(u[0])
     m.connect_info = {"sensor_frames": float(sensor_run), "vmid_frames": float(vmid_run)}
     if not np.isfinite(m.v_d):
         m.flags.append(FIT_FAILED)
         return m
 
+    reset_ok &= np.abs(volts[reset_index] - m.v_d) <= ALT_RESET_TOLERANCE_V
+    if not reset_ok.all():
+        m.flags.append(VMID_RESET_FAILED)
+        m.connect_info["resets_failed"] = float((~reset_ok).sum())
     d = m.v_d - u
-    k = np.flatnonzero(valid[:-1] & valid[1:] & (d[:-1] > ALT_MIN_DISTANCE_V))
+    k = np.flatnonzero(valid[:-1] & valid[1:] & reset_ok[:-1] & (d[:-1] > ALT_MIN_DISTANCE_V))
     m.n_used = int(len(k))
     m.amplitude_lsb = float(d[0] / lsb)
     if d[0] < ALT_MIN_START_V:
@@ -545,20 +615,32 @@ def analyze_alternate(burst: protocol.BurstData, r_bias: float,
 
     m.tau = m.tau_slow = tau
     m.c_total = tau / r_bias
-    m.ratio = c
-    m.c_d = c * m.c_total
     # C_share is an effective connection capacitance (node plus the connected frame's
-    # per-frame charge), not a capacitance to subtract: C sensor and C_PZT stay empty
-    # until C_n and the sensor-side parasitics are measured (report step 5).
-    short = float(np.exp(-tc.min() / tau))
-    m.vinf = float(m.v_d - short * q / (1.0 - short * (1.0 - c)))    # where the short cycles settle
+    # per-frame charge), not the node capacitance C_D and not a capacitance to subtract: it
+    # has its own fields, and ratio, C_D, C sensor and C_PZT stay empty until C_n and the
+    # sensor-side parasitics are measured (report step 5).
+    m.c_share_ratio = c
+    m.c_share = c * m.c_total
+    d_short, d_long = _alternate_equilibrium(keep, curve, q, tc, tau)
+    m.vinf = float(m.v_d - d_short)      # where the sensor settles after a short cycle
     predicted = m.v_d - np.exp(-connected[1:] / tau) * (keep * d[:-1] + curve * d[:-1] ** 2 + q)
     m.fitted = np.concatenate([[u[0]], predicted])[valid]
+    # For the ln(d) view: d against the connected time only, and the model run from cycle 0
+    # with the measured connected times (errors accumulate instead of restarting at each dot).
+    free = np.empty(len(d))
+    free[0] = d[0]
+    with np.errstate(all="ignore"):
+        for j in range(1, len(d)):
+            free[j] = np.exp(-connected[j] / tau) * (keep * free[j - 1] + curve * free[j - 1] ** 2 + q)
+    m.alt_connected_s = np.cumsum(connected)
+    m.alt_d_v = np.where(valid & (d > 0), d, np.nan)
+    m.alt_d_model_v = np.where(np.isfinite(free) & (free > 0) & (free < 100.0), free, np.nan)
     residuals = (u[k + 1] - predicted[k]) / lsb
     m.residuals_lsb = residuals
     m.residual_rms_lsb = float(np.sqrt(np.mean(residuals ** 2)))
     m.connect_info.update({"q_cycle_pc": float(q * m.c_total * 1e12),
                            "c_share_1v_pf": float((c - curve * 1.0) * m.c_total * 1e12),
+                           "vinf_long_v": float(m.v_d - d_long),
                            "t_short_us": float(tc.min() * 1e6),
                            "t_long_us": float(tc.max() * 1e6), "pairs": float(len(k))})
     if m.amplitude_lsb < LOW_AMPLITUDE_LSB:
@@ -672,6 +754,149 @@ def analyze_record(record: "BurstRecord", r_bias: float,
 
 
 @dataclass
+class VinfReading:
+    """Settling voltage of one sensor in Vinf mode, three ways (volts): measured with the sensor
+    alternating with Vmid as in production (`v_alt`: median of the settled sensor samples),
+    measured with the sensor held connected (`v_held`), and calculated by the
+    Vmid-between-samples fit (`v_calc`)."""
+
+    ref: tuple
+    r_bias: float
+    v_d: float = np.nan             # the Vmid level read before the connection
+    v_alt: float = np.nan           # alternating with Vmid: median of the settled tail (mean over the bursts)
+    v_alt_sd: float = np.nan        # sd of the per-burst medians (needs two bursts)
+    alt_spread_lsb: float = np.nan  # robust spread of the tail samples
+    alt_bursts: int = 0
+    alt_cycles: int = 0             # sensor samples of the last alternating burst
+    v_held: float = np.nan          # held connected: median of the settled tail (mean over the bursts)
+    v_held_sd: float = np.nan
+    held_spread_lsb: float = np.nan
+    v_calc: float = np.nan          # Vinf of the alternating sequence's fitted model
+    tau_calc: float = np.nan
+    bursts: int = 0
+    flags: List[str] = field(default_factory=list)
+    label: str = ""
+    t: np.ndarray = field(default_factory=lambda: np.zeros(0))     # last held burst, s after connection
+    v: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    tail_start_s: float = np.nan
+    alt_t: np.ndarray = field(default_factory=lambda: np.zeros(0))  # last alternating burst: the sensor samples
+    alt_v: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    alt_tail_start_s: float = np.nan
+
+    @property
+    def offset_alt_mv(self) -> float:
+        return (self.v_alt - self.v_d) * 1e3
+
+    @property
+    def alt_minus_calc_mv(self) -> float:
+        return (self.v_alt - self.v_calc) * 1e3
+
+    @property
+    def offset_held_mv(self) -> float:
+        return (self.v_held - self.v_d) * 1e3
+
+    @property
+    def offset_calc_mv(self) -> float:
+        return (self.v_calc - self.v_d) * 1e3
+
+    @property
+    def held_minus_calc_mv(self) -> float:
+        return (self.v_held - self.v_calc) * 1e3
+
+
+def analyze_vinf(burst: protocol.BurstData, r_bias: float,
+                 settings: Optional[AnalysisSettings] = None) -> VinfReading:
+    """Settling voltage of a sensor held connected for the whole burst (a capburst long
+    enough for it to charge): the median of the last VINF_TAIL_FRACTION of the samples. It
+    is only a settling level if the quarter before it agrees (VINF_SETTLE_LSB), otherwise the
+    reading is flagged VINF_NOT_SETTLED. No model is fitted."""
+    settings = settings or AnalysisSettings()
+    reading = VinfReading((burst.adc, burst.channel), float(r_bias))
+    probe = Measurement(burst.adc, burst.channel, float(r_bias))
+    _header_checks(probe, burst, settings, None, 0.0)       # V_D and the header flags
+    reading.v_d, reading.flags = probe.v_d, [f for f in probe.flags if f != TOO_SOON]
+    words = burst.words[protocol.LEAD_FRAMES:]
+    stamps = burst.timestamps
+    if len(words) < 32 or len(stamps) < len(words) + protocol.LEAD_FRAMES:
+        reading.flags += [FEW_SAMPLES, INCOMPLETE]
+        return reading
+    tags = (words >> 12).astype(np.int64)
+    wrong = tags != burst.channel
+    if np.any(wrong[settings.discard_k:]):
+        reading.flags.append(TAG_MISMATCH)
+    fcd = (settings.first_clock_delay_ns if settings.first_clock_delay_ns is not None
+           else burst.first_clock_delay_ns) * 1e-9
+    delta = fcd + 1.5 / burst.spi_clock_hz
+    t_all = protocol.timestamps_to_seconds(stamps, burst.cpu_hz, origin_index=1)
+    t = t_all[protocol.LEAD_FRAMES:protocol.LEAD_FRAMES + len(words)] - delta
+    volts = code_to_volts(words & 0x0FFF, settings.vref)
+    keep = ~wrong
+    keep[:settings.discard_k] = False
+    t, volts = t[keep], volts[keep]
+    reading.t, reading.v = t, volts
+    quarter = int(len(volts) * VINF_TAIL_FRACTION)
+    if quarter < 8:
+        reading.flags += [FEW_SAMPLES]
+        return reading
+    tail, before = volts[-quarter:], volts[-2 * quarter:-quarter]
+    lsb = settings.vref / 4096.0
+    reading.v_held = float(np.median(tail))
+    reading.held_spread_lsb = float(1.4826 * np.median(np.abs(tail - reading.v_held)) / lsb)
+    reading.tail_start_s = float(t[-quarter])
+    reading.bursts = 1
+    if abs(np.median(before) - reading.v_held) > VINF_SETTLE_LSB * lsb:
+        reading.flags.append(VINF_NOT_SETTLED)
+    return reading
+
+
+def analyze_vinf_alternating(burst: protocol.BurstData, r_bias: float,
+                             settings: Optional[AnalysisSettings] = None) -> VinfReading:
+    """Settling voltage of a sensor that alternates with Vmid (capalt with one connected time, as
+    production runs it): the median of the sensor samples in the last VINF_TAIL_FRACTION of the
+    burst, the quiet period after the sensor has settled. Flags: VINF_ALT_NOT_SETTLED when the
+    quarter before it differs by more than VINF_SETTLE_LSB, VMID_RESET_FAILED when a Vmid reading
+    in the tail is more than ALT_RESET_TOLERANCE_V from V_D. No model is fitted."""
+    settings = settings or AnalysisSettings()
+    reading = VinfReading((burst.adc, burst.channel), float(r_bias))
+    probe = Measurement(burst.adc, burst.channel, float(r_bias))
+    _header_checks(probe, burst, settings, None, 0.0)
+    reading.v_d, reading.flags = probe.v_d, list(probe.flags)
+    pattern = protocol.alternate_pattern(burst)
+    n = min(burst.n_samples, burst.n_frames - protocol.LEAD_FRAMES)
+    if pattern is None or n < 32:
+        reading.flags += [FEW_SAMPLES, INCOMPLETE]
+        return reading
+    sensor_run, vmid_run = pattern
+    words = burst.words[protocol.LEAD_FRAMES:protocol.LEAD_FRAMES + n]
+    is_sensor = protocol.alternate_commands_sensor(n, sensor_run, vmid_run)
+    tags = (words >> 12).astype(np.int64)
+    if np.any(tags != np.where(is_sensor, burst.channel, protocol.VMID_CHANNEL)):
+        reading.flags.append(TAG_MISMATCH)
+    volts = code_to_volts(words & 0x0FFF, settings.vref)
+    t_all = protocol.timestamps_to_seconds(burst.timestamps, burst.cpu_hz, origin_index=1)
+    t = t_all[protocol.LEAD_FRAMES:protocol.LEAD_FRAMES + n]
+    sensor = is_sensor & (tags == burst.channel)
+    reading.alt_t, reading.alt_v = t[sensor], volts[sensor]
+    reading.alt_cycles = int(sensor.sum())
+    quarter = int(reading.alt_cycles * VINF_TAIL_FRACTION)
+    if quarter < 8:
+        reading.flags.append(FEW_SAMPLES)
+        return reading
+    tail, before = reading.alt_v[-quarter:], reading.alt_v[-2 * quarter:-quarter]
+    lsb = settings.vref / 4096.0
+    reading.v_alt = float(np.median(tail))
+    reading.alt_spread_lsb = float(1.4826 * np.median(np.abs(tail - reading.v_alt)) / lsb)
+    reading.alt_tail_start_s = float(reading.alt_t[-quarter])
+    reading.alt_bursts = 1
+    if abs(np.median(before) - reading.v_alt) > VINF_SETTLE_LSB * lsb:
+        reading.flags.append(VINF_ALT_NOT_SETTLED)
+    in_tail = (t >= reading.alt_tail_start_s) & ~is_sensor & (tags == protocol.VMID_CHANNEL)
+    if np.any(np.abs(volts[in_tail] - reading.v_d) > ALT_RESET_TOLERANCE_V):
+        reading.flags.append(VMID_RESET_FAILED)
+    return reading
+
+
+@dataclass
 class BurstRecord:
     """Board-neutral burst data of ONE measured channel, input of analyze_record.
 
@@ -703,18 +928,46 @@ class Aggregate:
     mean: Dict[str, float]
     std: Dict[str, float]
     flags: List[str]
+    method: str = C_TOTAL_TAU_OVER_R          # c_total_method of the bursts that were averaged
+    methods_seen: Dict[str, int] = field(default_factory=dict)   # usable bursts per method
 
+
+# Derived from V0 and the step model (see Measurement.step_valid).
+_STEP_FIELDS = ("v0", "ratio", "c_d", "c_sensor_side", "c_pzt", "ratio_1exp", "ratio_2exp",
+                "v0_1exp", "v0_2exp")
 
 _AGG_FIELDS = ("leak_na", "tau", "c_total", "ratio", "c_d", "c_sensor_side", "c_pzt", "v0",
                "vinf", "residual_rms_lsb", "amplitude_lsb", "tau_fast", "tau_slow",
                "fast_fraction", "tau_1exp", "c_total_1exp", "c_total_shift_pct", "v0_1exp",
                "tau_2exp", "c_total_2exp", "ratio_1exp", "ratio_2exp",
-               "v0_2exp", "rms_1exp", "rms_2exp")
+               "v0_2exp", "rms_1exp", "rms_2exp", "c_share_ratio", "c_share")
 
 
-def aggregate(measurements: Sequence[Measurement], v0_rel_tolerance: float = 0.03) -> Aggregate:
-    good = [m for m in measurements if m.ok and np.isfinite(m.tau)]
-    flags: List[str] = sorted({f for m in measurements for f in m.flags})
+def preferred_method(counts: Dict[str, int]) -> str:
+    """The method whose bursts are averaged when a channel has several: the most usable bursts,
+    then Vmid between samples (the one that gives a capacitance)."""
+    if not counts:
+        return C_TOTAL_TAU_OVER_R
+    return max(counts, key=lambda name: (counts[name], name == C_TOTAL_VMID_CYCLES))
+
+
+def aggregate(measurements: Sequence[Measurement], v0_rel_tolerance: float = 0.03,
+              method: Optional[str] = None) -> Aggregate:
+    """Mean and sd over the usable bursts of ONE c_total_method. Bursts taken by different
+    methods (or conditions) measure different things, so their mean has no meaning: with
+    `method` None the preferred method is averaged and the rest are left out, with the flag
+    MIXED_METHODS; pass `method` to average one of them."""
+    usable = [m for m in measurements if m.ok and np.isfinite(m.tau)]
+    seen: Dict[str, int] = {}
+    for m in usable:
+        seen[m.c_total_method] = seen.get(m.c_total_method, 0) + 1
+    explicit = method is not None
+    method = method or preferred_method(seen)
+    good = [m for m in usable if m.c_total_method == method]
+    counted = {id(m) for m in good} | {id(m) for m in measurements} - {id(m) for m in usable}
+    flags: List[str] = sorted({f for m in measurements if id(m) in counted for f in m.flags})
+    if len(seen) > 1 and not explicit:
+        flags.append(MIXED_METHODS)
     mean: Dict[str, float] = {}
     std: Dict[str, float] = {}
     for name in _AGG_FIELDS:
@@ -722,16 +975,24 @@ def aggregate(measurements: Sequence[Measurement], v0_rel_tolerance: float = 0.0
         values = values[np.isfinite(values)]
         mean[name] = float(values.mean()) if len(values) else float("nan")
         std[name] = float(values.std(ddof=1)) if len(values) > 1 else 0.0
+    # Where the step values have no valid basis they are left out, not shown as numbers that
+    # look plausible.
+    if any(not m.step_valid for m in good):
+        for name in _STEP_FIELDS:
+            mean[name], std[name] = float("nan"), float("nan")
     # With Vmid between samples V0 is only the first sample: it follows the sensor's start
     # voltage, which that method does not need.
     alternating = bool(good) and all(m.fit_model_used == FIT_ALT for m in good)
+    if len(good) > 1 and np.isfinite(mean["tau"]) and mean["tau"] > 0:
+        if std["tau"] / mean["tau"] > UNSTABLE_TAU_FRACTION and UNSTABLE_TAU not in flags:
+            flags.append(UNSTABLE_TAU)
     if len(good) > 1 and not alternating and np.isfinite(mean["v0"]) and mean["v0"] != 0:
         if std["v0"] / abs(mean["v0"]) > v0_rel_tolerance and V0_INCONSISTENT not in flags:
             flags.append(V0_INCONSISTENT)
             if VS0_SUSPECT not in flags:
                 flags.append(VS0_SUSPECT)
     first = measurements[0]
-    return Aggregate(first.adc, first.channel, len(good), mean, std, flags)
+    return Aggregate(first.adc, first.channel, len(good), mean, std, flags, method, seen)
 
 
 def start_voltage_check(points: Dict[object, Sequence[float]],

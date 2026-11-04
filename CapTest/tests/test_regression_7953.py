@@ -20,6 +20,8 @@ from captest.sim import SimConfig, SimLink, SimulatedDevice
 ADC1_PACKETS_SHA256 = "117a8cf4dedf5e6d9c866789e8cba64330c5d73934f26d09eb0587c6dbfa59c6"
 FIRST_CHANNELS = {   # (adc, channel): (C_total pF, C_D/C_total) of the recorded run
     (1, 0): (90.5504, 0.13219), (1, 1): (89.8406, 0.13226), (1, 2): (73.256, 0.16472)}
+# C_D/C_total and the values derived from it are no longer exported for the single connection
+# (plan 4.3): the fit still gives the recorded ratio on the measurement itself.
 
 
 def adc1_run():
@@ -42,9 +44,12 @@ def test_simulated_7953_packets_are_bit_identical_to_the_first_version():
 def test_simulated_7953_results_match_the_recording():
     session = adc1_run()
     for ref, (c_total, ratio) in FIRST_CHANNELS.items():
-        mean = session.results[ref].aggregate.mean
-        assert mean["c_total"] * 1e12 == pytest.approx(c_total, abs=2e-4)
-        assert mean["ratio"] == pytest.approx(ratio, abs=2e-5)
+        result = session.results[ref]
+        assert result.aggregate.mean["c_total"] * 1e12 == pytest.approx(c_total, abs=2e-4)
+        assert result.measurements[0].ratio == pytest.approx(ratio, abs=2e-5)
+        row = result.row()
+        assert row["ratio"] != row["ratio"] and row["c_d_pf"] != row["c_d_pf"]      # NaN: not valid
+        assert row["c_total_method"] == "tau_over_r" and "FRAME_DEPENDENT" in row["flags"]
 
 
 def test_7953_files_keep_the_first_version_formats(tmp_path):

@@ -95,30 +95,55 @@ def make_session(**config):
                                      simulated=True), device, settings
 
 
+# The start-voltage check needs V0 to follow the charge-sharing model. The 7953 single
+# connection does not provide that (plan 4.3), so the check is exercised on the ADC124.
+def make_session_124(**config):
+    from helpers124 import make_session as make
+    session, device, _ = make(**config)
+    return session, device
+
+
 def test_start_voltage_flag_marks_only_the_charged_sensor():
-    session, device, _ = make_session(fast_fraction=0.4, c_pzt_spread=0.2, v_s_overrides={"2:3": 0.4},
-                                      leak_tau_s=1e9)
-    session.run_manual([(2, c) for c in range(10)])
+    session, device = make_session_124(v_s_overrides={"2:1:3": 0.4}, leak_tau_s=1e9)
+    session.run_manual([(2, 1, i) for i in range(6)])
     flagged = {c: r.vs0_est_v for c, r in session.results.items() if capfit.VS0_HIGH in r.flags}
-    assert set(flagged) == {(2, 3)}
-    assert flagged[(2, 3)] == pytest.approx(0.4, abs=0.06)
-    others = [r.vs0_est_v for c, r in session.results.items() if c != (2, 3)]
+    assert set(flagged) == {(2, 1, 3)}
+    assert flagged[(2, 1, 3)] == pytest.approx(0.4, abs=0.06)
+    others = [r.vs0_est_v for c, r in session.results.items() if c != (2, 1, 3)]
     assert max(abs(x) for x in others) < 0.03
-    # tau (and therefore the slow-time-constant C_total) is not affected by the start voltage.
-    truth = device.true_values(2, 3)
-    assert session.results[(2, 3)].aggregate.mean["c_total"] == pytest.approx(truth["c_total"], rel=0.05)
+
+
+def test_start_voltage_flag_is_two_sided():
+    session, _ = make_session_124(v_s_overrides={"2:1:2": -0.3}, leak_tau_s=1e9)
+    session.run_manual([(2, 1, i) for i in range(6)])
+    assert capfit.VS0_HIGH in session.results[(2, 1, 2)].flags
+    assert session.results[(2, 1, 2)].vs0_est_v < -capfit.VS0_THRESHOLD_V
 
 
 def test_start_voltage_flag_updates_other_channels_as_results_arrive():
-    session, device, _ = make_session(fast_fraction=0.4, v_s_overrides={"2:1": 0.3}, leak_tau_s=1e9)
+    session, _ = make_session_124(v_s_overrides={"2:1:1": 0.3}, leak_tau_s=1e9)
     seen = []
-    session.on_result = lambda r: seen.append((r.channel, tuple(r.flags)))
-    session.run_manual([(2, c) for c in range(4)])
+    session.on_result = lambda r: seen.append((r.ref, tuple(r.flags)))
+    session.run_manual([(2, 1, i) for i in range(4)])
     assert not any(capfit.VS0_HIGH in flags for _, flags in seen)       # fewer than 5 channels: not judged
-    session.run_manual([(2, c) for c in range(4, 8)])
-    assert capfit.VS0_HIGH in session.results[(2, 1)].flags
+    session.run_manual([(2, 1, 4), (2, 1, 5)])
+    assert capfit.VS0_HIGH in session.results[(2, 1, 1)].flags
     # The earlier channel was re-reported when the flag appeared.
-    assert any(ch == 1 and capfit.VS0_HIGH in flags for ch, flags in seen)
+    assert any(ref == (2, 1, 1) and capfit.VS0_HIGH in flags for ref, flags in seen)
+
+
+def test_7953_single_connection_is_not_judged_for_start_voltage():
+    session, device, _ = make_session(fast_fraction=0.4, v_s_overrides={"2:3": 0.4}, leak_tau_s=1e9)
+    session.run_manual([(2, c) for c in range(10)])
+    for result in session.results.values():
+        assert capfit.VS0_HIGH not in result.flags and np.isnan(result.vs0_est_v)
+        assert capfit.FRAME_DEPENDENT in result.flags and result.c_total_method == "tau_over_r"
+        mean = result.aggregate.mean
+        assert all(np.isnan(mean[name]) for name in ("v0", "ratio", "c_d", "c_sensor_side", "c_pzt"))
+        assert np.isfinite(mean["c_total"])
+    # tau (and therefore the slow-time-constant C_total) is not affected by the start voltage.
+    truth = device.true_values(2, 3)
+    assert session.results[(2, 3)].aggregate.mean["c_total"] == pytest.approx(truth["c_total"], rel=0.05)
 
 
 def test_start_voltage_check_needs_enough_channels():
@@ -160,9 +185,10 @@ def test_recorded_sensor_data_needs_and_gets_two_exponentials():
         assert 18e-6 < slow < 27e-6 and 6e-6 < fast < 12e-6
     shift = np.median([r.aggregate.mean["c_total_shift_pct"] for r in two.values()])
     assert 15 < shift < 35
-    flagged = {c for c, r in two.items() if capfit.VS0_HIGH in r.flags}
-    assert {(2, 3), (3, 8)} <= flagged and len(flagged) <= 6
-    assert two[(2, 3)].vs0_est_v == pytest.approx(0.39, abs=0.08)
+    # Single connections: the step values and the start-voltage check are not exported.
+    assert not any(capfit.VS0_HIGH in r.flags for r in two.values())
+    assert all(capfit.FRAME_DEPENDENT in r.flags for r in two.values())
+    assert all(np.isnan(r.aggregate.mean["ratio"]) for r in two.values())
 
 
 def _settings(model):
@@ -202,21 +228,22 @@ def test_switching_the_fit_model_reanalyses_without_new_measurements():
 
 
 def test_reanalysis_keeps_a_failed_channel_and_start_voltage_flags():
-    session, device, settings = make_session(fast_fraction=0.4, v_s_overrides={"3:2": 0.35}, leak_tau_s=1e9)
+    session, device = make_session_124(v_s_overrides={"2:1:2": 0.35}, leak_tau_s=1e9)
     original = device._cmd_burst
 
     def flaky(arguments):
-        if arguments.startswith("3 5 "):
+        if arguments.split()[:2] == ["2", "5"]:
             device.corrupt_next_packet = True
         return original(arguments)
 
     device._cmd_burst = flaky
-    session.run_manual([(3, c) for c in range(8)])
-    assert session.failed_channels() == [(3, 5)]
-    settings.fit_model = capfit.FIT_ONE
-    session.reanalyze(settings)
-    assert session.failed_channels() == [(3, 5)]
-    assert capfit.VS0_HIGH in session.results[(3, 2)].flags
+    channels = [(2, 1, i) for i in range(6)]
+    session.run_manual(channels, per_address=False)
+    failed = session.failed_channels()
+    assert failed and capfit.VS0_HIGH in session.results[(2, 1, 2)].flags
+    session.reanalyze(session.settings)
+    assert session.failed_channels() == failed
+    assert capfit.VS0_HIGH in session.results[(2, 1, 2)].flags
 
 
 def test_loaded_raw_results_can_be_reanalysed(tmp_path):

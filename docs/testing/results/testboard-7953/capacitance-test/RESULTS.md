@@ -1,5 +1,7 @@
 # TestBoard_7953 capacitance test: verification results
 
+> **Superseded in part (2026-11-03).** The `C_total`, `C_D/C_total`, `C_D`, `C sensor` and `C_PZT` values below were taken before the gap sweep of 2026-10-30, with one connection per burst and a 300 ms wait. That method reads `tau / R_bias` 1.7-4 times low because a charge moves into the node every frame, and the 300 ms wait does not discharge large sensors. The step values are no longer exported for it, and `VS0_HIGH` is not evaluated for it. Keep these numbers as a record of the first run only. Current method and results: [`TestBoard_7953_capacitance_report.md`](../../../../reports/TestBoard_7953_capacitance_report.md) and [`plan-captest-measurement-revision.md`](../../../../plans/features/plan-captest-measurement-revision.md).
+
 Run 2026-10-23, branch `feature/testboard7953-captest`, firmware git `66d5c95` (+ the uncommitted new project), host Windows 11, PlatformIO 6.2.0, `teensy@6.0.0`, Python 3.11, PyQt6 6.10, numpy 2.3 (no scipy). Design and protocol: [`TESTBOARD_7953_CAPTEST.md`](../../../../architecture/firmware/TESTBOARD_7953_CAPTEST.md).
 
 ## Builds

@@ -93,7 +93,8 @@ def test_automatic_mode_first_group_through_the_gui(window, monkeypatch):
     assert window.table.rowCount() == len(channels) and len(window.session.results) == len(channels)
     assert window.progress_bar.value() == len(plan)
     assert window.sim_device.parked and window.sim_device.commands[-1] == "capabort"
-    column = [c[1] for c in window.columns].index("ratio")
+    names = [c[1] for c in window.columns]
+    column = names.index("c_share_ratio" if window.driver.id == "TestBoard_7953" else "ratio")
     ratios = [float(window.table.item(r, column).text()) for r in range(window.table.rowCount())]
     assert all(0.10 < x < 0.25 for x in ratios)
     assert window.data_curve.getData()[0] is not None

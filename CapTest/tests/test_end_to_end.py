@@ -41,7 +41,9 @@ def test_auto_mode_all_channels_order_and_progress():
         truth = device.true_values(r.adc, r.channel)
         assert r.fresh
         assert r.aggregate.mean["c_total"] == pytest.approx(truth["c_total"], rel=0.03)
-        assert abs(r.aggregate.mean["ratio"] - truth["ratio"]) < 0.015
+        # Vmid between samples gives C_share (= the simulated node capacitance), not C_D.
+        assert abs(r.aggregate.mean["c_share_ratio"] - truth["ratio"]) < 0.015
+        assert r.aggregate.mean["ratio"] != r.aggregate.mean["ratio"]
 
 
 def test_auto_mode_subset_of_adcs():
@@ -130,7 +132,8 @@ def test_manual_too_soon_changes_v0_physically():
     first = session.measure_channel((2, 0))
     clock.advance(0.005)
     soon = session.measure_channel((2, 0))
-    assert soon.aggregate.mean["v0"] > first.aggregate.mean["v0"] + 0.02
+    # The single-connection step values are not exported, but each burst still has its V0.
+    assert soon.measurements[0].v0 > first.measurements[0].v0 + 0.02
 
 
 def test_boot_id_reset_restores_fresh_flags():

@@ -48,7 +48,7 @@ def test_automatic_mode_one_adc(window):
     assert window.table.rowCount() == 10
     assert window.progress_bar.value() == 10
     assert window.sim_device.parked
-    col = [c[1] for c in gui.COLUMNS].index("ratio")
+    col = [c[1] for c in gui.COLUMNS].index("c_share_ratio")       # the default method gives C_share
     ratios = [window.table.item(r, col).text() for r in range(10)]
     assert all(0.10 < float(x) < 0.25 for x in ratios)
     assert len(window.session.results) == 10
@@ -128,8 +128,16 @@ def test_export_and_plots(window, tmp_path):
     assert (tmp_path / "r.csv").exists()
     paths = window.export_plot_images(str(tmp_path))
     assert all(os.path.getsize(p) > 0 for p in paths)
+    assert any(p.endswith("ln_d.png") for p in paths)
     results = gui.runner.reanalyze(tmp_path / "raw.json")
     assert len(results) == 2
+    # The ln(d) tab shows the Vmid-between-samples burst, and is emptied for another method.
+    x, y = window.ln_data.getData()
+    assert x is not None and len(x) > 8 and np.isfinite(y).sum() > 8
+    assert window.ln_model.getData()[0] is not None and window.ln_slope.getData()[0] is not None
+    window.show_measurement(capfit.Measurement(2, 0, 1e6))
+    assert window.ln_data.getData()[0] is None or len(window.ln_data.getData()[0]) == 0
+    assert window.ln_plot.titleLabel.text == gui.LN_TITLE_IDLE
 
 
 def test_production_firmware_is_reported_not_failed(app):
@@ -295,3 +303,34 @@ def test_bar_chart_cuts_off_outliers():
     assert list(cut) == [False, False, False, False, True, False]
     assert heights[4] == pytest.approx(1.2 * 250.0) and heights[3] == 250.0 and heights[5] == 0.0   # drawn just above the rest
     assert not gui.clip_outliers(np.array([1.0]))[1].any()
+
+
+def test_vinf_mode_fills_its_own_tab_and_not_the_results_table(window, tmp_path):
+    rows_before = window.table.rowCount()
+    for channel in ((2, 0), (2, 1)):
+        window.channel_boxes[channel].setChecked(True)
+    assert window.vinf_button.isEnabled()
+    assert window.measure_vinf_selected() and window.wait_idle()
+    assert window.table.rowCount() == rows_before                  # the capacitance table is untouched
+    assert window.vinf_table.rowCount() == 2
+    labels = [window.vinf_table.item(r, 0).text() for r in range(2)]
+    assert labels == ["ADC2:0", "ADC2:1"]
+    for column in (2, 4, 6):                                       # alternating, held and calculated Vinf
+        assert 1.2 < float(window.vinf_table.item(0, column).text()) < 1.3
+    for curve in (window.vinf_alt_curve, window.vinf_held_curve, window.vinf_calc_curve):
+        x, y = curve.getData()
+        assert len(x) == 2 and np.isfinite(y).all()
+    assert window.bottom_tabs.currentWidget() is window.vinf_page
+    assert "alternating" in window.log_view.toPlainText()
+    readings = [window.vinf_shown[c] for c in sorted(window.vinf_shown)]
+    gui.runner.write_vinf_csv(readings, window.driver, tmp_path / "v.csv")
+    assert (tmp_path / "v.csv").exists()
+
+
+def test_vinf_button_is_off_for_a_board_without_the_mode(app):
+    win = gui.MainWindow(board_id="TestBoard_ADC124")
+    try:
+        assert not win.vinf_button.isEnabled() and not win.driver.supports_vinf
+        assert not win.measure_vinf_selected()
+    finally:
+        win.close()

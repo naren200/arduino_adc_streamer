@@ -6,6 +6,8 @@ protocol, fit front end and simulator behind the BoardDriver interface.
 
 from __future__ import annotations
 
+import dataclasses
+import math
 from typing import Dict, List, Optional, Sequence
 
 from .. import capfit, protocol
@@ -71,6 +73,59 @@ class Driver7953(BoardDriver):
         burst = client.burst(adc, channel, samples, settings.park_us, settings.gap_ns,
                              settings.first_clock_delay_ns)
         return Outcome(protocol.encode_burst_packet(burst), burst, burst.boot_id)
+
+    # ------------------------------------------------------------------ Vinf mode
+    supports_vinf = True
+    HOLD_TAU_MULTIPLES = 12.0       # held burst length in tau of the guessed capacitance
+    HOLD_MIN_SAMPLES = 256
+
+    def hold_samples(self, settings, ref: Channel, c_total_pf: Optional[float] = None) -> int:
+        """Samples of a held burst: 12 tau of the capacitance (the fitted one, 20 % more, or
+        300 pF when none is known), between 256 and the firmware maximum."""
+        c_pf = 1.2 * c_total_pf if c_total_pf and math.isfinite(c_total_pf) else max(settings.c_guess_pf, 300.0)
+        n = math.ceil(self.HOLD_TAU_MULTIPLES * settings.r_bias(*ref) * c_pf * 1e-12
+                      / settings.nominal_period_s())
+        return max(self.HOLD_MIN_SAMPLES, min(protocol.MAX_SAMPLES, n))
+
+    SETTLE_END_V = 0.003            # settle to within this distance of V_D, then as long again for the quiet tail
+
+    def settle_frames(self, settings, ref: Channel, c_total_pf: Optional[float] = None,
+                      c_share_pf: Optional[float] = None) -> int:
+        """Command frames of an alternating burst long enough for the sensor to settle and then
+        stay quiet for as long again. Each cycle (one sensor frame, Vmid frames) multiplies the
+        distance d below V_D by exp(-T / tau) * (1 - C_share / C_total); from d = V_D to
+        SETTLE_END_V takes N such cycles, and the burst is 2 N cycles. Without a fitted
+        capacitance, as many frames as the firmware allows."""
+        run = 1 + settings.vmid_frames
+        frames = protocol.MAX_SAMPLES
+        if c_total_pf and math.isfinite(c_total_pf) and c_total_pf > 0:
+            share = c_share_pf / c_total_pf if c_share_pf and math.isfinite(c_share_pf) else 0.1
+            share = min(max(share, 0.02), 0.5)
+            tau = settings.r_bias(*ref) * c_total_pf * 1e-12
+            factor = math.exp(-settings.nominal_period_s() / tau) * (1.0 - share)
+            settle = math.ceil(math.log(self.SETTLE_END_V / self.vmid_volts) / math.log(factor))
+            frames = 2 * settle * run
+        return max(64 * run, min(protocol.MAX_SAMPLES, frames))
+
+    def measure_alternating_hold(self, client, connection: Connection, settings, frames: int) -> Outcome:
+        """capalt with one connected time (no long gap): one sensor frame, the Vmid frames,
+        repeated for `frames` frames, as production runs the channels."""
+        adc, channel = connection.reads[0]
+        text = protocol.format_alternate_command(
+            adc, channel, frames, settings.park_us, settings.gap_ns, 1, settings.vmid_frames,
+            settings.first_clock_delay_ns, 0)
+        try:
+            packet = client.burst_packet(text, protocol.HEADER_BYTES, protocol.packet_length_from_header)
+        except protocol.NotOkError as exc:
+            raise protocol.NotOkError(
+                "%s. Vinf mode needs CapTest firmware 1.3.0 or newer; flash it" % exc) from exc
+        burst = protocol.decode_burst_packet(packet)
+        return Outcome(packet, burst, burst.boot_id)
+
+    def measure_hold(self, client, connection: Connection, settings, samples: int) -> Outcome:
+        """One connection held for the whole burst (capburst) of `samples` samples."""
+        return self.measure(client, connection, dataclasses.replace(settings, method="burst",
+                                                                    n_samples=samples))
 
     def decode(self, packet: bytes):
         return protocol.decode_burst_packet(packet)

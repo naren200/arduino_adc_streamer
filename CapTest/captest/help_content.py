@@ -20,10 +20,13 @@ COLUMN_HELP = {
     "c_total_shift_pct": "100 * (C_total / C_total_1exp - 1). Compares the selected model with the single-exponential result. It is zero when the single exponential is used.",
     "c_total_1exp_pf": "tau_1exp / R_bias in pF, from the single-exponential fit to the same retained samples.",
     "c_total_2exp_pf": "tau_slow / R_bias in pF, from the valid two-exponential fit to the same retained samples, even if that fit was not selected. A dash means no valid two-exponential fit.",
-    "ratio": "C_D / C_total = (V0 - V_s0) / (V_D - V_s0). V0 is extrapolated from the selected fit; V_D is the measured pre-connect baseline; V_s0 is the assumed sensor start voltage in Settings. Undefined when the baseline is missing or the denominator is effectively zero. Only physically meaningful when V_s0 and the charge-sharing model are valid.",
+    "c_total_method": "How C_total was obtained. tau_over_r: tau / R_bias of one connection. On the TestBoard_7953 this reads low, because a charge moves into the node every frame (FRAME_DEPENDENT), so use it to compare channels, not as a capacitance. vmid_cycles: the 7953 fit of the cycle-to-cycle approach to VMID, which does not depend on the frame period.",
+    "ratio": "C_D / C_total = (V0 - V_s0) / (V_D - V_s0). V0 is extrapolated from the selected fit; V_D is the measured pre-connect baseline; V_s0 is the assumed sensor start voltage in Settings. Undefined when the baseline is missing or the denominator is effectively zero. Only physically meaningful when V_s0 and the charge-sharing model are valid. Empty for one connection per burst on the 7953 (FRAME_DEPENDENT) and for Vmid between samples, which reports C_share instead.",
     "ratio_1exp": "(V0_1exp - V_s0) / (V_D - V_s0), using the single-exponential fit. Uses the same baseline and start-voltage assumption as the selected ratio.",
     "ratio_2exp": "(V0_2exp - V_s0) / (V_D - V_s0), using the valid two-exponential fit. A dash means that value is unavailable.",
-    "c_d_pf": "C_D = ratio * C_total. Estimates capacitance of the shared MUX output node. It inherits the start-voltage and model assumptions of the ratio.",
+    "c_d_pf": "C_D = ratio * C_total. Estimates capacitance of the shared MUX output node. It inherits the start-voltage and model assumptions of the ratio. Empty for Vmid between samples: its C_share is not this node capacitance (see C_share [pF]).",
+    "c_share_ratio": "Vmid between samples only: C_share / C_total at V_D, the fraction of the sensor-side charge taken at each connection. Fitted as c0 + c1 * d, with d the distance below V_D; this is c0. It is an effective connection factor, not C_D / C_total.",
+    "c_share_pf": "Vmid between samples only: C_share = c0 * C_total at V_D, an effective connection capacitance. It combines the node capacitance with the charge each connected frame moves (about 6.5-6.8 pF at V_D on the four channels checked), so it is NOT the node capacitance C_D and must not be subtracted from C_total as a parasitic until the node part C_n is measured. C sensor and C_PZT stay empty.",
     "c_sensor_pf": "C sensor = C_total - C_D. This is the sensor-side capacitance, including sensor, traces and MUX input parasitics; it is not the bare PZT capacitance.",
     "c_pzt_pf": "C_PZT = C sensor - C parasitic (the Settings value in pF). This is an estimate after assumed parasitics are removed. Negative or implausible values can indicate invalid assumptions or a poor fit.",
     "leak_na": "Leak = (V_D - Vinf) / R_bias * 10^9 nA. Positive means the fitted final level is below the baseline; negative means above. It is an inferred net current, not a direct leakage-current measurement.",
@@ -34,7 +37,7 @@ COLUMN_HELP = {
     "amplitude_lsb": "abs(Vinf - V0) / LSB: the fitted recovery step in ADC counts. A small step makes tau and charge-sharing estimates sensitive to noise.",
     "bursts_used": "Number of usable fitted bursts contributing to this row, which can be less than the requested Bursts per channel. Zero produces a failed/red row.",
     "since_previous_s": "Elapsed seconds since the previous tracked connection before this measurement's first burst. ADC124 also tracks connections caused by reading neighbouring MUXes at the same address. A dash means no earlier connection was tracked.",
-    "fresh": "Yes means no earlier connection was tracked in this measurement session since the last detected board boot. It is software history, not proof that the sensor is discharged; connections before this session are not known.",
+    "fresh": "Yes: no earlier connection of this sensor since the board booted. No: it was connected on this boot, in this session or an earlier one (the connected channels are saved per boot in settings/<board>_session.json). A dash: the app has no complete record of this boot, so the board may have been used before (for example by another tool); it becomes known when the app sees the board reboot. It is software history, not proof that the sensor is discharged.",
     "flags": "Quality warnings from the bursts, plus aggregate/start-voltage checks. Amber rows contain flags; red rows have no usable fitted bursts; green rows have none of the implemented warnings. Green is not independent validation of wiring or calibration.",
 }
 
@@ -72,7 +75,13 @@ FLAG_HELP = {
     capfit.PERIODIC_RESIDUAL: f"A residual spectral line has a period of 2 to {capfit.FRAME_PATTERN_MAX_PERIOD:g} retained-sample intervals, at least 1 LSB amplitude and 20 times the local spectral floor (requires at least 64 samples). Investigate repeating interference or conversion/switching effects; the flag alone does not identify the cause.",
     capfit.TOO_SOON: "The previous tracked connection was less than Discharge time ago, allowing 0.01 ms comparison tolerance. Automatic mode waits; manual mode can produce this warning. A neighbouring MUX's connection counts on ADC124.",
     capfit.VS0_SUSPECT: "The assumed sensor start voltage is suspect because the channel was connected too recently or its fitted V0 varies across repeated bursts. Check actual discharge behaviour before trusting the ratio or separated capacitances.",
-    capfit.VS0_HIGH: f"Cross-channel Vs0 est exceeds {capfit.VS0_THRESHOLD_V:g} V. The estimate needs at least {capfit.VS0_MIN_CHANNELS} usable channels sharing an output node and assumes mostly zero-start sensors. Treat this as a diagnostic warning, not a direct start-voltage measurement.",
+    capfit.VS0_HIGH: f"Cross-channel Vs0 est is more than {capfit.VS0_THRESHOLD_V:g} V from zero, above or below. The estimate needs at least {capfit.VS0_MIN_CHANNELS} usable channels sharing an output node and assumes mostly zero-start sensors. Treat this as a diagnostic warning, not a direct start-voltage measurement.",
+    capfit.FRAME_DEPENDENT: "TestBoard_7953, one connection per burst: tau depends on the frame period, so tau / R_bias reads low (1.7 to 4 times on the sweeps of 2026-10-30) and V0 does not follow the charge-sharing model. V0, C_D/C_total, C_D, C sensor and C_PZT are left empty. Use Vmid between samples for a capacitance.",
+    capfit.VINF_NOT_SETTLED: f"Vinf mode: the median of the last quarter of the held burst differs by more than {capfit.VINF_SETTLE_LSB:g} LSB from the quarter before it, so the sensor was still charging when the burst ended. The measured Vinf is not a settling level; use a sensor with less capacitance or a longer frame period, or check the connection.",
+    capfit.VINF_ALT_NOT_SETTLED: f"Vinf mode: the median of the sensor samples in the last quarter of the alternating burst differs by more than {capfit.VINF_SETTLE_LSB:g} LSB from the quarter before it, so the sensor was still approaching its settling level. The alternating Vinf is not a settled baseline; the burst was sized from the fitted capacitance, so check that fit and the connection.",
+    capfit.UNSTABLE_TAU: f"Across usable repeated bursts of this channel, the sample standard deviation of tau / mean tau exceeds {capfit.UNSTABLE_TAU_FRACTION:.0%}. The channel changes between bursts (history, contact, connection); do not trust its mean until the cause is found.",
+    capfit.MIXED_METHODS: "This channel has usable bursts from more than one method (for example Vmid between samples and one connection per burst). They measure different things, so only the preferred method (most bursts, then Vmid between samples) is averaged; the others are listed in the row's message and left out. Re-analyse from the CLI with all methods to get one row per method.",
+    capfit.VMID_RESET_FAILED: f"Vmid between samples: the Vmid reading that closes a cycle was not within {capfit.ALT_RESET_TOLERANCE_V * 1000:g} mV of V_D (or not tagged Vmid), so the node did not return to V_D. The model assumes it does; the cycle pair that follows is left out of the fit. Check the Vmid frames setting and the node.",
     capfit.V0_INCONSISTENT: "Across usable repeated bursts, sample standard deviation of V0 / abs(mean V0) exceeds 3%. Also adds VS0_SUSPECT. Investigate changing sensor charge, motion or unstable connection conditions.",
     capfit.VINF_OFFSET: f"The magnitude of the inferred net leakage exceeds {capfit.MAX_LEAK_NA:g} nA: abs((V_D - Vinf) / R_bias). Check the baseline, leakage paths and extrapolated final voltage.",
     capfit.NO_VMID: "No valid pre-connect VMID baseline was available. A recovery time constant may still fit, but ratios and derived C_D/sensor capacitances are unavailable. On ADC124, check Pre-connect frames and baseline data; on 7953, check the VMID-tagged responses.",
@@ -135,11 +144,25 @@ def build_help_html(driver, columns, field_specs):
                "the sensor sample of cycle k and d_k = V_D - U_k: d_(k+1) = exp(-Tc / tau) * ((1 - c) * d_k + q), "
                "Tc the connected time of the next cycle from the time stamps. For each tau the model is "
                "linear in (1 - c) and q; the tau with the smallest squared error is used. C_total = tau / "
-               "R_bias, C_D column = C_share = c * C_total (the charge taken per connection, as a "
+               "R_bias, C_share = c * C_total (the charge taken per connection, as a "
                "capacitance reset to V_D). c is fitted as c0 + c1 * d because the once-per-frame charge "
-               "grows with the distance from V_D; the C_D column is C_share at V_D (c0). C_share is an effective connection capacitance, not the node capacitance, so C sensor and C_PZT are left empty for this method. The fit model column reads 'alt'. "
-               "V0 is the first sample; Vinf is where the short cycles settle. The sensor start voltage is "
-               "not used, so the Vs0 check is skipped."),
+               "grows with the distance from V_D; the C_share columns give it at V_D (c0). C_share is an effective connection capacitance, not the node capacitance, so C_D, ratio, C sensor and C_PZT are left empty for this method. The fit model column reads 'alt'. "
+               "V0 is the first sample; Vinf is the level the sensor settles to after a short cycle, found by iterating the fitted model through the short and long cycles (the level after a long cycle is nearer V_D). Every cycle's closing Vmid reading must be within 5 mV of V_D, otherwise the pair of cycles is left out and VMID_RESET_FAILED is set. The sensor start voltage is "
+               "not used, so the Vs0 check is skipped. The ln(d) tab (below the plots) shows ln of the distance d = V_D - sensor at the end of "
+               "each cycle against the connected time only, with the fitted model run freely from the first cycle and a dashed line of slope -1/tau; "
+               "the burst plot's red line instead predicts each point from the previous measured one."),
+        _entry("Vinf mode (TestBoard_7953, Manual tab)", "A separate process from the capacitance measurement. "
+               "Per selected channel and repeat it takes three bursts. (1) A Vmid-between-samples burst: its fit gives the "
+               "calculated Vinf. (2) A long burst that alternates the sensor with Vmid, one connected time, the way production "
+               "runs the channels; the median of the sensor samples in its last quarter, the quiet period after the sensor has "
+               "settled, is the alternating Vinf, the baseline production uses. The burst is sized from the fitted capacitance: "
+               "as long again as the sensor needs to settle to within 3 mV of Vmid, at most the firmware's 2048 frames. "
+               "(3) A burst that holds the sensor connected for about 12 tau; the median of its last quarter is the held Vinf. "
+               "The Vinf tab shows millivolts from Vmid (V_D, the zero line), the three levels and their differences, with the spread over "
+               "repeats; nothing is added to the results table. The calculated level belongs to the long and short cycles, the "
+               "alternating one to equal short cycles and the held one to a continuous connection, and the node's offset "
+               "below V_D depends on the frame period, so differences between them are expected. VINF_ALT_NOT_SETTLED and "
+               "VINF_NOT_SETTLED say the sensor was still moving at the end of the alternating or held burst."),
         _entry("Charge sharing and assumptions", "C_D / C_total = (V0 - V_s0) / (V_D - V_s0). "
                "C_D is the shared output-node capacitance; the remaining capacitance belongs "
                "to the sensor side. V_s0 is an assumption, not a voltage measured before each "

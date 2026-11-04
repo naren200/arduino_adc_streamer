@@ -58,21 +58,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vmid", type=int, metavar="TARGET",
                    help="read the Vmid reading of an ADC (7953) or an array (ADC124)")
     p.add_argument("--discharge-check", metavar="CHANNEL", help="same channel after increasing waits")
+    p.add_argument("--vinf", action="store_true",
+                   help="Vinf mode (TestBoard_7953): settling voltage measured (alternating with Vmid, held) and calculated of the "
+                        "--channels; --csv writes the table")
     p.add_argument("--reanalyze", metavar="RAW.json", help="re-analyse saved raw bursts offline")
     return p
 
 
 def _table(results: Sequence[runner.ChannelResult], tolerance: float) -> str:
-    lines = ["%-8s %-5s %9s %9s %9s %7s %8s %9s %8s %7s %6s %s" % (
-        "channel", "fit", "tau[us]", "tauF[us]", "Ctot[pF]", "ratio", "CD[pF]", "Cside[pF]", "res[LSB]",
+    lines = ["%-8s %-5s %9s %9s %9s %7s %8s %9s %9s %8s %7s %6s %s" % (
+        "channel", "fit", "tau[us]", "tauF[us]", "Ctot[pF]", "ratio", "CD[pF]", "Cshare[pF]", "Cside[pF]", "res[LSB]",
         "Vs0[V]", "M", "flags")]
     for r in results:
         row = r.row(tolerance)
         key = ":".join(str(x) for x in r.ref)
-        lines.append("%-8s %-5s %9.2f %9.2f %9.2f %7.3f %8.2f %9.2f %8.2f %7.3f %6d %s" % (
+        lines.append("%-8s %-5s %9.2f %9.2f %9.2f %7.3f %8.2f %9.2f %9.2f %8.2f %7.3f %6d %s" % (
             key, row["fit_model"], row["tau_us"], row["tau_fast_us"], row["c_total_pf"],
-            row["ratio"], row["c_d_pf"], row["c_sensor_pf"], row["residual_rms_lsb"],
+            row["ratio"], row["c_d_pf"], row["c_share_pf"], row["c_sensor_pf"], row["residual_rms_lsb"],
             row["vs0_est_v"], r.aggregate.count, row["flags"]))
+    return "\n".join(lines)
+
+
+def _vinf_table(readings, driver) -> str:
+    lines = ["%-8s %9s %9s %9s %9s %9s %9s %9s %8s %s" % (
+        "channel", "VD[V]", "alt[V]", "alt-VD", "held[V]", "held-VD", "calc[V]", "calc-VD", "sd[mV]", "flags")]
+    for r in readings:
+        lines.append("%-8s %9.4f %9.4f %+8.1fm %9.4f %+8.1fm %9.4f %+8.1fm %8.2f %s" % (
+            driver.key(r.ref), r.v_d, r.v_alt, r.offset_alt_mv, r.v_held, r.offset_held_mv, r.v_calc,
+            r.offset_calc_mv, r.v_alt_sd * 1e3, " ".join(r.flags)))
     return "\n".join(lines)
 
 
@@ -148,7 +161,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(list_boards())
         return 0
     actions = (args.auto or args.channels or args.status or args.detect or args.vmid
-               or args.discharge_check or args.reanalyze)
+               or args.discharge_check or args.reanalyze or args.vinf)
     if args.gui or not (actions or args.simulate or args.port):
         from . import gui
         return gui.run(args)
@@ -181,7 +194,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(text, file=sys.stderr)
 
     if args.reanalyze:
-        results = runner.reanalyze(args.reanalyze, settings if args.settings else None)
+        results = runner.reanalyze(args.reanalyze, settings if args.settings else None, all_methods=True)
         settings = settings if args.settings else runner.load_raw(args.reanalyze)[0]
         print(_table(results, settings.bias_tolerance))
         if args.out:
@@ -228,6 +241,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         session.on_progress = progress
         results = session.run_auto(groups)
         print(file=sys.stderr)
+    elif args.vinf:
+        if not args.channels or not driver.supports_vinf:
+            print("--vinf needs --channels and a board with a Vinf mode (TestBoard_7953).", file=sys.stderr)
+            return 2
+        readings = session.run_vinf(driver.parse_spec(args.channels))
+        print(_vinf_table(readings, driver))
+        if args.csv:
+            path = resolve_output(args.csv, settings.board_id)
+            runner.write_vinf_csv(readings, driver, path)
+            print("Wrote", path, file=sys.stderr)
+            args.csv = None
+        if any(not (r.alt_bursts or r.bursts) for r in readings):
+            exit_code = 1
     elif args.channels:
         results = session.run_manual(driver.parse_spec(args.channels))
     if results:

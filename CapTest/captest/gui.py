@@ -45,8 +45,8 @@ TOOLTIPS = {
            "other model's C_total is shown as '% vs 1 exp'. How the fast/slow components map to "
            "capacitances is not established.",
     "vs0": "Estimated sensor start voltage from the other channels sharing the same mux-output "
-           "node (needs at least 5 measured channels). VS0_HIGH above 50 mV: the sensor started "
-           "charged, so its V0, C_D/C_total and C_D are unreliable; tau is not affected.",
+           "node (needs at least 5 measured channels). VS0_HIGH beyond +-50 mV: the sensor started "
+           "charged (or the estimate is off), so its V0, C_D/C_total and C_D are unreliable; tau is not affected.",
     "injection": "Charge injection from the Vmid channel switching off makes V_D slightly lower "
                  "than Vmid (unspecified in the datasheet): a few percent effect on the ratio, "
                  "none on tau.",
@@ -63,7 +63,7 @@ TOOLTIPS = {
                    "Unticked: one burst per channel; the other muxes are still connected.",
     "method": "Vmid between samples (TestBoard_7953 default, CapTest firmware 1.3.0): one sensor frame, "
               "then Vmid frames, repeated; every second cycle stays connected longer. Gives C_total and "
-              "C_share from one burst without assuming the sensor start voltage. One connection per burst: "
+              "C_share (an effective connection capacitance, not C_D) from one burst without assuming the sensor start voltage. One connection per burst: "
               "the sensor stays connected for the whole burst and an exponential is fitted.",
     "vmid_frames": "Vmid frames after each sensor frame (Vmid between samples). One resets the node fully.",
     "gap_long": "CS-high gap of the frames during which the sensor is connected in every second cycle "
@@ -79,10 +79,12 @@ COMMON_COLUMNS: List[Tuple[str, str, str]] = [
     ("tau [us]", "tau_us", "%.2f"), ("tau fast [us]", "tau_fast_us", "%.2f"),
     ("Fast part [%]", "fast_pct", "%.0f"),
     ("C_total [pF]", "c_total_pf", "%.2f"), ("+/- tol [pF]", "c_total_tol_pf", "%.2f"),
+    ("C_total from", "c_total_method", "%s"),
     ("C_total vs 1 exp [%]", "c_total_shift_pct", "%+.0f"),
     ("C_total 1 exp [pF]", "c_total_1exp_pf", "%.2f"), ("C_total 2 exp [pF]", "c_total_2exp_pf", "%.2f"),
     ("C_D/C_total", "ratio", "%.3f"),
     ("ratio 1 exp", "ratio_1exp", "%.3f"), ("ratio 2 exp", "ratio_2exp", "%.3f"), ("C_D [pF]", "c_d_pf", "%.2f"),
+    ("C_share/C_total", "c_share_ratio", "%.3f"), ("C_share [pF]", "c_share_pf", "%.2f"),
     ("C sensor [pF]", "c_sensor_pf", "%.2f"), ("C_PZT [pF]", "c_pzt_pf", "%.2f"),
     ("Leak [nA]", "leak_na", "%.1f"), ("V0 [V]", "v0_v", "%.4f"),
     ("Vs0 est [V]", "vs0_est_v", "%+.3f"), ("Vinf [V]", "vinf_v", "%.4f"),
@@ -92,6 +94,11 @@ COMMON_COLUMNS: List[Tuple[str, str, str]] = [
 ]
 COLUMNS: List[Tuple[str, str, str]] = ID_COLUMNS_7953 + COMMON_COLUMNS   # TestBoard_7953 table
 
+
+LN_TITLE_IDLE = "ln(d): Vmid between samples only"
+RATIO_TITLE_STEP = "C_D / C_total"
+RATIO_TITLE_SHARE = "C_share / C_total (effective connection, not C_D)"
+RATIO_TITLE_BOTH = "C_D / C_total (one connection) or C_share / C_total (Vmid between samples)"
 
 BAR_OUTLIER_FACTOR = 10.0     # bars above this multiple of the median are drawn cut off
 BAR_CUT_HEIGHT = 1.2          # ... at this multiple of the tallest bar that is not cut
@@ -174,6 +181,7 @@ class Worker(QtCore.QThread):
     progress = QtCore.pyqtSignal(object)
     burst = QtCore.pyqtSignal(object)
     result = QtCore.pyqtSignal(object)
+    vinf = QtCore.pyqtSignal(object)
     finished_job = QtCore.pyqtSignal(object, str)
 
     def __init__(self, session: runner.MeasurementSession, job: Callable, parent=None):
@@ -192,6 +200,7 @@ class Worker(QtCore.QThread):
         s.on_progress = self.progress.emit
         s.on_burst = self.burst.emit
         s.on_result = self.result.emit
+        s.on_vinf = self.vinf.emit
         s.should_stop = lambda: self._stop
         try:
             value, error = self.job(s), ""
@@ -200,7 +209,7 @@ class Worker(QtCore.QThread):
         # Detach from this worker's signals before it is deleted; later calls from
         # the GUI thread (e.g. refresh_boot) must not touch a dead QObject.
         s.on_log = s.on_warning = lambda text: None
-        s.on_progress = s.on_burst = s.on_result = lambda item: None
+        s.on_progress = s.on_burst = s.on_result = s.on_vinf = lambda item: None
         s.should_stop = lambda: False
         self.finished_job.emit(value, error)
 
@@ -283,10 +292,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         right = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         right.addWidget(self._build_plots())
-        bottom = QtWidgets.QTabWidget()
+        bottom = self.bottom_tabs = QtWidgets.QTabWidget()
         self.table = self._build_table()
         bottom.addTab(self._build_results_page(), "Results")
         bottom.addTab(self._build_bar_chart(), "Bar chart")
+        bottom.addTab(self._build_ln_plot(), "ln(d)")
+        bottom.addTab(self._build_vinf_page(), "Vinf")
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(5000)
@@ -441,6 +452,9 @@ class MainWindow(QtWidgets.QMainWindow):
                       self.pre_curve):
             curve.setData([], [])
         self.burst_plot.setTitle("Latest burst and fit")
+        for curve in (self.ln_data, self.ln_model, self.ln_slope):
+            curve.setData([], [])
+        self.ln_plot.setTitle(LN_TITLE_IDLE)
         self.bar_total.clear()
         self.bar_ratio.clear()
         self.compare_label.setText("")
@@ -562,6 +576,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.measure_selected_button = QtWidgets.QPushButton("Measure selected")
         self.measure_selected_button.clicked.connect(self.measure_selected)
         layout.addWidget(self.measure_selected_button)
+        self.vinf_button = QtWidgets.QPushButton("Measure Vinf of selected (separate mode)")
+        self.vinf_button.setToolTip(
+            "Vinf mode: per channel, a Vmid-between-samples burst (calculated Vinf), a long burst "
+            "alternating the sensor with Vmid (measured Vinf = median of the settled samples, as "
+            "production does for its baseline) and a burst holding the sensor connected. Results go "
+            "to the Vinf tab, not to the capacitance table.")
+        self.vinf_button.clicked.connect(self.measure_vinf_selected)
+        layout.addWidget(self.vinf_button)
         hint = QtWidgets.QLabel(
             "Right-click a channel for 'Measure this channel now'. Tooltips show the time since it "
             "was last connected%s; * marks channels still fresh since power-up."
@@ -678,9 +700,165 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bar_layout = pg.GraphicsLayoutWidget()
         self.bar_total = self.bar_layout.addPlot(row=0, col=0, title="C_total per channel")
         self.bar_total.setLabel("left", "C_total", "pF")
-        self.bar_ratio = self.bar_layout.addPlot(row=1, col=0, title="C_D / C_total")
+        self.bar_ratio = self.bar_layout.addPlot(row=1, col=0, title=RATIO_TITLE_STEP)
         self.bar_ratio.setXLink(self.bar_total)
         return self.bar_layout
+
+    def _build_ln_plot(self) -> QtWidgets.QWidget:
+        """Vmid between samples: ln of the sensor's distance below V_D at the end of each cycle
+        against the connected time only. Disconnected time does not decay the sensor, so the
+        decay is a straight line of slope -1/tau here, with a small step at every connection."""
+        self.ln_layout = pg.GraphicsLayoutWidget()
+        self.ln_plot = self.ln_layout.addPlot(title=LN_TITLE_IDLE)
+        self.ln_plot.setLabel("bottom", "connected time, accumulated over the cycles", "us")
+        self.ln_plot.setLabel("left", "ln(d / 1 V),  d = V_D - sensor")
+        self.ln_plot.addLegend()
+        self.ln_data = self.ln_plot.plot(pen=None, symbol="o", symbolSize=5,
+                                         symbolBrush=(70, 130, 180), name="samples")
+        self.ln_model = self.ln_plot.plot(pen=pg.mkPen((220, 50, 50), width=2), name="fitted model, run freely")
+        self.ln_slope = self.ln_plot.plot(
+            pen=pg.mkPen((150, 150, 150), width=1.5, style=QtCore.Qt.PenStyle.DashLine),
+            name="slope -1/tau from the first sample (no connection loss)")
+        return self.ln_layout
+
+    def show_ln_plot(self, m: capfit.Measurement) -> None:
+        if not len(m.alt_d_v):
+            for curve in (self.ln_data, self.ln_model, self.ln_slope):
+                curve.setData([], [])
+            self.ln_plot.setTitle(LN_TITLE_IDLE)
+            return
+        x = m.alt_connected_s * 1e6
+        y_data = np.log(m.alt_d_v)
+        y_model = np.log(m.alt_d_model_v)
+        self.ln_data.setData(x, y_data, connect="finite")
+        self.ln_model.setData(x, y_model, connect="finite")
+        first = int(np.flatnonzero(np.isfinite(y_data))[0]) if np.isfinite(y_data).any() else None
+        if first is None or not np.isfinite(m.tau):
+            self.ln_slope.setData([], [])
+        else:
+            span = np.array([x[first], x[-1]])
+            self.ln_slope.setData(span, y_data[first] - (span - x[first]) / (m.tau * 1e6))
+        name = self.driver.display(m.ref) if m.ref else "ADC%d:%d" % (m.adc, m.channel)
+        self.ln_plot.setTitle("%s  tau=%.2f us  (dashed: decay at 1/tau only; the dots also lose ln(keep) "
+                              "per connection and level off at the settling level)" % (name, m.tau * 1e6))
+
+    VINF_COLUMNS = (
+        ("Channel", "label", "%s"), ("V_D (Vmid) [V]", "v_d", "%.4f"),
+        ("Vinf alternating [V]", "v_alt", "%.4f"), ("alt - Vmid [mV]", "offset_alt_mv", "%+.1f"),
+        ("Vinf held [V]", "v_held", "%.4f"), ("held - Vmid [mV]", "offset_held_mv", "%+.1f"),
+        ("Vinf calculated [V]", "v_calc", "%.4f"), ("calc - Vmid [mV]", "offset_calc_mv", "%+.1f"),
+        ("alt - calc [mV]", "alt_minus_calc_mv", "%+.1f"), ("held - calc [mV]", "held_minus_calc_mv", "%+.1f"),
+        ("sd alt [mV]", "v_alt_sd_mv", "%.2f"), ("sd held [mV]", "v_held_sd_mv", "%.2f"),
+        ("alt spread [LSB]", "alt_spread_lsb", "%.2f"), ("M", "bursts", "%d"), ("Flags", "flags", "%s"))
+
+    def _build_vinf_page(self) -> QtWidgets.QWidget:
+        """Vinf mode results: each sensor's measured and calculated settling voltage against
+        Vmid (the zero line), and a table."""
+        page = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        bar = QtWidgets.QHBoxLayout()
+        self.vinf_save_button = QtWidgets.QPushButton("Save Vinf CSV")
+        self.vinf_save_button.clicked.connect(self.export_vinf_csv)
+        bar.addWidget(self.vinf_save_button)
+        note = QtWidgets.QLabel(
+            "Alternating: median of the settled sensor samples of a long burst that alternates the sensor with "
+            "Vmid, one connected time, as production does for its baseline. Held: median of the settled end of a "
+            "burst that keeps the sensor connected. Calculated: the settling level of the Vmid-between-samples "
+            "fit (long and short cycles). The frame sequences differ, so differences are expected.")
+        note.setWordWrap(True)
+        bar.addWidget(note, 1)
+        layout.addLayout(bar)
+        self.vinf_layout = pg.GraphicsLayoutWidget()
+        self.vinf_plot = self.vinf_layout.addPlot(title="Vinf against Vmid")
+        self.vinf_plot.setLabel("left", "voltage relative to Vmid (V_D)", "mV")
+        self.vinf_plot.addLegend()
+        self.vinf_plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen((90, 160, 90), width=2)))
+        self.vinf_plot.plot([], [], pen=pg.mkPen((90, 160, 90), width=2), name="Vmid (V_D)")
+        self.vinf_calc_curve = self.vinf_plot.plot(pen=None, symbol="t", symbolSize=9,
+                                                   symbolBrush=(220, 50, 50), name="Vinf calculated")
+        self.vinf_held_curve = self.vinf_plot.plot(pen=None, symbol="s", symbolSize=7,
+                                                   symbolBrush=(150, 150, 150), name="Vinf held")
+        self.vinf_alt_curve = self.vinf_plot.plot(pen=None, symbol="o", symbolSize=9,
+                                                  symbolBrush=(70, 130, 180),
+                                                  name="Vinf alternating (production-like)")
+        self.vinf_error = pg.ErrorBarItem(pen=pg.mkPen((70, 130, 180), width=1.5))
+        self.vinf_plot.addItem(self.vinf_error)
+        self.vinf_table = QtWidgets.QTableWidget(0, len(self.VINF_COLUMNS))
+        self.vinf_table.setHorizontalHeaderLabels([c[0] for c in self.VINF_COLUMNS])
+        self.vinf_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        split.addWidget(self.vinf_layout)
+        split.addWidget(self.vinf_table)
+        layout.addWidget(split, 1)
+        self.vinf_page = page
+        self.vinf_shown: Dict[Channel, capfit.VinfReading] = {}
+        return page
+
+    def on_vinf_reading(self, reading: capfit.VinfReading) -> None:
+        self.vinf_shown[tuple(reading.ref)] = reading
+        self.refresh_vinf_view()
+        self.bottom_tabs.setCurrentWidget(self.vinf_page)
+        self.append_log("%s: Vinf from Vmid: alternating %+.1f mV, held %+.1f mV, calculated %+.1f mV "
+                        "(%d burst%s)%s" % (
+                            reading.label, reading.offset_alt_mv, reading.offset_held_mv, reading.offset_calc_mv,
+                            reading.alt_bursts, "" if reading.alt_bursts == 1 else "s",
+                            "  " + " ".join(reading.flags) if reading.flags else ""))
+
+    def refresh_vinf_view(self) -> None:
+        readings = [self.vinf_shown[c] for c in sorted(self.vinf_shown)]
+        x = np.arange(len(readings), dtype=float)
+        alt = np.array([r.offset_alt_mv for r in readings])
+        held = np.array([r.offset_held_mv for r in readings])
+        calc = np.array([r.offset_calc_mv for r in readings])
+        sd = np.nan_to_num(np.array([r.v_alt_sd for r in readings]) * 1e3)
+        self.vinf_alt_curve.setData(x, alt)
+        self.vinf_held_curve.setData(x, held)
+        self.vinf_calc_curve.setData(x, calc)
+        self.vinf_error.setData(x=x, y=np.nan_to_num(alt), height=2 * sd)
+        self.vinf_plot.getAxis("bottom").setTicks([[(float(i), r.label) for i, r in enumerate(readings)]])
+        self.vinf_table.setRowCount(len(readings))
+        for row, reading in enumerate(readings):
+            values = {"label": reading.label, "v_d": reading.v_d, "v_alt": reading.v_alt,
+                      "offset_alt_mv": reading.offset_alt_mv, "v_held": reading.v_held,
+                      "offset_held_mv": reading.offset_held_mv, "v_calc": reading.v_calc,
+                      "offset_calc_mv": reading.offset_calc_mv,
+                      "alt_minus_calc_mv": reading.alt_minus_calc_mv,
+                      "held_minus_calc_mv": reading.held_minus_calc_mv,
+                      "v_alt_sd_mv": reading.v_alt_sd * 1e3, "v_held_sd_mv": reading.v_held_sd * 1e3,
+                      "alt_spread_lsb": reading.alt_spread_lsb, "bursts": reading.alt_bursts,
+                      "flags": " ".join(reading.flags)}
+            colour = QtGui.QColor("#fee2e2") if not (reading.alt_bursts or reading.bursts) else (
+                QtGui.QColor("#fef3c7") if reading.flags else QtGui.QColor("#dcfce7"))
+            for column, (_, name, fmt) in enumerate(self.VINF_COLUMNS):
+                value = values[name]
+                text = "-" if isinstance(value, float) and not np.isfinite(value) else fmt % value
+                item = QtWidgets.QTableWidgetItem(text)
+                item.setBackground(colour)
+                item.setForeground(QtGui.QColor("#111827"))
+                self.vinf_table.setItem(row, column, item)
+
+    def measure_vinf_selected(self) -> bool:
+        channels = self.selected_channels()
+        if not channels:
+            self.append_log("No channel selected.")
+            return False
+        if not self.driver.supports_vinf:
+            self.append_log("%s has no Vinf mode." % self.driver.name)
+            return False
+        m = int(self.manual_bursts.value())
+        self.vinf_shown.clear()
+        self.refresh_vinf_view()
+        return self.start_job(lambda s: s.run_vinf(channels, m))
+
+    def export_vinf_csv(self) -> None:
+        readings = [self.vinf_shown[c] for c in sorted(self.vinf_shown)]
+        if not readings:
+            self.append_log("No Vinf readings to save.")
+            return
+        path = self._ask_save("Export Vinf CSV", "captest_vinf.csv", "CSV (*.csv)")
+        if path:
+            runner.write_vinf_csv(readings, self.driver, path)
 
     def _build_results_page(self) -> QtWidgets.QWidget:
         """Toolbar (fit model, re-analyse) above the results table."""
@@ -987,6 +1165,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for button in (self.run_auto_button, self.measure_selected_button, self.discharge_button,
                        self.vmid_button, self.remeasure_button):
             button.setEnabled(captest and not busy)
+        self.vinf_button.setEnabled(captest and not busy and self.driver.supports_vinf)
         self.stop_button.setEnabled(busy)
         has_results = self.session is not None and bool(self.session.results)
         self.fit_combo.setEnabled(not busy)
@@ -1051,6 +1230,7 @@ class MainWindow(QtWidgets.QMainWindow):
         worker.progress.connect(self.on_progress)
         worker.burst.connect(self.on_burst)
         worker.result.connect(self.on_result)
+        worker.vinf.connect(self.on_vinf_reading)
         worker.finished_job.connect(self.on_job_finished)
         self.worker = worker
         worker.start()
@@ -1150,8 +1330,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def show_measurement(self, m: capfit.Measurement) -> None:
         fast = "" if not np.isfinite(m.tau_fast) else " (fast %.1f us)" % (m.tau_fast * 1e6)
         name = self.driver.display(m.ref) if m.ref else "ADC%d:%d" % (m.adc, m.channel)
-        self.burst_plot.setTitle("%s  %s  tau=%.2f us%s  C_total=%.2f pF  ratio=%.3f  %s" % (
-            name, m.fit_model_used, m.tau * 1e6, fast, m.c_total * 1e12, m.ratio,
+        share = m.c_total_method == capfit.C_TOTAL_VMID_CYCLES
+        self.burst_plot.setTitle("%s  %s  tau=%.2f us%s  C_total=%.2f pF  %s=%.3f  %s" % (
+            name, m.fit_model_used, m.tau * 1e6, fast, m.c_total * 1e12,
+            "C_share/C_total" if share else "ratio", m.c_share_ratio if share else m.ratio,
             " ".join(m.flags)))
         self.burst_plot.setLabel("bottom", "time since connection", "s")
         self.connect_line.setVisible(True)
@@ -1164,6 +1346,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.other_curve.setData([], [])
             self.resid_curve.setData(m.t[:len(m.residuals_lsb)], m.residuals_lsb)
         self.pre_curve.setData(m.pre_t, m.pre_v)
+        self.show_ln_plot(m)
 
     def on_result(self, result: runner.ChannelResult) -> None:
         self._put_row(result)
@@ -1304,7 +1487,13 @@ class MainWindow(QtWidgets.QMainWindow):
             previous = r.chart_group
         x = np.array(x)
         c_total = np.array([r.aggregate.mean["c_total"] * 1e12 for r in results])
-        ratio = np.array([r.aggregate.mean["ratio"] for r in results])
+        # Vmid between samples gives C_share, an effective connection capacitance, in place of
+        # the node capacitance C_D: the second chart shows whichever the row has, and says so.
+        shares = [r.c_total_method == capfit.C_TOTAL_VMID_CYCLES for r in results]
+        ratio = np.array([r.aggregate.mean["c_share_ratio" if share else "ratio"]
+                          for r, share in zip(results, shares)])
+        self.bar_ratio.setTitle(RATIO_TITLE_SHARE if all(shares)
+                                else RATIO_TITLE_BOTH if any(shares) else RATIO_TITLE_STEP)
         err = np.array([r.aggregate.std["c_total"] * 1e12 for r in results])
         brushes = [pg.mkBrush("#dc2626" if r.failed else "#d97706" if r.flags else "#16a34a")
                    for r in results]
@@ -1411,8 +1600,14 @@ class MainWindow(QtWidgets.QMainWindow):
             fresh = self.session is None or self.session.is_fresh(channel)
             box.setText("%s%s" % (self.driver.cell_label(channel), "*" if fresh else ""))
             name = self.driver.display(channel)
-            if since is None:
+            if fresh is None:
+                box.setToolTip("%s: no record of earlier connections on this boot" % name)
+                box.setStyleSheet("")
+            elif since is None and fresh:
                 box.setToolTip("%s: not connected since power-up (fresh)" % name)
+                box.setStyleSheet("")
+            elif since is None:
+                box.setToolTip("%s: connected in an earlier session on this boot, time not known" % name)
                 box.setStyleSheet("")
             else:
                 soon = since < discharge_s
@@ -1493,7 +1688,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         paths = []
         for name, plot in (("burst_fit", self.burst_plot), ("residuals", self.resid_plot),
-                           ("c_total", self.bar_total), ("ratio", self.bar_ratio)):
+                           ("ln_d", self.ln_plot), ("c_total", self.bar_total), ("ratio", self.bar_ratio)):
             path = str(Path(directory) / (name + ".png"))
             ImageExporter(plot).export(path)
             paths.append(path)

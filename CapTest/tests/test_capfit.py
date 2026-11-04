@@ -141,6 +141,7 @@ def test_aggregate_mean_std_and_v0_inconsistency():
     ms = []
     for seed, v_start in ((1, 0.0), (2, 0.4), (3, 0.8)):
         m, _ = run_channel(470e3, 70, seed=seed, v_s_start=v_start, leak_tau_s=1e9)
+        m.step_valid = True      # the 7953 single connection has none; this tests the V0 check itself
         ms.append(m)
     agg = capfit.aggregate(ms)
     assert agg.count == 3

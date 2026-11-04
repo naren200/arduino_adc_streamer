@@ -56,7 +56,8 @@ def test_auto_mode_all_channels_order_and_progress(board):
         truth = device.true_values(*r.ref)
         assert r.fresh and not r.flags, (r.ref, r.flags)
         assert r.aggregate.mean["c_total"] == pytest.approx(truth["c_total"], rel=0.03), r.ref
-        assert abs(r.aggregate.mean["ratio"] - truth["ratio"]) < 0.015, r.ref
+        name = "c_share_ratio" if r.c_total_method == "vmid_cycles" else "ratio"    # 7953 default: C_share
+        assert abs(r.aggregate.mean[name] - truth["ratio"]) < 0.015, r.ref
 
 
 def test_adc124_automatic_mode_uses_one_burst_per_address_and_both_modes_agree():

@@ -57,6 +57,8 @@ class BoardDriver:
 
     #: set by the registry loader
     entry = None
+    #: Vinf mode (measured settling voltage of a held sensor, next to the calculated one)
+    supports_vinf = False
 
     def __init__(self, descriptor: dict, entry=None):
         self.descriptor = descriptor
