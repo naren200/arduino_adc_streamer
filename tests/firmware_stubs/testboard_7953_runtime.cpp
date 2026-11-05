@@ -29,6 +29,7 @@ struct Device {
   int auto_channel = 15, warmup = 0;
 };
 Device devices[4];
+std::vector<int> manual_channels[4];
 int last_selected[2] = {-1, -1};
 
 // Tagged digital ADC model. It checks CS exclusion and the two-frame manual
@@ -64,6 +65,7 @@ uint16_t emulate_conversion(IMXRT_LPSPI_t *bus, uint16_t command) {
     while (!(d.mask & (1u << d.auto_channel))) ++d.auto_channel;
     d.warmup = 1;
   } else if ((command >> 12) == 1) {
+    manual_channels[selected].push_back((command >> 7) & 15);
     d.automatic = false;
     d.pending[0] = d.pending[1]; d.pending[1] = (command >> 7) & 15;
   }
@@ -179,6 +181,7 @@ int main() {
               auto expected = canonical(routes, order);
               for (int sweep = 0; sweep < 4; ++sweep) {
                 Serial.bytes.clear();
+                for (auto &channels : manual_channels) channels.clear();
                 unsigned before = SPI.begins + SPI1.begins;
                 const unsigned gpio_before = fake_gpio_lookups;
                 const unsigned micros_before = fake_micros_reads;
@@ -187,6 +190,25 @@ int main() {
                 assert(Serial.bytes[0] == 0xaa && Serial.bytes[1] == 0x55 && le16(2) == expected.size());
                 for (size_t index = 0; index < expected.size(); ++index)
                   assert(le16(4 + 2 * index) == 1000 + expected[index].first * 100 + expected[index].second);
+                if (std::string(sequence) == "manual") {
+                  // Check the wire commands as well as payloads: exactly one
+                  // Vmid reset between routes, with two final pipeline clocks.
+                  for (int adc = 0; adc < 4; ++adc) {
+                    std::vector<int> commands;
+                    bool shared_bus = false;
+                    for (auto route : expected) {
+                      if (route.first == (adc ^ 1)) shared_bus = true;
+                      if (route.first != adc) continue;
+                      if (!commands.empty() && vmid) commands.push_back(15);
+                      commands.insert(commands.end(), repeat, route.second);
+                    }
+                    if (!commands.empty()) {
+                      const int tail = vmid || shared_bus ? 15 : commands.back();
+                      commands.insert(commands.end(), 2, tail);
+                    }
+                    assert(manual_channels[adc] == commands);
+                  }
+                }
                 if (std::string(engine) == "lpspi") {
                   assert(fake_gpio_lookups == gpio_before);
 #if !TESTBOARD_PROFILE

@@ -445,6 +445,14 @@ bool PztController::buildManualStream(
   uint8_t last_channel = testboard_config::kDefaultVmidChannel;
   for (uint8_t index = 0; index < plan_count; ++index) {
     if (plan[index].adc != adc) continue;
+    // One Vmid conversion resets the MUX drain node between sensor routes.
+    // The two-frame response latency does not require two reset conversions.
+    if (found && vmid_between_channels_ &&
+        !appendOp(stream,
+                  stream.adc->manualCommand(testboard_config::kDefaultVmidChannel),
+                  true, testboard_config::kDefaultVmidChannel)) {
+      return false;
+    }
     found = true;
     last_channel = plan[index].channel;
     for (uint8_t repeat = 0; repeat < channel_repeat_; ++repeat) {
@@ -454,32 +462,20 @@ bool PztController::buildManualStream(
         return false;
       }
     }
-    if (vmid_between_channels_) {
-      for (uint8_t drain = 0;
-           drain < testboard_config::kAds7953PipelineFrames; ++drain) {
-        if (!appendOp(
-                stream,
-                stream.adc->manualCommand(
-                    testboard_config::kDefaultVmidChannel),
-                true, testboard_config::kDefaultVmidChannel)) {
-          return false;
-        }
-      }
-    }
   }
   if (!found) return true;
 
-  if (!vmid_between_channels_) {
-    const uint8_t drain_channel = park_after
-        ? testboard_config::kDefaultVmidChannel
-        : last_channel;
-    for (uint8_t drain = 0;
-         drain < testboard_config::kAds7953PipelineFrames; ++drain) {
-      if (!appendOp(
-              stream, stream.adc->manualCommand(drain_channel), true,
-              drain_channel)) {
-        return false;
-      }
+  // Flush the final sensor result once per ADC scan. Keep both tail frames:
+  // they also leave the ADC parked when Vmid sampling or bus handoff needs it.
+  const uint8_t drain_channel = (vmid_between_channels_ || park_after)
+      ? testboard_config::kDefaultVmidChannel
+      : last_channel;
+  for (uint8_t drain = 0;
+       drain < testboard_config::kAds7953PipelineFrames; ++drain) {
+    if (!appendOp(
+            stream, stream.adc->manualCommand(drain_channel), true,
+            drain_channel)) {
+      return false;
     }
   }
   return true;
