@@ -9,6 +9,7 @@ report.docx next to it: A4, title, numbered figures with captions, tables with a
 """
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from datetime import date
@@ -180,8 +181,9 @@ def figure_captions(lines: list[str]) -> dict[str, str]:
     return out
 
 
-def build_docx(root: Path) -> Path:
-    lines = (root / "report.md").read_text(encoding="utf-8").splitlines()
+def build_docx(root: Path, file_name: str = "report.docx", header: bool = True, md_file: str = "report.md") -> Path:
+    """``root / md_file`` -> ``root / file_name``; ``header``: the page header with the folder name."""
+    lines = (root / md_file).read_text(encoding="utf-8").splitlines()
     captions = figure_captions(lines)
     doc = Document()
     sec = doc.sections[0]
@@ -205,8 +207,8 @@ def build_docx(root: Path) -> Path:
     title.font.color.rgb = RGBColor(0x1F, 0x3A, 0x5F)
 
     # header / footer
-    head = sec.header.paragraphs[0]
-    add_runs(head, f"Basic_Model – {root.name}", size=8.5, color=MUTED)
+    if header:
+        add_runs(sec.header.paragraphs[0], f"Basic_Model – {root.name}", size=8.5, color=MUTED)
     foot = sec.footer.paragraphs[0]
     foot.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     add_runs(foot, "Page ", size=8.5, color=MUTED)
@@ -288,18 +290,24 @@ def build_docx(root: Path) -> Path:
             add_runs(par, text)
             nxt = next((x for x in lines[i:] if x.strip()), "")
             par.paragraph_format.keep_with_next = nxt.startswith("|")        # an introduction stays with its table
-    out = root / "report.docx"
+    out = root / file_name
     doc.save(out)
     return out
 
 
 def main(argv: list[str]) -> int:
-    roots = [Path(a) for a in argv] or sorted(p for p in RESULTS.glob("basic_model_sine_sweep*") if (p / "report.md").exists())
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("folders", nargs="*", help="result folders with a report.md (default: every results/basic_model_sine_sweep* folder)")
+    ap.add_argument("--name", default="report.docx", help="file name of the Word file in the result folder")
+    ap.add_argument("--no-header", action="store_true", help="no page header (the page footer with the page numbers stays)")
+    ap.add_argument("--md", default="report.md", help="markdown file of the result folder to convert")
+    args = ap.parse_args(argv)
+    roots = [Path(a) for a in args.folders] or sorted(p for p in RESULTS.glob("basic_model_sine_sweep*") if (p / "report.md").exists())
     if not roots:
         print("no report.md found")
         return 1
     for root in roots:
-        print(f"wrote {build_docx(root)}")
+        print(f"wrote {build_docx(root, args.name, not args.no_header, args.md)}")
     return 0
 
 
