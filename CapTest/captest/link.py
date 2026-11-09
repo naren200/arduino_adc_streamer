@@ -58,6 +58,10 @@ class Link:
 
 
 class SerialLink(Link):
+    # A 7953 full scan can exceed 350 kB/s. Allow brief host calculation/paint
+    # pauses without relying on the driver's small default receive queue.
+    RECEIVE_BUFFER_BYTES = 1024 * 1024
+
     def __init__(self, port: str, baud: int = 460800):
         import serial  # pyserial
 
@@ -65,6 +69,14 @@ class SerialLink(Link):
             self._serial = serial.Serial(port, baud, timeout=0.05, write_timeout=2.0)
         except serial.SerialException as exc:
             raise LinkError(str(exc)) from exc
+        resize = getattr(self._serial, "set_buffer_size", None)
+        self.receive_buffer_requested = None
+        if callable(resize):
+            try:
+                resize(rx_size=self.RECEIVE_BUFFER_BYTES, tx_size=4096)
+                self.receive_buffer_requested = self.RECEIVE_BUFFER_BYTES
+            except (OSError, NotImplementedError):
+                pass  # unsupported drivers/platforms retain their normal queues
         self._buffer = bytearray()
 
     def write(self, data: bytes) -> None:

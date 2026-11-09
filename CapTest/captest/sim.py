@@ -18,6 +18,7 @@ import numpy as np
 
 from . import protocol
 from .link import VirtualClock
+from .simscan import ScanSimulator
 from .simbase import SimBase, SimLink  # noqa: F401  (SimLink is re-exported)
 from .settings import ADC_NUMBERS, default_bias_table, key, routed_channels
 
@@ -50,7 +51,7 @@ class SimConfig:
     fast_tau_ratio: float = 0.4        # tau_fast / tau_slow
     v_s_overrides: Dict[str, float] = field(default_factory=dict)     # "adc:ch" -> sensor start voltage
     max_samples: int = protocol.MAX_SAMPLES
-    firmware_version: str = "1.3.0"
+    firmware_version: str = "1.4.0"
 
     def create_device(self, clock=None, r_bias_table=None) -> "SimulatedDevice":
         return SimulatedDevice(self, clock=clock, r_bias_table=r_bias_table)
@@ -65,6 +66,7 @@ class SimulatedDevice(SimBase):
         self._rng = np.random.default_rng(self.config.seed)
         self.last_adc = 0
         self.spi_clock_hz = self.config.spi_clock_hz
+        self.scan = ScanSimulator(self)
         self._draw_hardware()
         self.power_cycle()
 
@@ -99,6 +101,8 @@ class SimulatedDevice(SimBase):
         self._boot_count = getattr(self, "_boot_count", 0) + 1
         self.boot_id = (BOOT_ID_BASE + self._boot_count * 0x1F3) & 0xFFFFFFFF
         self._sensor_state: Dict[str, Tuple[float, float]] = {}
+        if hasattr(self, "scan"):
+            self.scan.reset()
         self._inbox.clear()
         self._outbox.clear()
         self.parked = True
@@ -138,7 +142,11 @@ class SimulatedDevice(SimBase):
             self._cmd_burst(arguments)
         elif command == "capalt" and self._version() >= (1, 2, 0):
             self._cmd_alternate(arguments)
+        elif self.scan.handle(command, arguments):
+            pass
         elif command in ("capabort", "stop"):
+            if self.scan.streaming:
+                self.scan.streaming = False        # abort ends a running capture, then parks
             self.parked = True
             self._ack(True, arguments)
         elif command == "spiclock":
@@ -214,6 +222,9 @@ class SimulatedDevice(SimBase):
             burst.flags |= protocol.FLAG_CONTINUE_MODE
         self._ack(True, arguments)
         self._send_packet(protocol.encode_burst_packet(burst))
+
+    def _pump(self) -> None:
+        self.scan.pump()
 
     def _version(self) -> Tuple[int, ...]:
         return tuple(int(part) for part in self.config.firmware_version.split("."))

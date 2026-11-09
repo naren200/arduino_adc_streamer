@@ -15,3 +15,11 @@ scripts/           flash_test.* / flash_production.* (PowerShell + bash), pre_ca
 Neither firmware stores anything in EEPROM or flash, so switching between them loses nothing.
 
 Docs: [protocol and design](../../docs/architecture/firmware/TESTBOARD_7953_CAPTEST.md) · [user guide](../../docs/guides/TESTBOARD_7953_CAPTEST_USER_GUIDE.md) · [verification checklist](../../docs/guides/TESTBOARD_7953_CAPTEST_VERIFICATION_CHECKLIST.md) · [results](../../docs/testing/results/testboard-7953/capacitance-test/RESULTS.md) · [plan](../../docs/plans/firmware/plan-testboard7953-capacitance-test.prompt.md).
+
+## Continuous capture (1.4.0)
+
+`capcaps`, `capcfg`, `capstart`, `capstop`, `capstat` stream whole sweeps of up to 64 routes as
+CRC-checked chunks (`src/ScanEngine.cpp`, `include/ScanEngine.h`; the frame runner shared with the
+burst engine is `include/FrameRunner.h`). See `docs/architecture/firmware/TESTBOARD_7953_CAPTEST.md`.
+Build check: `pio run` in this folder (`teensy41_captest`); the capture has not been run on the
+board yet.

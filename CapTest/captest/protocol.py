@@ -6,6 +6,7 @@ docs/architecture/firmware/TESTBOARD_7953_CAPTEST.md (little-endian).
 
 from __future__ import annotations
 
+import binascii
 import struct
 from dataclasses import dataclass, field
 from typing import Dict, Optional
@@ -54,7 +55,15 @@ class NotOkError(ProtocolError):
 
 
 def crc16_ccitt_false(data: bytes, crc: int = 0xFFFF) -> int:
-    """CRC-16/CCITT-FALSE: poly 0x1021, init 0xFFFF, no reflection, no xorout."""
+    """CRC-16/CCITT-FALSE: poly 0x1021, init 0xFFFF, no reflection, no xorout.
+
+    ``binascii.crc_hqx`` is exactly this CRC in C (about 100x faster than a Python loop,
+    which matters for a capture that delivers thousands of chunks per second)."""
+    return binascii.crc_hqx(bytes(data), crc)
+
+
+def crc16_ccitt_false_reference(data: bytes, crc: int = 0xFFFF) -> int:
+    """Bit-by-bit reference implementation (kept to test the fast one against)."""
     for byte in data:
         crc ^= byte << 8
         for _ in range(8):

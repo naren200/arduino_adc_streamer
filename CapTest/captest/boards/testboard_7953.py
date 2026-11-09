@@ -74,6 +74,10 @@ class Driver7953(BoardDriver):
                              settings.first_clock_delay_ns)
         return Outcome(protocol.encode_burst_packet(burst), burst, burst.boot_id)
 
+    # ---------------------------------------------------------- force calibration
+    supports_force_calibration = True
+    force_board_profile = "TestBoard_7953"
+
     # ------------------------------------------------------------------ Vinf mode
     supports_vinf = True
     HOLD_TAU_MULTIPLES = 12.0       # held burst length in tau of the guessed capacitance

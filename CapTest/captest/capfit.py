@@ -508,7 +508,8 @@ def _alternate_equilibrium(keep: float, curve: float, q: float, tc: np.ndarray, 
 def analyze_alternate(burst: protocol.BurstData, r_bias: float,
                       settings: Optional[AnalysisSettings] = None,
                       since_last_ms: Optional[float] = None,
-                      discharge_ms: float = 0.0) -> Measurement:
+                      discharge_ms: float = 0.0,
+                      fixed_c_total_f: Optional[float] = None) -> Measurement:
     """Analysis of a capalt burst: S sensor frames, then V Vmid frames, repeated.
 
     Each Vmid frame resets the shared node to V_D, so per cycle the sensor's distance
@@ -595,21 +596,27 @@ def analyze_alternate(burst: protocol.BurstData, r_bias: float,
         error = d_next - design @ coef
         return float(error @ error), coef
 
-    grid = np.geomspace(tc.min() * 0.2, tc.max() * 1e4, 400)
-    errors = [solve(tau)[0] for tau in grid]
-    best = int(np.argmin(errors))
-    if best in (0, len(grid) - 1):
-        m.flags.append(FIT_FAILED)
-        return m
-    low, high = np.log(grid[best - 1]), np.log(grid[best + 1])
-    golden = (np.sqrt(5.0) - 1.0) / 2.0
-    for _ in range(60):
-        a, b = high - golden * (high - low), low + golden * (high - low)
-        if solve(np.exp(a))[0] < solve(np.exp(b))[0]:
-            high = b
-        else:
-            low = a
-    tau = float(np.exp(0.5 * (low + high)))
+    if fixed_c_total_f is not None:
+        if not np.isfinite(fixed_c_total_f) or fixed_c_total_f <= 0:
+            raise ValueError("fixed loaded capacitance must be finite and positive")
+        tau = float(r_bias * fixed_c_total_f)
+        m.connect_info["fixed_c_total_f"] = float(fixed_c_total_f)
+    else:
+        grid = np.geomspace(tc.min() * 0.2, tc.max() * 1e4, 400)
+        errors = [solve(tau)[0] for tau in grid]
+        best = int(np.argmin(errors))
+        if best in (0, len(grid) - 1):
+            m.flags.append(FIT_FAILED)
+            return m
+        low, high = np.log(grid[best - 1]), np.log(grid[best + 1])
+        golden = (np.sqrt(5.0) - 1.0) / 2.0
+        for _ in range(60):
+            a, b = high - golden * (high - low), low + golden * (high - low)
+            if solve(np.exp(a))[0] < solve(np.exp(b))[0]:
+                high = b
+            else:
+                low = a
+        tau = float(np.exp(0.5 * (low + high)))
     _, (keep, curve, q) = solve(tau)
     c = 1.0 - float(keep)                # at V_D; c1 = -curve
 

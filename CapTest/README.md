@@ -40,6 +40,109 @@ python -m pytest tests                     # QT_QPA_PLATFORM=offscreen is set by
 
 Needs Python 3.10+, `PyQt6`, `pyqtgraph`, `numpy`, `pyserial` (project dependencies; `scipy` is optional and only polishes the fits). Without `--board` the GUI opens on the last used board (its settings are in `settings/<board id>.json`), the CLI on the first board of `boards.json` (or the board of `--settings`). New results go to `results/<board id>/` when only a file name is given. Both folders are ignored by git.
 
+## Force export and Force Calibration
+
+TestBoard_7953 only (`supports_force_calibration` in its driver; other boards do not show the tab):
+
+- `captest/sensor_groups.py` resolves the PZT packages from the sensor library.
+- `captest/force_export.py` writes/updates `captest-force-inputs-1` files (partial files allowed).
+- `captest/capture.py` + `client.py` + `simscan.py` implement the continuous-capture protocol
+  (firmware 1.4.0, documented in `docs/architecture/firmware/TESTBOARD_7953_CAPTEST.md`).
+- `captest/force_model.py` (residuals, charge proxy, bias, event step, d33_eff fit, leakage),
+  `captest/force_calibration.py` (trial analysis, wizard, per-group records) and
+  `captest/force_session.py` (controller) are widget-independent; `force_calibration_panel.py` is
+  the Qt tab.
+- `captest/force_estimates.py` and `force_estimation_panel.py` provide explicit recovery of a
+  failed electrical route. They estimate median donor loaded-minus-blank capacitance plus
+  the target's own measured blank, then refit the target transitions. Borrowing switching
+  coefficients is a separate experimental option. Originals and donor provenance are kept.
+- `captest/force_evidence.py` saves atomic trial sidecars and replays saved raw recordings
+  with their marks, frozen bias, models and applied corrections. Reset and restart create
+  unique files; rejected and cancelled captures remain available for review.
+
+Electrical coverage and electrical quality are separate: a completed pass with
+`HIGH_RESIDUAL` is not force-ready. Above-VD signals are recorded as provisional
+extrapolation without a default 0.25 V ceiling. ADC headroom and below-fit coverage have
+separate rejection reasons.
+
+Use real known weights for gain fitting; choose **Workflow test only** for finger tests.
+Enter calibration masses in grams (default `20, 50, 100, 200`; two weights are allowed).
+The trial table also shows reference force in newtons. Mounting/contact text is optional
+annotation; editing it preserves the session and each earlier trial's original notes.
+Specify the maximum force error in newtons before a held-out validation can pass. Records
+distinguish not fitted, fitted/provisional, validated and stale; only validated gains are
+embedded in the force-input bundle. Force errors use the deployed endpoint accumulator
+without subtracting a fitted event intercept.
+
+The force plot has a dashed red zero reference. Force and raw residual plots share
+one time axis and pan/zoom together, with independent vertical scales. Live plots
+use the same last 30 seconds; completed trials and saved evidence show the full
+selected interval in both plots. Residual peak downsampling preserves brief press
+and release spikes when viewing a long recording.
+
+**Relative polarity** provides fixed +1/-1 controls for B/L/C/R/T, saved per Array/PZT
+group in the force-input file. Reverse an opposite channel before summing charge; unloading
+remains signed (no rectification). Raw ADC/residual diagnostics keep their original signs.
+Sign changes replay saved captures and invalidate drift/leakage corrections and force fits.
+Remeasure drift and refit/validate d33_eff afterwards. Legacy files default to +1 for every
+channel; the existing common output polarity is still applied once.
+
+Before measuring drift or weights, use **Record press test** for the selected package.
+After a brief noise sample, gently press and release the intended load-spreading
+plate once. Both actions are detected automatically and recording stops shortly
+after release: no stage buttons, minimum hold, or weight-trial baseline/drift wait.
+The test does not change workflow-only mode or consume weight trials.
+**Review press signs…** compares each channel's press/release charge separately,
+ignoring the current sign map and the group sum. It proposes signs relative to the
+majority press direction, with no assumption about C. Weak, invalid or conflicting
+responses remain unclear and block Apply. Clipping/headroom is allowed for this
+direction-only test and appears in Notes / reason, with the clipped sample count;
+charge magnitudes from clipped signals are unreliable. Force calibration retains
+its clipping checks. A steady group hold is not required for
+this diagnostic. If no clear pair is detected, it stops after 20 seconds and you
+can try again. Repeat at another contact position because mounting/bending can
+change response directions. **Apply signs to
+this package** explicitly saves the reviewed evidence with its recording hash in
+the force-input file. Changing signs requires a new drift measurement and force fit.
+Unknown finger force does not calibrate gain or establish physical electrode polarity.
+
+**Evaluate leakage** proposes a correction; **Apply correction** replays original captures
+and freezes a newly estimated unloaded bias. Apply, rollback, window edits and changed
+acceptance limits invalidate the previous gain/validation. Refit and validate afterwards.
+
+Before the weights, **Measure unloaded drift** records the same full scan with no added
+load. It discards 2 seconds of settling, fits constant per-channel residual bias, and checks
+it on a separate later window. A qualified correction is frozen and used before charge
+integration in both live and offline calculations. It never adapts during a weight hold.
+**Clear unloaded correction** returns to each trial's own baseline bias and replays earlier
+trials. Changing the leakage predictor clears the separate unloaded correction. Raw
+recordings and correction provenance are retained; this is not a measurement of Roff.
+
+If Start trial is still checking a frozen linear drift correction, the prompt now
+shows the current slope-change budget and mismatch from the saved drift. A fresh
+unloaded measurement is needed if that correction no longer matches; waiting does
+not automatically refit it. Capture gaps/CRC errors remain separate failures.
+Live drift checks omit final timing statistics to reduce pauses in serial reading.
+On drivers that support it, CapTest requests a 1 MiB receive buffer for the stream;
+the driver may ignore that request. Final recordings still include full statistics.
+Without a prior unloaded correction, the initial baseline plot waits for its bias estimate
+instead of showing uncorrected integration as force.
+
+For a settling transient followed by linear drift, use **Drift test → first weight trial**
+before collecting weights. It searches recent windows for a stable nonzero raw-charge slope,
+fits and checks separate halves, then proceeds to the first weight prompt without stopping
+acquisition. The correction is `dQ_corrected = dQ_raw - drift_rate * actual_visit_interval`.
+It is frozen during the weight test. Subsequent Start trial runs recheck the same frozen
+rate after settling before arming placement; they never refit it automatically. The selected unloaded duration is the search window;
+settling may take longer, with a 120 s timeout (or window plus 2 s). Failed settling never
+falls back to fitting the startup transient. Reset trials to start a new combined run.
+The [7953 user guide](../docs/guides/TESTBOARD_7953_CAPTEST_USER_GUIDE.md#force-export-and-force-calibration-testboard_7953)
+describes the workflow and its physical limits.
+
+Tests: `tests/test_sensor_groups.py`, `test_force_model.py`, `test_force_export.py`,
+`test_capture.py`, `test_force_calibration.py`, `test_force_session.py`, `test_gui_force.py`,
+`test_force_hardening.py`, `test_force_zero.py`.
+
 ## Folders
 
 ```text

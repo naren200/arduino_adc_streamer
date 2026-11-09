@@ -66,24 +66,25 @@ def save(fig, root: Path, name: str) -> str:
     return f"figures/{name}"
 
 
-def median_and_phases(ax, data, freqs, values, label_median="median", label_dots="each sampling phase"):
-    """The common look of graphs 1-4: orange dots = every sampling phase, blue dashed line with squares = median over the phases."""
+def median_and_phases(ax, data, freqs, values, label_median="median", label_dots="each sampling phase", ms=5.5):
+    """The common look of graphs 1-4: orange dots = every sampling phase, blue dashed line with squares (size ``ms``) = median over the phases."""
     for f in freqs:
         v = values(f)
         ax.plot([f] * len(v), v, ".", color=ORANGE, alpha=0.35, ms=5, zorder=2)
     med = np.array([np.median(values(f)) for f in freqs])
-    ax.plot(freqs, med, "s--", color=BLUE, lw=1.6, ms=5.5, zorder=3)
+    ax.plot(freqs, med, "s--", color=BLUE, lw=1.6, ms=ms, zorder=3)
     ax.plot([], [], ".", color=ORANGE, ms=7, label=label_dots)
-    ax.plot([], [], "s--", color=BLUE, lw=1.6, ms=5.5, label=label_median)
+    ax.plot([], [], "s--", color=BLUE, lw=1.6, ms=ms, label=label_median)
     return med
 
 
 # ---------------------------------------------------------------------------------------------- graphs
 def g_ratio_db(data, freqs):
     fig, ax = plt.subplots(figsize=(7.4, 4.8))
-    median_and_phases(ax, data, freqs, lambda f: 20 * np.log10(data[f]["pp_cal"] / data[f]["pp_in"]))
+    median_and_phases(ax, data, freqs, lambda f: 20 * np.log10(data[f]["pp_cal"] / data[f]["pp_in"]), ms=3.0)
     ax.axhline(0.0, color=INK2, lw=1, ls=":")
-    ax.set(xscale="log", xlabel="force frequency", ylabel="calculated / applied peak-to-peak [dB]", title="Ratio of the peak-to-peak")
+    ax.set(xscale="log", xlabel="force frequency", ylabel="calculated / applied peak-to-peak [dB]", title="Ratio of the peak-to-peak",
+           ylim=(-12.0, 0.5))                       # the axis starts at -12 dB
     ticks(ax, freqs)
     ax.legend(fontsize=8, loc="lower left")
     return fig
@@ -93,7 +94,7 @@ def g_pp_n(data, freqs):
     fig, ax = plt.subplots(figsize=(7.4, 4.8))
     pp_in = data[freqs[0]]["pp_in"]
     ax.plot(freqs, [pp_in] * len(freqs), "o-", color=INK2, lw=1.6, ms=6, label="applied (input) peak-to-peak", zorder=1)
-    median_and_phases(ax, data, freqs, lambda f: data[f]["pp_cal"], "calculated, median", "calculated, each sampling phase")
+    median_and_phases(ax, data, freqs, lambda f: data[f]["pp_cal"], "calculated, median", "calculated, each sampling phase", ms=3.0)
     ax.set(xscale="log", xlabel="force frequency", ylabel="peak-to-peak force [N]", ylim=(0, pp_in * 1.1),
            title="Applied and calculated peak-to-peak force")
     ticks(ax, freqs)

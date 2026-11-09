@@ -277,6 +277,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table_rows: Dict[Channel, int] = {}
         self.columns: List[Tuple[str, str, str]] = []
         self.warnings: List[str] = []
+        self.force_panel = None
         self._build_ui()
         self.populate_board()
         self.refresh_ports()
@@ -311,8 +312,16 @@ class MainWindow(QtWidgets.QMainWindow):
         bottom.addTab(self.log_view, "Log")
         right.addWidget(bottom)
         right.setSizes([420, 480])
-        split.addWidget(right)
+        # The right side is a stack: the burst plots and tables, or (Force Calibration tab) the
+        # force workspace, so that tab can use the whole area.
+        self.right_stack = QtWidgets.QStackedWidget()
+        self.right_stack.addWidget(right)
+        split.addWidget(self.right_stack)
         split.setSizes([430, 1070])
+        split.setStretchFactor(0, 0)             # the plots take the extra width, not the settings
+        split.setStretchFactor(1, 1)
+        self.main_split = split
+        self.tabs.currentChanged.connect(self._tab_changed)
 
         status = QtWidgets.QHBoxLayout()
         self.progress_bar = QtWidgets.QProgressBar()
@@ -439,6 +448,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self._build_auto_tab(), "Automatic")
         self.tabs.addTab(self._build_manual_tab(), "Manual")
         self.tabs.addTab(self._build_settings_tab(), "Settings")
+        if self.force_panel is not None:
+            self.force_panel.shutdown()
+            self.right_stack.removeWidget(self.force_panel.workspace)
+            self.force_panel.workspace.deleteLater()
+            self.force_panel.deleteLater()
+            self.force_panel = None
+        self.right_stack.setCurrentIndex(0)
+        if driver.supports_force_calibration:
+            from .force_calibration_panel import ForceCalibrationPanel
+
+            self.force_panel = ForceCalibrationPanel(self)
+            self.tabs.addTab(self.force_panel, "Force Calibration")
+            self.right_stack.addWidget(self.force_panel.workspace)
         self.tabs.addTab(self._build_help_tab(), "Help")
         targets = driver.descriptor["vmid_read"]
         self.vmid_adc.clear()
@@ -453,6 +475,17 @@ class MainWindow(QtWidgets.QMainWindow):
                             + (" ..." if len(conflicts) > 5 else ""))
         self.update_channel_status()
         self.clear_plots()
+
+    def _tab_changed(self, _index: int) -> None:
+        """The Force Calibration tab takes the whole right-hand area for its workspace."""
+        panel = getattr(self, "force_panel", None)
+        if panel is not None and self.tabs.currentWidget() is panel:
+            self.right_stack.setCurrentWidget(panel.workspace)
+            total = sum(self.main_split.sizes())
+            if total > 0 and self.main_split.sizes()[0] > 0.4 * total:
+                self.main_split.setSizes([int(0.3 * total), total - int(0.3 * total)])
+        else:
+            self.right_stack.setCurrentIndex(0)
 
     def clear_plots(self) -> None:
         for curve in (self.data_curve, self.fit_curve, self.other_curve, self.resid_curve,
@@ -516,7 +549,9 @@ class MainWindow(QtWidgets.QMainWindow):
         for index, (text, slot) in enumerate([
                 ("Export CSV", self.export_csv), ("Export JSON", self.export_json),
                 ("Save raw bursts", self.save_raw), ("Load raw (re-analyse)", self.load_raw),
-                ("Save plots as images", self.save_plots)]):
+                ("Save plots as images", self.save_plots)]
+                + ([("Export Force Calculation Data", self.export_force_data)]
+                   if self.driver.supports_force_calibration else [])):
             button = QtWidgets.QPushButton(text)
             button.clicked.connect(slot)
             grid.addWidget(button, index // 2, index % 2)
@@ -1091,6 +1126,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         if entry.id == self.entry.id:
             return True
+        if self.force_panel is not None and self.force_panel.is_busy():
+            self.append_log("Finish the force capture or saved-data analysis before changing the board.")
+            return False
         if self.worker is not None and self.worker.isRunning():
             self.append_log("Stop the running measurement before changing the board.")
             return False
@@ -1223,6 +1261,8 @@ class MainWindow(QtWidgets.QMainWindow):
         return bool(fw is not None and fw.kind == "captest" and fw.board_id in ("", self.driver.id))
 
     def disconnect_device(self) -> None:
+        if self.force_panel is not None:
+            self.force_panel.stop_capture()          # nothing keeps streaming after a disconnect
         if self.worker is not None:
             self.worker.request_stop()
             self.worker.wait(5000)
@@ -1238,26 +1278,29 @@ class MainWindow(QtWidgets.QMainWindow):
     def set_connected(self, connected: bool) -> None:
         captest = connected and self.firmware_is_ready()
         busy = self.worker is not None and self.worker.isRunning()
+        force_busy = self.force_panel is not None and self.force_panel.is_busy()
         script_busy = self.script_worker is not None and self.script_worker.isRunning()
         self.connect_button.setText("Disconnect" if connected else "Connect")
         self.sim_check.setEnabled(not connected)
         self.port_combo.setEnabled(not connected)
-        self.board_combo.setEnabled(not busy and not script_busy)
-        self.detect_button.setEnabled(not busy and not script_busy and not self.sim_check.isChecked())
+        self.board_combo.setEnabled(not busy and not force_busy and not script_busy)
+        self.detect_button.setEnabled(not busy and not force_busy and not script_busy and not self.sim_check.isChecked())
         for button in (self.run_auto_button, self.measure_selected_button, self.discharge_button,
                        self.vmid_button, self.remeasure_button):
-            button.setEnabled(captest and not busy)
-        self.vinf_button.setEnabled(captest and not busy and self.driver.supports_vinf)
+            button.setEnabled(captest and not busy and not force_busy)
+        self.vinf_button.setEnabled(captest and not busy and not force_busy and self.driver.supports_vinf)
         self.stop_button.setEnabled(busy)
         has_results = self.session is not None and bool(self.session.results)
         self.fit_combo.setEnabled(not busy)
         self.reanalyze_button.setEnabled(has_results and not busy)
         simulated = self.sim_check.isChecked()
-        flash_ok = not simulated and not busy and not script_busy
+        flash_ok = not simulated and not busy and not force_busy and not script_busy
         self.flash_test_button.setEnabled(flash_ok)
         self.restore_button.setEnabled(flash_ok)
         self.flash_test_button.setToolTip("Disabled in simulation mode." if simulated else "")
         self.restore_button.setToolTip("Disabled in simulation mode." if simulated else "")
+        if self.force_panel is not None:
+            self.force_panel.refresh_state()
         self.update_reason(connected, captest, busy, script_busy)
 
     def update_reason(self, connected: bool, captest: bool, busy: bool, script_busy: bool) -> None:
@@ -1298,6 +1341,9 @@ class MainWindow(QtWidgets.QMainWindow):
     # -------------------------------------------------------------------- jobs
     def start_job(self, job: Callable) -> bool:
         if self.session is None or (self.worker is not None and self.worker.isRunning()):
+            return False
+        if self.force_panel is not None and self.force_panel.controller is not None and self.force_panel.controller.session is not None:
+            self.append_log("Finish or cancel the force trial before running another board measurement.")
             return False
         if not self.firmware_is_ready():
             self.append_log("The capacitance-test firmware of %s is not running." % self.driver.id)
@@ -1727,6 +1773,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if path and self.session:
             self.session.save_results(path)
 
+    def export_force_data(self) -> bool:
+        """Add the packages measured so far to the force-calculation input file (partial files
+        are allowed and updated later). See the Force Calibration tab."""
+        if self.force_panel is None:
+            return False
+        self.tabs.setCurrentWidget(self.force_panel)
+        return self.force_panel.add_results_to_file()
+
     def save_raw(self) -> None:
         path = self._ask_save("Save raw bursts", "captest_raw.json", "JSON (*.json)")
         if path and self.session:
@@ -1834,6 +1888,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.set_connected(False)
 
     def closeEvent(self, event) -> None:
+        if self.force_panel is not None:
+            self.force_panel.shutdown()
         self.save_board_state()
         self.disconnect_device()
         super().closeEvent(event)

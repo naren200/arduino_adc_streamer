@@ -59,6 +59,11 @@ class BoardDriver:
     entry = None
     #: Vinf mode (measured settling voltage of a held sensor, next to the calculated one)
     supports_vinf = False
+    #: Force data export and the Force Calibration tab (needs continuous capture and a
+    #: sensor-library layout of PZT packages). Only drivers that implement both set it.
+    supports_force_calibration = False
+    #: Sensor-library board profile used to resolve the PZT groups ("" = none)
+    force_board_profile = ""
 
     def __init__(self, descriptor: dict, entry=None):
         self.descriptor = descriptor

@@ -35,7 +35,7 @@ ASCII, terminated by `*`, answered by `#OK ...` / `#NOT_OK ...` as in production
 
 | Command | Reply |
 | --- | --- |
-| `capstatus*` | comment line `# capstatus firmware=TestBoard_7953_CapTest version=1.3.0 protocol=1 git=<hash> build=<date_time> boot_id=0x<hex> uptime_ms=<n> cpu_hz=<n> spi_clock_hz=<n> max_samples=2048 min_period_ns=1000`, then `#OK`. `status*` is an alias. |
+| `capstatus*` | comment line `# capstatus firmware=TestBoard_7953_CapTest version=1.4.0 protocol=1 git=<hash> build=<date_time> boot_id=0x<hex> uptime_ms=<n> cpu_hz=<n> spi_clock_hz=<n> max_samples=2048 min_period_ns=1000`, then `#OK`. `status*` is an alias. |
 | `capvmid <adc> [n]*` | `# capvmid adc=<a> n=<n> mean_code=<x> min=<c> max=<c> tag_errors=<e>` then `#OK` (average of `n` (default 16, max 64) channel-15 readings). |
 | `capburst <adc> <channel> <samples\|auto> <park_us> <gap_ns> [<first_clock_delay_ns> [<hold_mode>]]*` | `#OK capburst ...` followed immediately by one binary packet. `hold_mode` 1 (firmware 1.1.0, default 0) sends the ADS7953 "continue" command (`0x0000`, SLAS605C Table 7) on every sample frame after the connecting one, so the channel is not re-commanded; see "Same channel re-commanded every frame" below. An incomplete burst (transfer timeout) is acknowledged `#NOT_OK` but still sends its packet with `FLAG_INCOMPLETE`. `auto` covers 6 tau of a guessed 100 pF behind the ADC's bias resistor, capped at 1024 samples. `first_clock_delay_ns` (default 25) is only reported back for the analysis; the firmware does not apply it. |
 | `capalt <adc> <channel> <frames> <park_us> <gap_ns> <sensor_run> <vmid_run> [<first_clock_delay_ns> [<gap_long_ns>]]*` | Firmware 1.2.0; `gap_long_ns` 1.3.0. Same park, limits and binary packet as `capburst`, with `FLAG_ALTERNATE` set. After the park the commands repeat `sensor_run` (1-8) commands of the channel, then `vmid_run` (1-8) commands of Vmid (input 15), like production with Vmid between channels (`channelrepeat` 1-3, then 2 Vmid frames). `frames` (8-2048) counts command frames; the last two always release to Vmid. Returned word `j >= 2` is the input commanded in frame `j - 2`, and its tag says which. Tag errors count tags that differ from that pattern. `gap_long_ns` (0 = off, otherwise at least `gap_ns`) is the CS-high gap of the frames during which the sensor is connected (command phases 1..`sensor_run`) in every second cycle, so one burst holds two connected times; the interrupt-masked limit is checked as if every frame used it. The CapTest application uses `capalt` with 1 sensor frame, 1 Vmid frame and an automatic long gap as its default TestBoard_7953 method (`captest/capfit.py` `analyze_alternate`; report step 5). |
@@ -46,6 +46,58 @@ ASCII, terminated by `*`, answered by `#OK ...` / `#NOT_OK ...` as in production
 Identification: the capacitance-test firmware answers `capstatus*` with `firmware=TestBoard_7953_CapTest`. The production firmware is unmodified; it answers `capstatus*` with `#NOT_OK` and still answers `status*` with `# Current mode: PZT ...`. The PC application reports "production firmware is running" in that case.
 
 `boot_id` is a hash of the SNVS RTC counter, the chip id and the cycle counter at the first host command; `uptime_ms` is also reported. A changed boot id (or a smaller uptime) tells the PC the board was reset or power-cycled, so every sensor is "fresh" again.
+
+## Continuous capture (capture protocol 1, firmware 1.4.0)
+
+Added for the Force Calibration tab. Older firmware answers `capcaps` with `#NOT_OK`; the burst
+commands above are unchanged and keep working. While a capture runs the firmware accepts only
+`capstat`, `capstop`, `capabort`/`stop`, `capcaps` and `capstatus`/`status`; everything else is
+`#NOT_OK` (a burst would mask interrupts and disturb the schedule).
+
+| Command | Reply |
+| --- | --- |
+| `capcaps*` | `# capcaps capture=1 chunk=1 max_routes=64 sweeps_per_chunk=8 ring_sweeps=128 max_chunk_bytes=2048`, then `#OK`. |
+| `capcfg begin <gap_ns> <first_clock_delay_ns> <lag_us> <vmid_frames>*` | Starts a configuration. `vmid_frames` must be 1 (one Vmid reset per route). `lag_us` (0-1000000) is idle time added after every sweep. |
+| `capcfg route <adc> <channel>*` | Adds one route (at most 64). Routes of one ADC must be contiguous (one block per ADC); no duplicates; input 15 and unrouted inputs are refused. |
+| `capcfg commit*` | Validates the whole configuration against the same limits as the burst commands (frame period >= 1.0 us, acquisition >= 325 ns, interrupt-masked block <= 5 ms). Reply `# capcfg routes=<n> blocks=<n> frames_per_sweep=<n> sweep_ns=<n>`, then `#OK`. |
+| `capstart [<max_sweeps>]*` | `#OK`, then chunks until `capstop`, `max_sweeps` (0 = unlimited) or an error. The last chunk has `FLAG_FINAL`. |
+| `capstop*` | Sends the remaining chunks and the final chunk (`FLAG_FINAL`, `FLAG_STOPPED`), parks every converter, then `#OK`. Also acknowledged when nothing runs. |
+| `capstat*` | `# capstat state=<idle\|running\|draining> session=0x<hex> sweeps=<n> chunks=<n> dropped=<n>`, then `#OK`. |
+
+A sweep visits every configured route once, ADC block by ADC block, in the production-like manual
+sequence. Per block of `n` routes the frames are: sensor command, Vmid command (route 0), sensor
+command, Vmid command (route 1), ..., then two flush Vmid commands (`2n + 2` frames), so the
+converter is parked on Vmid when its block ends. Response `j` is the conversion of command `j - 2`.
+For the route commanded in frame `k = 2r`: the mux connects it at CS fall of frame `k + 1`, the Vmid
+command releases it at frame `k + 2` (the sample is returned in that frame), and the Vmid reset
+reading is returned in frame `k + 3`. Interrupts are masked for one ADC block only (tens of
+microseconds), never across a hold.
+
+Chunk (little-endian, at most 2048 bytes: one USB frame of the patched core, written with the
+non-blocking `tryWriteBinaryBlock`):
+
+| Offset | Field |
+| --- | --- |
+| 0 | magic `CK`, version (1), header bytes (36) |
+| 4 | session id u32 (new per `capstart`), boot id u32, chunk sequence u32 (from 0) |
+| 16 | first sweep number u32, sweeps u16, routes u16, flags u16, reserved u16 |
+| 28 | dropped sweeps (cumulative) u32, cpu_hz u32 |
+| 36 | records, `sweeps x routes x 12` bytes: `ts_conn u32` (frame k+1), `ts_rel u32` (frame k+2), `sensor u16` (tag = channel), `vmid u16` (tag = 15) |
+| end | CRC-16/CCITT-FALSE u16 over header and records |
+
+Flags: 0 overrun (sweeps dropped before this chunk), 1 final, 2 tag errors seen, 3 reserved,
+4 stopped by `capstop`, 5 transfer error. Time stamps are 32-bit DWT cycle counters (they wrap
+every 7 s at 600 MHz); the host extends them. The connected time of a visit is
+`Tc = ts_rel - ts_conn` and the sampling instant `ts_rel` (the convention of `analyze_alternate`).
+
+Nothing is hidden: a full ring drops the new sweep, the sweep number still advances and the next
+chunk reports the dropped total, so the host sees a gap. If no chunk is accepted for 10 s the
+capture ends and the converters are parked. The host (`captest/capture.py`) turns a lost or corrupt
+chunk, dropped sweeps, a changed session or boot id, a wrong tag, a Vmid reset more than 5 mV from
+the ADC's Vmid reference, a backwards time stamp, a link error or a missing final chunk into
+*problems*; a capture with problems is invalid for calibration. Every chunk is appended to a
+`.cap` recording file as received (replayable through the same decoder); cancel, error and
+disconnect always close the recording and park the converters.
 
 ## Burst packet (protocol version 1, little-endian)
 
@@ -176,3 +228,7 @@ Flags: `LOW_AMPLITUDE` (< 50 LSB), `TAG_MISMATCH`, `HIGH_RESIDUAL` (rms > 2 LSB)
 ## Verification status
 
 See [`RESULTS.md`](../../testing/results/testboard-7953/capacitance-test/RESULTS.md) for the build sizes, offline test results and the on-board run.
+
+### Continuous capture: verification status
+
+The capture protocol is covered by simulator tests (codec, ordering, wrap, gaps, CRC, overrun, tag and reset faults, cancel, disconnect, parking, replay) and the firmware builds with the documented PlatformIO environment (`teensy41_captest`). **First hardware run (2026-11-06, lag 0):** the board scans all 50 routes in about 171 us (5,800 sweeps/s, about 3.5 MB/s of records, 1.6 us per frame). The host could not drain that: within 25-130 ms the 128-sweep ring overflowed and chunks were lost or failed their CRC, so every trial was rejected. A full ring makes `sweep()` return at once, so the `dropped` counter counts loop spins and the sweep number jumps; both only mean "the ring was full", not a number of real sweeps. The Force Calibration tab therefore defaults to an added lag of 1500 us (about 600 sweeps/s, about 0.4 MB/s) and shows the estimated rate; the highest lag-free rate that streams reliably is still to be measured. **Rate versus production:** production reads array 1 (bus LPSPI4) and array 2 (bus LPSPI3) concurrently and reaches 9,615 Hz per channel (104 us); the capture scan reads the four ADC blocks one after another (108 frames, 171 us, 5,860 Hz at lag 0), so it cannot reach the production rate. Decision (2026-11-06): calibrate at this rate; the measured rate per channel is stored in every trial and in the calibration record so production can be compared later. Remaining hardware items: frame timing, the interrupt-masked block length, the USB throughput of full-board sweeps and the Vmid reset behaviour are hardware items to verify with the Force Calibration acceptance tests.

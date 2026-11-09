@@ -79,6 +79,213 @@ Buttons: **Export CSV / JSON**, **Save raw bursts** (the exact device packets, f
 
 The discharge time default is 300 ms, not the 100 ms of the original plan: on the real board the settled `V0` of a channel was still about 6 % high after 100 ms and plateaued only after 300 ms (see [`RESULTS.md`](../testing/results/testboard-7953/capacitance-test/RESULTS.md)).
 
+## Force export and Force Calibration (TestBoard_7953)
+
+Two features prepare the force calculation of the capacitance-to-force guide. They need the
+firmware 1.4.0 (continuous capture); older firmware keeps every burst workflow and the tab reports
+that capture is unavailable. Nothing flashes automatically.
+
+**Export Force Calculation Data** (Automatic tab, Data group) and the **Force Calibration** tab,
+step 1: choose *Array* and *PZT* (a package is five sensors B, L, C, R, T on one ADC; routes come
+from `sensors_library/sensor_configurations.json`, matched by board profile, not by its
+`selected_name`). *Measure this package* runs the alternate method on its five routes. *Add results
+to file* writes (or updates) a `captest-force-inputs-1` JSON file in the board's results folder: per
+route the loaded C_total, tau, VD, c0, c1, qv, the fitted distance range, per-burst values and the
+raw packets (embedded, hash-checked). The file may be partial: reopening it and adding other
+packages updates it; re-measuring a package adds a new revision and keeps the old one. A merge is
+refused when the board instance, layout hash or acquisition settings differ. Failed channels are
+marked (never zero). Coverage and electrical quality are independent: a completed pass with
+`HIGH_RESIDUAL` or invalid coefficients does not qualify for force fitting. Legacy files are
+checked too; their originals are not rewritten when loaded.
+
+**Recovering a failed electrical route.** Prefer re-measuring it. When that is impractical,
+choose *Use estimated electrical parameters*. Select healthy measured donors and explicitly
+declare the matching sensor size/type, strip/flex construction and strips-off disconnection
+boundary. The library does not automatically establish those equivalences. Every selected
+donor and the target need compatible measured board blanks. The estimate is:
+
+```text
+C_added_donor = C_total_loaded_donor - C_board_blank_donor
+C_total_est_target = median(C_added_donor) + C_board_blank_target
+```
+
+This includes the sensor and attached strip/flex. It is not an independent measurement of
+Cs or floating capacitance. Do not add shared-node or strip capacitance again. The normal
+path fixes that estimated C_total and refits c0, c1 and qv to the target's own raw transitions;
+if the fit remains poor, it cannot be used. A separately selected experimental option
+borrows switching coefficients from healthy donors on the same ADC. It still uses the
+target ADC's measured VD and requires independent package-force validation. Review the
+preview, donor spread and confidence before applying. Fewer than three donors is labelled
+low confidence. Applying creates a new revision, retains the original fit and donor hashes,
+and invalidates the affected package sensitivity. Changing a donor makes the estimate stale.
+
+Force Calibration, steps 2-3 (a guided capture of the selected package; the board always scans
+**all 50 routes of both arrays**, so the visit rate stays near production):
+
+1. Enter the initial effective d33_eff (signed, nonzero; it only scales the live display), the
+   *added lag per sweep* (each lag is a separate calibration), **Calibration masses [g]**,
+   repeats per mass (default 5) and hold
+   time (10-30 s). Keep a load-spreading plate in place; all load must pass through the package.
+   Masses default to `20, 50, 100, 200`; enter other positive distinct values, including just
+   two weights such as `12.5, 25`. Commas, semicolons or spaces separate the values. Trials
+   run from smallest to largest, with the chosen repeats for each mass. Changing the mass
+   list selects a separate trial sequence. The table shows **Force [N]**, the expected total
+   group force: `mass [g] / 1000 * g` (default gravity 9.80665 m/s²), rather than a measured force.
+   **Relative polarity** supplies a fixed sign for each B/L/C/R/T channel. If the centre
+   response is opposite, set C to **−1** and confirmed matching channels to **+1**, separately
+   for the selected Array/PZT group. For that pattern the sum is proportional to
+   `Q_B + Q_L - Q_C + Q_R + Q_T`, with the common output polarity applied once.
+   The sign is applied before summation for both loading and removal; absolute values are
+   never used. Raw ADC voltages and the lower raw-residual plot retain their electrical signs.
+   Overall force direction also depends on the signed d33_eff. A fixed relative sign needs
+   validation with unclipped loading/removal in the intended mounting and contact positions.
+   Sign selections are saved in the force-input file. Changing them replays earlier captures,
+   clears unloaded drift and inferred leakage corrections, and invalidates gain/validation;
+   existing raw samples remain intact. Reset trials, run the drift test again, then refit
+   and validate d33_eff. The correction does not repair ADC clipping or missing event windows.
+   The tab shows the estimated sampling rate per channel for the chosen lag (the default is
+   1500 us; 0 us is about 3.5 MB/s and overflowed the board's buffer on the first hardware test)
+   and, during and after a trial, the measured rate of each channel (B, L, C, R, T). The measured
+   rates are stored in every trial and summarised as `sampling_per_channel` in the calibration record.
+   While this tab is selected the right-hand area of the window shows the force workspace: the prompt,
+   the action buttons, the sampling rate, the force and residual plots and the step table.
+   After a rejected trial the prompt says why. *Retry failed* clears the plots and makes the step pending
+   again; *Reset trials* discards all trials of this calibration and starts from the first mass (capture
+   files stay on disk). The selectors and competing measurements are locked while a trial runs.
+   Optional mounting notes describe the fixture, support or plate; optional contact-position
+   notes describe where the weight touches it. They are logged and saved with the trial,
+   and editing them does not reset the calibration or select another calibration identity.
+   Existing trial annotations remain unchanged when replayed. Validation is limited to the tested setup and
+   positions. A finger press is useful for **Workflow test only**, which preserves evidence but
+   cannot assign the nominal mass to unknown force or fit a sensitivity. Enter a maximum
+   **Max. validation error** in newtons for known-mass validation; leaving it unspecified keeps the result provisional.
+   This is the acceptable absolute error against the known reference force, not a maximum
+   applied force. **Hold drift / step limit** is the allowed accumulated change between stable
+   loaded windows divided by the placement step: `0.150` means 15%. It checks drift without
+   correcting or zeroing it. **Optional excursion guard** is an experimental voltage cutoff
+   above VD; normally leave it Off. ADC headroom checks remain active. Each field and its
+   label have mouse-hover help.
+   Before the drift/weights sequence, check relative polarity for this package:
+   click **Record press test**. After a brief noise sample, gently press and release
+   the intended plate loading all five sensors. The app detects both responses and
+   stops automatically shortly after release. There are no stage buttons, timed
+   hold or weight-trial baseline/drift waits. The weight plan and workflow-only
+   selection stay unchanged; you can repeat without resetting trials.
+   After capture, **Review press signs…** shows each channel's signed press/release
+   charge and proposed sign, independently of the current signs and group sum.
+   It does not require a steady group hold. Clipping/headroom is allowed for this
+   direction-only check and recorded in Notes / reason, including the saturated
+   sample count. Its charge values are diagnostic and unreliable when clipped.
+   Weak, invalid or inconsistent responses remain unclear and cannot be applied.
+   Known-weight force calibration retains its clipping checks. With no detected pair, the listener stops
+   after 20 s and you can try again. **Apply signs to this package** saves the reviewed evidence and signs only
+   for this Array/PZT; changing signs clears old drift corrections and invalidates
+   the force fit. No centre reversal is assumed. Repeat at another intended contact
+   position to check mounting dependence. A finger test supplies no gain reference.
+2. For a curved startup followed by approximately linear drift, use
+   **Drift test → first weight trial**, before collecting any weight trials. Keep the same
+   wiring/plate, with no added mass, hands off. The app searches recent raw-charge windows
+   after at least 2 s, fits a straight-line slope on the first half and checks it on the later
+   half. It also compares earlier/later training slopes to reject startup curvature. The
+   summed absolute changes in channel slopes must meet the charge-drift budget. This budget
+   comes from Max. validation error, or the hold-drift fraction of the smallest planned mass
+   force, divided by hold duration and scaled by the initial d33_eff. It is a planning check;
+   independent known-weight force validation is still required.
+   The unloaded-duration field selects the fit/check window (default 10 s), rather than a
+   promise to finish that soon. It waits for a suitable section, up to 120 s or window + 2 s.
+   A failed search rejects the test and keeps prior correction/evidence; it does not fit the
+   early transient as a fallback. On success, the same acquisition continues into the first
+   trial baseline and placement prompt. Do not add weight until the prompt is armed.
+   Per-channel drift rate is frozen and subtracted as
+   `dQ_corrected = dQ_raw - drift_rate * actual_intervisit_time` in both plots and analysis.
+   A held weight should produce a flat shifted level; loading/removal steps are preserved.
+   The shared recording retains both stages, a hash of the training prefix, and its final
+   full-file hash. Further trials retain the frozen correction: Start trial first waits for
+   settling and verifies that the quiet slope still matches it, without changing its value.
+   A mismatch blocks the weight prompt rather than silently recalibrating drift.
+   While waiting, the live prompt shows the latest slope-change bound, allowed
+   budget, saved-drift mismatch and rejection reason. Capture CRC/gap failures
+   stop the recording separately. For a fresh correction after the rest behaviour
+   changes, reset trials and run **Drift test → first weight trial** again.
+   Reset trials begins a new
+   combined drift-to-first-weight run.
+   The separate **Measure unloaded drift** operation remains available (default 10 s, adjustable
+   6-120 s). Keep the same wiring, support and load-spreading plate, with no added mass and
+   hands off. The first 2 s are discarded for settling. A per-channel constant residual bias
+   is fitted on the first half of the remaining samples and checked on the later half using
+   block-mean uncertainty. An unstable residual, capture fault, ADC headroom or below-fit
+   voltage rejects this measurement and retains any previous correction. Qualification here
+   checks unloaded stability; it does not establish known-force accuracy or physical Roff.
+   A qualified correction is applied as `dQ = polarity * Ctotal * (e - bias_unloaded)` to both
+   the live plot and trial analysis. It is frozen throughout placements, holds and removals;
+   the plot reports held-out drift before/after correction using the initial display sensitivity.
+   Earlier weight trials are replayed and their gain/validation invalidated if the correction
+   changes. **Clear unloaded correction** replays trials using their own baseline bias.
+   Changes to package/scan/model require a matching measurement; applying or rolling back a
+   leakage predictor clears this separate correction. Original raw/NPZ samples and sidecars
+   are retained and can be reviewed offline.
+3. *Start trial*: the unloaded baseline is captured. With a separate unloaded correction,
+   that frozen bias is used; this trial's baseline only checks for a shift (`UNLOADED_DRIFT_SHIFT`
+   keeps validation provisional). Otherwise the per-route bias is fitted on the trial baseline
+   and then frozen. Until a bias is available, the force trace waits rather than displaying raw
+   baseline drift as force; raw residuals remain visible. The prompt to place the mass appears only after the event is armed; press *Mass placed
+   now*, take your hand away, press *Hand clear*; hold; then *Mass removed now* and *Hand clear*.
+   Windows are placed outside the transient (0.5 s windows, 0.3 s guard). A trial is rejected for
+   a capture problem, ADC headroom (distinct from actual code saturation), a voltage that fell below the range the electrical fit
+   covers, or no stable window. A voltage above VD is normal for a loaded PZT and is not rejected (it
+   is flagged as provisional extrapolation with its largest excursion and duration). There is
+   no default VD+0.25 V limit; the optional excursion guard is off by default. Passing headroom
+   alone does not validate the electrical model above VD. Rejected trials keep their reasons;
+   clipping or a range failure blocks heavier masses. Retry the failed mass; a successful retry
+   restores automatically skipped steps, while user-skipped masses stay skipped.
+   Voltage checks cover the force-analysis interval, including the preceding sample needed
+   for its first prediction. Discarded startup/pretest samples do not reject the weight phase.
+   Unloaded measurements likewise check their selected fit/check windows. Full raw recordings
+   and capture voltage extrema remain preserved. A below-fit voltage can be a valid ADC value:
+   the rejection concerns electrical-model coverage, not an invalid ADC code or integrated force.
+   Saved decisions retain their original range-check policy for reproducible offline replay.
+4. *Fit and validate*: a common signed slope over placements and removals (each event is a step
+   plus a drift ramp), the intercept and flags, and a held-out repeat. *Evaluate leakage* fits an
+   effective correction only when the data supports it and otherwise reports "not identified";
+   nothing is applied automatically. Intact rejected hold/model trials may also be evaluated.
+   *Apply correction* replays preserved captures, re-estimates the unloaded bias once, freezes it,
+   and invalidates the previous gain and validation. *Roll back correction* does the same using
+   the original model. Live and offline reconstruction use the applied model. A hold slope alone
+   does not identify a physical Roff; the effective correction remains schedule-specific.
+   *Review last trial windows* allows explicit baseline/action/stable-window edits followed by
+   replay and refitting. It does not overwrite the recording or previous analysis.
+   *Save calibration* writes one `captest-force-calibration-1`
+   record per package and schedule (never overwriting another package, the other
+   array's package or another sampling rate); earlier saved revisions are archived. Saving
+   before a fit or successful validation is allowed and preserves the corresponding status.
+
+The status is **not fitted**, **fitted provisional**, **validated** or **stale**. A slope alone
+does not validate a calibration. A held-out repeat must meet an explicit error limit, with
+acceptable hold drift, load/removal agreement, estimator agreement, intercept and reference
+stability. Reported force errors use plain endpoint charge divided by the frozen training gain;
+they do not subtract the fitted event intercept. Drift-corrected fit steps and regression
+errors are retained separately. Estimated electrical provenance remains visible even when
+effective package force passes validation. Only validated sensitivities enter the force bundle.
+Failed/provisional validation records keep a tested range; they do not export a validated range.
+
+Every attempt has a unique `.cap` recording, `.npz` samples and an atomic `.trial.json` sidecar
+with hashes, button marks, settings/models, proposed/applied correction state and analysis history.
+Cancelled and rejected attempts survive Reset and restart. *Open saved trial evidence* replays
+the saved marks/model and decision offline without changing the active calibration. Its plot
+uses the saved initial display sensitivity; it does not imply a validated force scale.
+
+The fitted value is an **effective system sensitivity** for the capacitance-proxy conversion
+(`capacitance_proxy_v1`), not a material d33 and not proof of calibrated charge. A software test
+does not establish physical force calibration: the hardware acceptance steps are in the plan
+(`docs/plans/features/plan-CapTest-Force_calibration.md`).
+
+The force plot includes a dashed red line at zero. Its horizontal time axis is
+linked to the raw residual plot: zooming or panning either plot moves both.
+They use the same last 30 s during capture and the full selected trial interval
+after completion or offline review. Vertical scales remain independent (N and
+mV). Brief residual spikes are preserved when displaying long recordings;
+residuals retain their original electrical signs before bias/polarity correction.
+
 ## Caveats (also tooltips in the application)
 
 - `R_bias` tolerance maps 1:1 to `C_total`.

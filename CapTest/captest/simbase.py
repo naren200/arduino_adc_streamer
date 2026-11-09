@@ -45,7 +45,11 @@ class SimBase:
                 self.commands.append(line)
                 self._handle(line)
 
+    def _pump(self) -> None:
+        """Hook for devices that stream data while the host reads (continuous capture)."""
+
     def take(self, size: int) -> bytes:
+        self._pump()
         out = bytes(self._outbox[:size])
         del self._outbox[:size]
         return out

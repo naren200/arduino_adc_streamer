@@ -7,7 +7,7 @@
 namespace captest {
 
 static constexpr const char kFirmwareName[] = "TestBoard_7953_CapTest";
-static constexpr const char kFirmwareVersion[] = "1.3.0";
+static constexpr const char kFirmwareVersion[] = "1.4.0";
 static constexpr uint8_t kProtocolVersion = 1;
 
 static constexpr uint8_t kPacketMagic1 = 'C';
@@ -32,6 +32,31 @@ static constexpr uint32_t kMaxFirstClockDelayNs = 1000;
 static constexpr uint8_t kReleaseFrames = 3;
 // capalt: longest run of sensor or Vmid commands in one cycle.
 static constexpr uint8_t kMaxRunFrames = 8;
+
+// Continuous capture (firmware 1.4.0, capture protocol 1). Chunk layout: see ScanEngine.h.
+static constexpr uint8_t kCaptureProtocol = 1;
+static constexpr uint8_t kCaptureChunkVersion = 1;
+static constexpr uint8_t kChunkHeaderBytes = 36;
+static constexpr uint8_t kChunkRecordBytes = 12;
+static constexpr uint8_t kMaxScanRoutes = 64;
+static constexpr uint8_t kMaxSweepsPerChunk = 8;
+// One chunk is one USB frame: it must fit the patched core's TX_SIZE (2048 bytes).
+static constexpr uint16_t kMaxChunkBytes = 2048;
+static constexpr uint16_t kRingSweeps = 128;
+static constexpr uint32_t kMaxScanLagUs = 1000000;
+// Interrupts are masked for one ADC block of a sweep only; bound that time.
+static constexpr uint32_t kMaxBlockCriticalUs = 5000;
+// No chunk accepted by the host for this long: the capture ends (host gone) and parks.
+static constexpr uint32_t kCaptureStallMs = 10000;
+
+enum ChunkFlags : uint16_t {
+  FLAG_CHUNK_OVERRUN = 1u << 0,    // sweeps were dropped (ring full)
+  FLAG_CHUNK_FINAL = 1u << 1,      // last chunk of the session
+  FLAG_CHUNK_TAG_ERRORS = 1u << 2,
+  FLAG_CHUNK_RESET_BAD = 1u << 3,  // reserved: the host checks the Vmid readings
+  FLAG_CHUNK_STOPPED = 1u << 4,    // ended by capstop
+  FLAG_CHUNK_ERROR = 1u << 5,      // transfer error: abnormal end
+};
 
 enum Flags : uint8_t {
   FLAG_PERIOD_TOO_SHORT = 1u << 0,   // min measured period < 1.0 us

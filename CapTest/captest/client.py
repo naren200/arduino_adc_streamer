@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -34,6 +35,8 @@ class CapTestClient:
         self.link = link
         self.command_timeout = command_timeout
         self.burst_timeout = burst_timeout
+        self._pending = bytearray()      # bytes read ahead while telling chunks from text lines
+        self._streaming = False
 
     # ------------------------------------------------------------------ basic
     def command(self, text: str, timeout: Optional[float] = None) -> Tuple[bool, List[str]]:
@@ -161,3 +164,131 @@ class CapTestClient:
                                              first_clock_delay_ns)
         packet = self.burst_packet(text, protocol.HEADER_BYTES, protocol.packet_length_from_header)
         return protocol.decode_burst_packet(packet)
+
+    # ------------------------------------------------------- continuous capture
+    def capture_require(self) -> dict:
+        """Ask the firmware for the capture feature (capcaps). Older firmware answers #NOT_OK:
+        raises CaptureUnavailable, the burst workflows keep working."""
+        from .capture import CaptureUnavailable
+
+        try:
+            ok, comments = self.command("capcaps*")
+        except (protocol.ProtocolError, LinkError) as exc:
+            raise CaptureUnavailable("no answer to capcaps: %s" % exc) from exc
+        if not ok:
+            raise CaptureUnavailable("this firmware has no continuous capture (flash a newer "
+                                     "capacitance-test firmware); burst measurements still work")
+        for line in comments:
+            if line.startswith("# capcaps"):
+                values = protocol.parse_key_values(line)
+                if int(values.get("capture", 0)) != 1:
+                    raise CaptureUnavailable("unsupported capture protocol %s" % values.get("capture"))
+                return values
+        raise CaptureUnavailable("capcaps reply has no capability line")
+
+    def capture_configure(self, config) -> dict:
+        """Send the scan configuration (begin / route... / commit); returns the commit values."""
+        info: dict = {}
+        for line in config.command_lines():
+            ok, comments = self.command(line)
+            if not ok:
+                raise protocol.NotOkError("capture configuration rejected at: %s" % line.rstrip("*"))
+            for comment in comments:
+                if comment.startswith("# capcfg"):
+                    info = protocol.parse_key_values(comment)
+        return info
+
+    def capture_start(self, max_sweeps: int = 0) -> None:
+        self._pending.clear()
+        ok, _ = self.command("capstart %d*" % max_sweeps)
+        if not ok:
+            raise protocol.NotOkError("capstart rejected")
+        self._streaming = True
+
+    def capture_stop(self) -> None:
+        """Ask the board to stop; the final chunk(s) and the acknowledgement follow."""
+        self.link.write(b"capstop*")
+
+    def capture_streaming(self) -> bool:
+        return self._streaming
+
+    def resync(self, quiet_s: float = 0.25, max_s: float = 3.0) -> None:
+        """Bring the line to a known state before a capture: abort anything still running,
+        discard what the board still sends (stale chunks, a late acknowledgement) until the line
+        is quiet, then check that the board answers and is idle. Without this a failed capture
+        can leave bytes that the next command would read as its own reply."""
+        self._pending.clear()
+        self._streaming = False
+        try:
+            self.link.write(b"capabort*")
+        except LinkError:
+            raise
+        deadline = time.monotonic() + max_s
+        while time.monotonic() < deadline:
+            if not self.link.read(65536, quiet_s):
+                break
+        self.link.reset_input()
+        self._pending.clear()
+        ok, comments = self.command("capstat*", timeout=1.0)
+        state = ""
+        for line in comments:
+            if line.startswith("# capstat"):
+                state = protocol.parse_key_values(line).get("state", "")
+        if not ok and not state:
+            return                      # firmware without capture commands: nothing can be running
+        if not ok or state != "idle":
+            raise protocol.ProtocolError("the board is not idle after capabort (state=%s)" % (state or "?"))
+
+    def capture_status(self) -> dict:
+        ok, comments = self.command("capstat*")
+        if not ok:
+            raise protocol.NotOkError("capstat rejected")
+        for line in comments:
+            if line.startswith("# capstat"):
+                return protocol.parse_key_values(line)
+        raise protocol.FormatError("capstat reply has no status line")
+
+    def _take(self, size: int, timeout: float) -> bool:
+        while len(self._pending) < size:
+            part = self.link.read(size - len(self._pending), timeout)
+            if not part:
+                return False
+            self._pending += part
+        return True
+
+    def capture_items(self, timeout: float):
+        """Yield ('chunk', bytes), ('line', text) and ('ack', ok) items that arrive within
+        ``timeout`` of each other. Chunks and text lines may interleave, so each item is
+        framed: 'CK' starts a binary chunk of header-given length, anything else is a line."""
+        from .capture import CHUNK_MAGIC, HEADER_BYTES, chunk_length_from_header
+
+        while True:
+            if not self._take(2, timeout):
+                return
+            if bytes(self._pending[:2]) == CHUNK_MAGIC:
+                if not self._take(HEADER_BYTES, self.burst_timeout):
+                    raise protocol.TruncatedPacketError("capture chunk header incomplete")
+                total = chunk_length_from_header(bytes(self._pending[:HEADER_BYTES]))
+                if not self._take(total, self.burst_timeout):
+                    raise protocol.TruncatedPacketError("capture chunk incomplete")
+                data = bytes(self._pending[:total])
+                del self._pending[:total]
+                yield "chunk", data
+                continue
+            head = bytes(self._pending)
+            self._pending.clear()
+            if b"\n" in head:
+                line_bytes, _, rest = head.partition(b"\n")
+                self._pending += rest
+            else:
+                tail = self.link.readline(timeout)
+                if tail is None:
+                    self._pending += head      # keep the partial line for the next call
+                    return
+                line_bytes = head + tail
+            line = line_bytes.decode("ascii", "replace").strip()
+            if line.startswith("#OK") or line.startswith("#NOT_OK"):
+                self._streaming = False
+                yield "ack", line.startswith("#OK")
+            elif line:
+                yield "line", line

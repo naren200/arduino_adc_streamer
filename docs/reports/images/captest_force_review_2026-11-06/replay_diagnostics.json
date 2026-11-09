@@ -1,0 +1,122 @@
+{
+  "source_capture": "CapTest/Results/TestBoard_7953/force_calibration/trial_A2_PZT1_001.cap",
+  "source_sha256": "e499e22dca010b5b713a52d8b56cafd86a8f45dfe8fb9dc3e33766cbbbb14fa4",
+  "electrical_manifest_sha256": "bfb7f595752e820bb541582aa594d3024f9a4a17b808eddb4603f224977be8cb",
+  "sweeps": 17440,
+  "duration_s": 28.86453988,
+  "capture_valid": true,
+  "problems": [],
+  "assumed_audit_baseline_s": [
+    0.3,
+    3
+  ],
+  "initial_display_sensitivity_c_per_n": 6e-10,
+  "routes": [
+    {
+      "position": "B",
+      "ref": [
+        4,
+        0
+      ],
+      "n": 17440,
+      "rate_hz": 603.5051579572453,
+      "tc_median_us": 1.3833333341040088,
+      "range": {
+        "clipped": false,
+        "outside_fitted_range": false,
+        "extrapolated_low": true,
+        "d_min_v": -0.45772298177083326,
+        "d_max_v": 1.1444498697916667,
+        "v_min": 0.10498046875,
+        "v_max": 1.7071533203125
+      },
+      "vd_v": 1.2494303385416667,
+      "baseline_residual_bias_v": -0.0011212714034250675
+    },
+    {
+      "position": "L",
+      "ref": [
+        4,
+        1
+      ],
+      "n": 17440,
+      "rate_hz": 603.5051579574069,
+      "tc_median_us": 1.3766666668857397,
+      "range": {
+        "clipped": false,
+        "outside_fitted_range": false,
+        "extrapolated_low": true,
+        "d_min_v": -0.18670654296875,
+        "d_max_v": 1.06939697265625,
+        "v_min": 0.1800537109375,
+        "v_max": 1.4361572265625
+      },
+      "vd_v": 1.24945068359375,
+      "baseline_residual_bias_v": -0.001471901030480386
+    },
+    {
+      "position": "C",
+      "ref": [
+        4,
+        2
+      ],
+      "n": 17440,
+      "rate_hz": 603.5051579574069,
+      "tc_median_us": 1.3766666668857397,
+      "range": {
+        "clipped": false,
+        "outside_fitted_range": false,
+        "extrapolated_low": true,
+        "d_min_v": -0.26308186848958326,
+        "d_max_v": 1.1907755533854167,
+        "v_min": 0.05859375,
+        "v_max": 1.512451171875
+      },
+      "vd_v": 1.2493693033854167,
+      "baseline_residual_bias_v": -0.0010344241094896024
+    },
+    {
+      "position": "R",
+      "ref": [
+        4,
+        3
+      ],
+      "n": 17440,
+      "rate_hz": 603.5051579574069,
+      "tc_median_us": 1.378333333690307,
+      "range": {
+        "clipped": false,
+        "outside_fitted_range": false,
+        "extrapolated_low": true,
+        "d_min_v": -0.36431884765625,
+        "d_max_v": 1.14019775390625,
+        "v_min": 0.1092529296875,
+        "v_max": 1.61376953125
+      },
+      "vd_v": 1.24945068359375,
+      "baseline_residual_bias_v": -0.0010862351350438514
+    },
+    {
+      "position": "T",
+      "ref": [
+        4,
+        4
+      ],
+      "n": 17440,
+      "rate_hz": 603.5051579574069,
+      "tc_median_us": 1.378333333690307,
+      "range": {
+        "clipped": false,
+        "outside_fitted_range": false,
+        "extrapolated_low": true,
+        "d_min_v": -0.6524251302083333,
+        "d_max_v": 1.0644938151041667,
+        "v_min": 0.1849365234375,
+        "v_max": 1.90185546875
+      },
+      "vd_v": 1.2494303385416667,
+      "baseline_residual_bias_v": -0.0026904380255296013
+    }
+  ],
+  "note": "Audit uses explicit replay baseline, not recovered wizard marks. No known force was recorded."
+}

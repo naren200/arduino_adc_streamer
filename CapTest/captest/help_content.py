@@ -213,5 +213,101 @@ def build_help_html(driver, columns, field_specs):
                         "directly changes the capacitance scale. Defaults come from the board "
                         "configuration; verify actual values independently. Changing the table "
                         "and pressing Re-analyse recalculates stored results."))
+    if getattr(driver, "supports_force_calibration", False):
+        parts.append('<h2><a name="force"></a>Force export and Force Calibration</h2>')
+        parts.append(_entry(
+            "Force-input file", "Choose Array and PZT, measure the package, then add it to a "
+            "captest-force-inputs-1 file. Partial files are allowed and are updated by later "
+            "measurements; a re-measured package adds a revision. Failed channels are marked, "
+            "never replaced by zero. Complete coverage does not imply qualified electrical fits; "
+            "HIGH_RESIDUAL blocks ordinary force readiness."))
+        parts.append(_entry(
+            "Estimated electrical recovery", "Select healthy measured donors with explicitly matching "
+            "sensor size/type, wiring and strips-off boundary. The estimate is median(loaded minus "
+            "each donor's own board blank), plus the target's measured blank. Normally the target's "
+            "raw transitions are refitted at this capacitance. Borrowing same-ADC switching coefficients "
+            "is a separate experimental option. Review the preview; originals and donor hashes are kept. "
+            "Estimated provenance remains visible and requires independent package-force validation."))
+        parts.append(_entry(
+            "Guided calibration", "The board scans all routes of both arrays while you place and "
+            "remove your entered known masses (default 20, 50, 100, 200 g; two weights are allowed). "
+            "Use comma-separated gram values; trials run from smallest to largest. The table's Force [N] "
+            "column is the expected total force, mass [g] / 1000 times gravity. The unloaded baseline fixes a per-route "
+            "bias that is then frozen; each event is a step plus a drift ramp; a common signed "
+            "slope gives the effective d33_eff of the package. Clipping, or a voltage that falls "
+            "below the range of the electrical fit, rejects a trial and stops the escalation; a "
+            "voltage above VD is provisional extrapolation without a default 0.25 V ceiling. "
+            "Retry the failed mass before heavier masses. Workflow-only finger tests preserve "
+            "evidence but cannot fit known-mass gain. Cancelled/rejected attempts survive reset; "
+            "Open saved trial evidence replays their marks and model offline."))
+        parts.append(_entry(
+            "Comparing force and residuals", "The force plot has a dashed red reference at zero. "
+            "Both plots share the same time interval and pan/zoom together, with independent force and voltage axes. "
+            "Live plots show the same last 30 seconds; completed trials and saved evidence show their full selected interval. "
+            "Brief residual spikes are preserved when viewing long recordings. Residuals keep the original electrical signs."))
+        parts.append(_entry(
+            "Relative channel polarity", "Each B/L/C/R/T channel has a fixed +1 or -1 sign before group charge is summed. "
+            "Use Record press test, then Review press signs to compare each channel's press and release independently "
+            "of the group sum. After a brief noise sample, simply press and release the intended plate once. "
+            "Both actions are detected automatically and recording stops shortly after release. No stage buttons "
+            "or minimum hold are required; the weight plan and workflow-only selection are unchanged. "
+            "If no pair is detected, the listener stops after 20 seconds and you can retry. "
+            "Clipping/headroom is allowed in this direction-only check and shown in Notes / reason with "
+            "the clipped sample count; clipped charge magnitudes are unreliable. Force calibration retains its clipping checks. "
+            "Weak, invalid or conflicting responses stay unclear; Apply is enabled only when every channel is clear. "
+            "No centre reversal is assumed. Apply signs to this package saves the reviewed check and raw recording hash. "
+            "Repeat at other intended contact positions: the response may depend on bending or mounting. "
+            "For a centre channel opposite to its neighbours, select C = -1 and keep confirmed matching channels at +1. "
+            "Settings are saved independently for each Array/PZT group in the force-input file. "
+            "The raw ADC voltages and residual plot keep their electrical signs; the correction acts on charge contributions. "
+            "It is applied to both loading and removal, with no absolute values. The signed group sensitivity supplies "
+            "the overall force direction. Sign changes replay preserved captures, clear drift/leakage corrections and "
+            "invalidate the gain/validation. Reset trials, measure drift again, then recalibrate with known weights. "
+            "Verify unclipped loading and removal for the intended mounting and contact positions."))
+        parts.append(_entry(
+            "Notes and acceptance controls", "Mounting notes describe the fixture or plate; contact position "
+            "describes where the weight touches it. Both are optional annotations, logged and saved with "
+            "trial evidence; editing them does not reset the calibration. Max. validation error is the "
+            "allowed absolute error against held-out known-weight force, not a limit on the applied load. "
+            "Leave it unset for a provisional fit. Hold drift / step limit is the allowed accumulated "
+            "change during the hold divided by the loading step: 0.150 means 15%. It checks drift without "
+            "correcting it. The optional excursion guard is an experimental above-VD voltage cutoff; "
+            "normally leave it Off. Hover the field or its label for more detail."))
+        parts.append(_entry(
+            "Drift test → first weight trial", "Recommended for startup settling: before collecting weights, "
+            "keep hands off and run a continuous drift test. The app excludes the initial transient, "
+            "searches for a linear section of raw accumulated charge, fits the first half of the selected "
+            "window and checks the frozen slope on the later half. A nonzero slope is expected; its change "
+            "must fit the configured drift budget. The budget uses Max. validation error, or Hold drift / "
+            "step limit times the smallest planned mass force, over the hold duration, scaled by the "
+            "initial sensitivity. This is a planning check, not known-force validation. "
+            "Settling may take up to 120 s (or the selected window plus 2 s). On success acquisition "
+            "continues directly into the first weight trial. The correction subtracts charge drift rate "
+            "times actual elapsed time; it is never refitted during placement, hold or removal. "
+            "Raw training and weight samples share the same recording, with verified prefix/full hashes. "
+            "Reset trials before beginning another continuous drift-to-weight run."))
+        parts.append(_entry(
+            "Measure unloaded drift", "Before the weight trials, keep the same wiring and plate with no added mass, "
+            "hands off, and measure the unloaded drift (default 10 seconds). The first 2 seconds settle; "
+            "the first remaining half fits a per-channel residual bias, and the last half checks it. "
+            "A changing signal, ADC headroom or capture problem rejects the measurement while retaining "
+            "any previous correction. A qualified correction is subtracted before charge integration "
+            "in both live plots and trial analysis, and stays frozen through loading and holding. "
+            "It measures constant drift/bias, not voltage-dependent leakage or physical Roff. "
+            "Clear unloaded correction replays trials using their own unloaded baseline. "
+            "Changing the leakage predictor clears this correction and requires a new unloaded measurement."))
+        parts.append(_entry(
+            "Leakage and validation", "Evaluate leakage proposes a correction; Apply correction and "
+            "Rollback replay the original recordings and re-estimate then freeze unloaded bias. "
+            "Refit and validate afterwards. Window and limit changes invalidate the old fit too. "
+            "A numeric force-error limit and independent held-out repeat are needed for validated "
+            "status. Drift, load/removal disagreement and unstable VD keep a fit provisional. "
+            "Deployed force errors do not subtract the fitted event intercept."))
+        parts.append(_entry(
+            "What the result means", "d33_eff is an effective system sensitivity for the "
+            "capacitance-proxy conversion, valid for the tested package, schedule (including the "
+            "added lag) and mounting. It is not a material d33 and not proof of a calibrated "
+            "charge measurement. Effective leakage is schedule-specific; a hold slope alone does "
+            "not measure physical Roff. Only a validated gain is embedded in force inputs."))
     parts.append("</body></html>")
     return "".join(parts)

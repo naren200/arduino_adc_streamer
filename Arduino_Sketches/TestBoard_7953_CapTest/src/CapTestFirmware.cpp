@@ -8,6 +8,7 @@
 #include "BurstEngine.h"
 #include "CapTestProtocol.h"
 #include "ConfigurableParameters.h"
+#include "ScanEngine.h"
 #include "SpiController.h"
 #include "UsbSerialController.h"
 
@@ -37,6 +38,13 @@ Ads7953Adc g_adc4(g_spi2, testboard_config::kAdc4CsPin);
 Ads7953Adc *g_adcs[] = {&g_adc1, &g_adc2, &g_adc3, &g_adc4};
 
 BurstEngine g_engine;
+ScanEngine g_scan;
+ScanSetup g_scan_staging;
+ScanSetup g_scan_setup;
+bool g_scan_staged = false;      // capcfg begin seen
+bool g_scan_ready = false;       // capcfg commit accepted
+bool g_scan_needs_park = false;  // park the converters once the capture is over
+uint32_t g_session_counter = 0;
 constexpr size_t kPacketCapacity =
     kHeaderBytes + 2u * kMaxVmidWords + 2u * kMaxFrames + 4u * kMaxFrames + 2u;
 uint8_t g_packet[kPacketCapacity];
@@ -157,6 +165,7 @@ void printHelp() {
   Serial.println(F("# capstatus, capvmid <adc> [n], capabort, spiclock <hz <= 20000000>"));
   Serial.println(F("# capburst <adc 1-4> <channel> <samples|auto> <park_us> <gap_ns> [<first_clock_delay_ns> [<hold_mode 0|1>]]"));
   Serial.println(F("# capalt <adc 1-4> <channel> <frames> <park_us> <gap_ns> <sensor_run 1-8> <vmid_run 1-8> [<first_clock_delay_ns> [<gap_long_ns>]]"));
+  Serial.println(F("# capcaps, capcfg begin <gap_ns> <fcd_ns> <lag_us> 1 | route <adc> <ch> | commit, capstart [max_sweeps], capstop, capstat (continuous capture)"));
   Serial.println(F("# Binary burst reply follows '#OK' as documented in TESTBOARD_7953_CAPTEST.md"));
 }
 
@@ -202,7 +211,10 @@ bool handleVmid(const String &arguments) {
 
 bool handleAbort() {
   // A burst cannot be interrupted (it runs with interrupts masked and finishes
-  // in a few ms), so abort only re-parks the converters on Vmid.
+  // in a few ms), so abort only re-parks the converters on Vmid. A running
+  // capture is ended first (no further chunks).
+  if (g_scan.active()) g_scan.abort();
+  g_scan_needs_park = false;
   bool ok = true;
   for (Ads7953Adc *adc : g_adcs) ok = g_engine.park(*adc, 4, nullptr) && ok;
   return ok;
@@ -368,6 +380,172 @@ bool runBurst(Ads7953Adc &adc, const BurstRequest &request, const String &argume
   return true;  // ack already written
 }
 
+
+// ---------------------------------------------------------------- continuous capture
+// capcaps | capcfg begin/route/commit | capstart | capstop | capstat (capture protocol 1).
+void handleCapCaps() {
+  Serial.print(F("# capcaps capture="));
+  Serial.print(kCaptureProtocol);
+  Serial.print(F(" chunk="));
+  Serial.print(kCaptureChunkVersion);
+  Serial.print(F(" max_routes="));
+  Serial.print(kMaxScanRoutes);
+  Serial.print(F(" sweeps_per_chunk="));
+  Serial.print(kMaxSweepsPerChunk);
+  Serial.print(F(" ring_sweeps="));
+  Serial.print(kRingSweeps);
+  Serial.print(F(" max_chunk_bytes="));
+  Serial.println(kMaxChunkBytes);
+}
+
+bool handleCapCfg(const String &arguments) {
+  const Tokens tokens = tokenize(arguments);
+  if (tokens.count < 1 || g_scan.active()) return false;
+  if (tokens.item[0] == "begin") {
+    uint32_t gap_ns = 0, fcd_ns = 0, lag_us = 0, vmid_frames = 0;
+    if (tokens.count != 5 || !parseUnsigned(tokens.item[1], gap_ns) ||
+        !parseUnsigned(tokens.item[2], fcd_ns) || !parseUnsigned(tokens.item[3], lag_us) ||
+        !parseUnsigned(tokens.item[4], vmid_frames)) {
+      return false;
+    }
+    // Capture protocol 1 resets with exactly one Vmid frame per route.
+    if (vmid_frames != 1 || gap_ns > kMaxGapNs || fcd_ns > kMaxFirstClockDelayNs ||
+        lag_us > kMaxScanLagUs) {
+      return false;
+    }
+    g_scan_staging = ScanSetup();
+    g_scan_staging.gap_ns = gap_ns;
+    g_scan_staging.first_clock_delay_ns = fcd_ns;
+    g_scan_staging.lag_us = lag_us;
+    g_scan_staged = true;
+    g_scan_ready = false;
+    return true;
+  }
+  if (tokens.item[0] == "route") {
+    uint32_t adc_number = 0, channel = 0;
+    if (!g_scan_staged || tokens.count != 3 || !parseUnsigned(tokens.item[1], adc_number) ||
+        !parseUnsigned(tokens.item[2], channel)) {
+      return false;
+    }
+    if (channel > 15 || !channelRouted(adc_number, channel) ||
+        g_scan_staging.n_routes >= kMaxScanRoutes) {
+      return false;
+    }
+    g_scan_staging.adc[g_scan_staging.n_routes] = static_cast<uint8_t>(adc_number);
+    g_scan_staging.channel[g_scan_staging.n_routes] = static_cast<uint8_t>(channel);
+    ++g_scan_staging.n_routes;
+    g_scan_ready = false;
+    return true;
+  }
+  if (tokens.item[0] == "commit") {
+    if (!g_scan_staged || tokens.count != 1 ||
+        !ScanEngine::valid(g_scan_staging, g_spi1.clockHz())) {
+      return false;
+    }
+    g_scan_setup = g_scan_staging;
+    g_scan_ready = true;
+    const uint32_t frames = ScanEngine::framesPerSweep(g_scan_setup);
+    Serial.print(F("# capcfg routes="));
+    Serial.print(g_scan_setup.n_routes);
+    Serial.print(F(" blocks="));
+    Serial.print(ScanEngine::blockCount(g_scan_setup));
+    Serial.print(F(" frames_per_sweep="));
+    Serial.print(frames);
+    Serial.print(F(" sweep_ns="));
+    Serial.println(static_cast<uint32_t>(
+        static_cast<uint64_t>(frames) * nominalFramePeriodNs(g_spi1.clockHz(), g_scan_setup.gap_ns)));
+    return true;
+  }
+  return false;
+}
+
+bool handleCapStart(const String &arguments) {
+  const Tokens tokens = tokenize(arguments);
+  uint32_t max_sweeps = 0;
+  if (tokens.count > 1 || (tokens.count == 1 && !parseUnsigned(tokens.item[0], max_sweeps))) {
+    return false;
+  }
+  if (!g_scan_ready || g_scan.active() ||
+      !ScanEngine::valid(g_scan_setup, g_spi1.clockHz())) {
+    return false;
+  }
+  ++g_session_counter;
+  uint32_t session = bootId() * 2654435761u;
+  session ^= g_session_counter * 7919u;
+  session ^= micros();
+  g_scan.begin(g_scan_setup, session == 0 ? 1u : session, bootId(), max_sweeps);
+  g_scan_needs_park = true;
+  return true;  // acknowledged by the caller; the main loop then streams chunks
+}
+
+void pumpScanUsb() {
+  const uint8_t *data = nullptr;
+  uint16_t length = 0;
+  while (g_scan.nextChunk(data, length)) {
+    const UsbSerialController::FrameWrite result = g_usb.tryWriteBinaryBlock(data, length);
+    if (result == UsbSerialController::FrameWrite::Sent) {
+      g_scan.chunkSent();
+    } else if (result == UsbSerialController::FrameWrite::Error) {
+      g_scan.transferError();  // the chunk is lost; its sequence number leaves a visible gap
+      g_scan.chunkSent();
+    } else {
+      break;  // USB buffers full or host absent: keep the chunk and try again
+    }
+  }
+}
+
+bool handleCapStop() {
+  if (g_scan.running()) g_scan.requestStop();
+  const uint32_t started = millis();
+  while (g_scan.active() && millis() - started < 1500) pumpScanUsb();
+  if (g_scan.active()) g_scan.abort();  // the host is not draining: give up
+  bool ok = true;
+  for (Ads7953Adc *adc : g_adcs) ok = g_engine.park(*adc, 4, nullptr) && ok;
+  g_scan_needs_park = false;
+  return ok;
+}
+
+void handleCapStat() {
+  const ScanState state = g_scan.state();
+  Serial.print(F("# capstat state="));
+  Serial.print(state == ScanState::Running ? F("running")
+               : state == ScanState::Draining ? F("draining") : F("idle"));
+  Serial.print(F(" session=0x"));
+  Serial.print(g_scan.session(), HEX);
+  Serial.print(F(" sweeps="));
+  Serial.print(g_scan.sweeps());
+  Serial.print(F(" chunks="));
+  Serial.print(g_scan.chunks());
+  Serial.print(F(" dropped="));
+  Serial.println(g_scan.dropped());
+}
+
+// Called every loop(): one sweep, then as many chunks as the USB buffers take. Plotting or
+// any host-side slowness only fills the ring (reported), never changes the sampling.
+void serviceScan() {
+  if (g_scan.state() == ScanState::Done && g_scan_needs_park) {
+    g_scan_needs_park = false;
+    for (Ads7953Adc *adc : g_adcs) g_engine.park(*adc, 4, nullptr);
+    return;
+  }
+  if (!g_scan.active()) return;
+  if (g_scan.running()) {
+    g_scan.sweep(g_adcs);
+    const uint32_t lag_us = g_scan.lagUs();
+    if (lag_us != 0) {
+      const uint32_t started = micros();
+      while (micros() - started < lag_us) {
+        pumpScanUsb();
+        if (Serial.available()) break;  // a command (capstop) is waiting
+      }
+    }
+  }
+  pumpScanUsb();
+  if (g_scan.active() && millis() - g_scan.lastSendMs() > kCaptureStallMs) {
+    handleAbort();  // the host stopped reading: end the capture and park
+  }
+}
+
 void handleLine(const String &raw_line) {
   String line = raw_line;
   line.trim();
@@ -375,6 +553,15 @@ void handleLine(const String &raw_line) {
   String command, arguments;
   api_protocol::splitCommand(line, command, arguments);
   bootId();  // latch at the first host command
+
+  // While a capture runs only status, stop and abort are accepted: a burst would mask
+  // interrupts and disturb the schedule.
+  if (g_scan.active() && command != "capstat" && command != "capstop" &&
+      command != "capabort" && command != "stop" && command != "capcaps" &&
+      command != "capstatus" && command != "status") {
+    g_usb.writeAck(false, arguments);
+    return;
+  }
 
   if (command == "capstatus" || command == "status") {
     printStatus();
@@ -385,6 +572,18 @@ void handleLine(const String &raw_line) {
     if (!handleBurst(arguments)) g_usb.writeAck(false, arguments);
   } else if (command == "capalt") {
     if (!handleAlternate(arguments)) g_usb.writeAck(false, arguments);
+  } else if (command == "capcaps") {
+    handleCapCaps();
+    g_usb.writeAck(true, arguments);
+  } else if (command == "capcfg") {
+    g_usb.writeAck(handleCapCfg(arguments), arguments);
+  } else if (command == "capstart") {
+    g_usb.writeAck(handleCapStart(arguments), arguments);
+  } else if (command == "capstop") {
+    g_usb.writeAck(handleCapStop(), arguments);
+  } else if (command == "capstat") {
+    handleCapStat();
+    g_usb.writeAck(true, arguments);
   } else if (command == "capabort" || command == "stop") {
     g_usb.writeAck(handleAbort(), arguments);
   } else if (command == "spiclock") {
@@ -422,6 +621,7 @@ void loopFirmware() {
   while (g_usb.readCommand(line)) {
     handleLine(line);
   }
+  serviceScan();
   yield();
 }
 
