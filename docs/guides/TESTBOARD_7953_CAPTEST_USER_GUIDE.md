@@ -147,6 +147,15 @@ Force Calibration, steps 2-3 (a guided capture of the selected package; the boar
    1500 us; 0 us is about 3.5 MB/s and overflowed the board's buffer on the first hardware test)
    and, during and after a trial, the measured rate of each channel (B, L, C, R, T). The measured
    rates are stored in every trial and summarised as `sampling_per_channel` in the calibration record.
+   Hardware captures have a dedicated serial receiver and a bounded 16 MiB queue, allowing
+   reception to continue during drift fitting, evidence hashing and plot preparation. No
+   firmware update is needed for this host change. A lower lag such as 500 us may reduce
+   voltage excursions, but must be checked on the board: record unloaded drift through
+   the weight prompt, then press/release and confirm no CRC/gap/overrun failures, no
+   clipped samples and the expected measured sampling rate. Repeat several trials and
+   cancel/restart once to check cleanup. Remeasure drift at the new lag; do not reuse a
+   correction measured at 1500 us. Queue exhaustion remains a capture failure, and
+   missing samples are never interpolated for force integration.
    While this tab is selected the right-hand area of the window shows the force workspace: the prompt,
    the action buttons, the sampling rate, the force and residual plots and the step table.
    After a rejected trial the prompt says why. *Retry failed* clears the plots and makes the step pending

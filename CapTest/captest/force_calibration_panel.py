@@ -2,8 +2,8 @@
 
 The panel only displays and wires: every decision lives in ``force_session`` (controller),
 ``force_calibration`` (wizard, trial analysis, records), ``force_export`` (electrical inputs
-file) and ``capture`` (continuous capture). A worker thread polls the capture, so plotting
-never delays reading; the plots refresh from immutable snapshots on a timer.
+file) and ``capture`` (continuous capture). A dedicated serial receiver drains hardware
+captures while the worker decodes and analyses them; plots use immutable snapshots.
 """
 
 from __future__ import annotations
@@ -40,8 +40,9 @@ def failure_text(trial) -> str:
             kinds.append(kind)
     text = "The last trial was rejected (%s)." % ", ".join(kinds[:5])
     if {"OVERRUN", "GAP", "CRC", "LINK"} & set(kinds):
-        text += (" The host could not keep up with the board's data rate. Raise 'Added lag per "
-                 "sweep' (try 1500 us or more), then press 'Retry failed' and 'Start trial'.")
+        text += (" Capture data were lost or corrupted; force integration needs an intact stream. "
+                 "Press 'Retry failed' and 'Start trial'. If this repeats, check the USB connection "
+                 "and increase 'Added lag per sweep' to reduce the data rate.")
     return text
 
 

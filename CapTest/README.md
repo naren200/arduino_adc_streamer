@@ -125,6 +125,13 @@ not automatically refit it. Capture gaps/CRC errors remain separate failures.
 Live drift checks omit final timing statistics to reduce pauses in serial reading.
 On drivers that support it, CapTest requests a 1 MiB receive buffer for the stream;
 the driver may ignore that request. Final recordings still include full statistics.
+Hardware force captures also use a dedicated serial receiver with a bounded 16 MiB
+queue, so drift fitting, prefix hashing, replay and plot preparation do not pause
+serial reception. Decoding and raw recording retain one consumer. Queue exhaustion
+is an explicit capture failure; CRC, gap, clipping and other quality checks remain
+in force. Simulated captures retain deterministic polling. This host change needs
+no firmware update. A 500 us lag still needs a hardware retry to establish sustained
+reliability; faster acquisition does not guarantee an unclipped press.
 Without a prior unloaded correction, the initial baseline plot waits for its bias estimate
 instead of showing uncorrected integration as force.
 

@@ -308,7 +308,7 @@ class ForceCalibrationController:
         self._persist("starting")
         self.session = CaptureSession(self.client, self.scan, self.group.refs,
                                       record_path=path, span_volts=self.settings.vref,
-                                      meta=meta)
+                                      meta=meta, background_read=not self.simulated)
         try:
             self.session.start()
         except Exception:

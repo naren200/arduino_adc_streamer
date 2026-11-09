@@ -24,6 +24,7 @@ invalid for calibration.
 from __future__ import annotations
 
 import hashlib
+from collections import deque
 import struct
 import time
 import threading
@@ -44,6 +45,7 @@ MAX_ROUTES = 64
 MAX_SWEEPS_PER_CHUNK = 64
 STOP_DRAIN_S = 4.0              # longest wait for the final chunk and the capstop acknowledgement
 MERGE_EVERY = 64               # chunks joined into one piece for cheap snapshots
+RECEIVE_QUEUE_BYTES = 16 * 1024 * 1024  # bounded cushion for analysis/paint/disk pauses
 
 _HEADER = struct.Struct("<2sBBIIIIHHHHII")
 assert _HEADER.size == HEADER_BYTES
@@ -572,17 +574,82 @@ def replay_file(path, keep_routes=None, span_volts: float = 2.5) -> CaptureResul
 
 
 # ---------------------------------------------------------------------------- session
+class _CaptureReceiver:
+    """Own serial reads while the consumer decodes, analyses or writes evidence.
+
+    Only raw framed items cross the queue; recording and assembly retain one owner.
+    Exhausting the byte budget is an explicit link failure, never a silent drop.
+    """
+
+    def __init__(self, client, timeout, max_bytes):
+        self.client, self.timeout, self.max_bytes = client, timeout, max_bytes
+        self._condition = threading.Condition()
+        self._items = deque()
+        self._bytes = 0
+        self._error = None
+        self._finished = False
+        self._stop = threading.Event()
+        self.thread = threading.Thread(target=self._run, name="CapTest serial receiver", daemon=True)
+
+    def _run(self):
+        try:
+            while not self._stop.is_set():
+                for kind, payload in self.client.capture_items(self.timeout):
+                    if self._stop.is_set():
+                        return
+                    size = len(payload) if isinstance(payload, (bytes, str)) else 1
+                    with self._condition:
+                        if self._bytes + size > self.max_bytes:
+                            raise LinkError("host capture receive queue full; processing could not keep up "
+                                            "(%d byte limit); no missing samples were filled" % self.max_bytes)
+                        self._items.append((kind, payload, size))
+                        self._bytes += size
+                        self._condition.notify()
+                    if kind == "ack":
+                        return
+        except Exception as exc:
+            with self._condition:
+                self._error = exc
+        finally:
+            with self._condition:
+                self._finished = True
+                self._condition.notify_all()
+
+    def items(self, timeout):
+        while True:
+            with self._condition:
+                if not self._items and not self._finished:
+                    self._condition.wait_for(lambda: self._items or self._finished, timeout)
+                if self._items:
+                    kind, payload, size = self._items.popleft()
+                    self._bytes -= size
+                elif self._error is not None:
+                    raise LinkError("capture receiver failed: %s" % self._error) from self._error
+                else:
+                    return
+            yield kind, payload
+
+    def stop(self):
+        self._stop.set()
+        # A framed read already in progress has the client's normal burst timeout.
+        self.thread.join(max(self.timeout, self.client.burst_timeout) + .5)
+        if self.thread.is_alive():
+            raise LinkError("capture receiver did not stop; serial reads still owned by receiver")
+
+
 class CaptureSession:
     """Runs one capture on a client: configure, start, read chunks, stop, always park.
 
     ``keep_routes`` (the analysed package) are kept in memory; every chunk is recorded to disk
     when ``record_path`` is given. The caller keeps reading with :meth:`poll` so the board's
-    buffer never fills; plotting must never delay :meth:`poll`.
+    buffer never fills. With ``background_read``, a dedicated receiver continues draining
+    serial during consumer work; the consumer still owns decoding and raw recording.
     """
 
     def __init__(self, client, config: ScanConfig, keep_routes: Sequence[Tuple[int, int]],
                  record_path=None, span_volts: float = 2.5, meta: Optional[dict] = None,
-                 poll_timeout: float = 0.2, max_chunks_per_poll: int = 32):
+                 poll_timeout: float = 0.2, max_chunks_per_poll: int = 32,
+                 background_read: bool = False, receive_queue_bytes: int = RECEIVE_QUEUE_BYTES):
         self.client = client
         self.max_chunks_per_poll = max_chunks_per_poll
         self.config = config
@@ -592,6 +659,9 @@ class CaptureSession:
         self.running = False
         self.stopping = False
         self.closed = False
+        self._background_read = background_read
+        self._receive_queue_bytes = receive_queue_bytes
+        self._receiver = None
 
     def start(self, max_sweeps: int = 0) -> None:
         if self.closed:
@@ -601,6 +671,14 @@ class CaptureSession:
         self.client.capture_configure(self.config)
         self.client.capture_start(max_sweeps)
         self.running = True
+        if self._background_read:
+            self._receiver = _CaptureReceiver(self.client, self.poll_timeout, self._receive_queue_bytes)
+            self._receiver.thread.start()
+
+    def _items(self):
+        if self._receiver is not None:
+            return self._receiver.items(self.poll_timeout)
+        return self.client.capture_items(self.poll_timeout)
 
     @property
     def device_time_s(self) -> float:
@@ -613,7 +691,7 @@ class CaptureSession:
             return 0
         n = 0
         try:
-            for kind, payload in self.client.capture_items(self.poll_timeout):
+            for kind, payload in self._items():
                 if kind == "chunk":
                     if self.recorder is not None:
                         self.recorder.write(payload)
@@ -641,7 +719,7 @@ class CaptureSession:
                     acked = False
                     deadline = time.monotonic() + STOP_DRAIN_S
                     while time.monotonic() < deadline and not acked:
-                        for kind, payload in self.client.capture_items(self.poll_timeout):
+                        for kind, payload in self._items():
                             if kind == "chunk":
                                 if self.recorder is not None:
                                     self.recorder.write(payload)
@@ -659,10 +737,18 @@ class CaptureSession:
                 self.assembler._problem(GAP, "the capture ended without its final chunk")
         finally:
             self.running = False
+            receiver_stopped = True
+            if self._receiver is not None:
+                try:
+                    self._receiver.stop()
+                except LinkError as exc:
+                    receiver_stopped = False
+                    self.assembler._problem(LINK, str(exc))
             sha = self.recorder.close() if self.recorder is not None else ""
             self.closed = True
             try:
-                self.client.resync()                 # abort (ADCs parked on Vmid), drain, check idle
+                if receiver_stopped:
+                    self.client.resync()             # one reader at a time, including cleanup
             except (LinkError, protocol.ProtocolError):
                 pass
         return self.assembler.result(str(self.recorder.path) if self.recorder else "", sha)
