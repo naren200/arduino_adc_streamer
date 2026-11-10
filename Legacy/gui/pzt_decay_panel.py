@@ -15,15 +15,13 @@ from PyQt6.QtGui import QDesktopServices
 import pyqtgraph as pg
 
 from data_processing.adc_mux_timing import calculate_adc_mux_timing_for_acquisition
-from data_processing.pzt_decay import (
+from data_processing.pzt_timing_context import PztDecayTimingContext
+from Legacy.config_constants import PZT_DECAY_TAB_NAME
+from Legacy.data_processing.pzt_decay import (
     PztDecayAnalyzer, PztDecaySettings, PztDecayState, PztDecayTimestampBasis,
-    PztDecayTimingContext,
     resolve_pzt_decay_signal_mapping,
 )
-from file_operations.pzt_decay_exporter import PztDecayExporter
-# Re-exported so existing importers of this module keep working; the tab name
-# itself lives with the other tab titles in constants/ui.py.
-from constants.ui import PZT_DECAY_TAB_NAME  # noqa: F401
+from Legacy.file_operations.pzt_decay_exporter import PztDecayExporter
 
 
 PZT_DECAY_REPEAT_COUNT = 50

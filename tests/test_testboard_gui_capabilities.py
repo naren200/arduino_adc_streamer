@@ -150,8 +150,6 @@ def gui(tmp_path,monkeypatch):
     with patch('adc_gui.load_device_config',return_value={'auto_connect':False}):
         from adc_gui import ADCStreamerGUI
         from PyQt6.QtCore import QSettings
-        monkeypatch.setattr(ADCStreamerGUI, '_pzt_decay_qsettings',
-            lambda self: QSettings(str(tmp_path / 'decay.ini'), QSettings.Format.IniFormat))
         monkeypatch.setattr(ADCStreamerGUI, '_pressure_map_workspace_qsettings',
             lambda self: QSettings(str(tmp_path / 'pressure.ini'), QSettings.Format.IniFormat))
         window=ADCStreamerGUI()
@@ -471,21 +469,6 @@ def test_heatmap_processes_both_arrays_in_selected_pzt_order(gui):
     assert gui._testboard_heatmap_processors == processors
     assert all(isinstance(p, HeatmapSignalProcessor) for p in processors.values())
     assert gui._get_heatmap_baseline_key_for_display_spec(gui.get_display_channel_specs()[0]) != gui._get_heatmap_baseline_key_for_display_spec(gui.get_acquisition_channel_specs()[0])
-
-
-def test_calibration_target_stays_on_start_array_and_round_trips(gui, tmp_path):
-    gui._build_adc_configuration_request(); gui.freeze_testboard_capture_descriptor()
-    gui._start_force_calibration_measurement()
-    row = gui.force_calibration_state.pzt_calibration_rows[-1]
-    assert (row.array_number, row.sensor_id) == (1, 'PZT6')
-    gui.display_array_combo.setCurrentText('2')
-    assert {s['array_number'] for s in gui._force_calibration_channel_specs()} == {1}
-    path = tmp_path / 'calibration.json'
-    gui.save_force_calibration_to_path(path, log_message=False)
-    gui.force_calibration_state.is_capturing = False
-    gui.load_force_calibration_from_path(path, log_message=False)
-    restored = gui.force_calibration_state.pzt_calibration_rows[-1]
-    assert (restored.array_number, restored.sensor_id) == (1, 'PZT6')
 
 
 def test_saved_scan_order_cannot_override_profile_only_setting(gui):

@@ -1,7 +1,7 @@
 # Force Calibration Tab Specification
 
 Owner: Host application GUI/force-calibration stack  
-Status: Implemented  
+Status: Archived — the tab was removed from the application; code is preserved under `Legacy/gui/force_calibration_panel.py` and `Legacy/data_processing/force_calibration_state.py`  
 Date: 2026-07-08
 
 ## Purpose

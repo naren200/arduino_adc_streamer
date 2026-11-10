@@ -1,3 +1,5 @@
+> **Status: Archived.** The PZT_Decay_Calc tab was removed from the application. Its code is preserved under `Legacy/gui/pzt_decay_panel.py`, `Legacy/data_processing/pzt_decay.py` and `Legacy/file_operations/pzt_decay_exporter.py`. `PztDecayTimingContext` remains active in `data_processing/pzt_timing_context.py`.
+
 # PZT_Decay_Calc
 ## Detailed Design and Implementation Specification
 

@@ -1,3 +1,5 @@
+> **Status: Archived.** The Force Calibration tab was removed from the application; its code is preserved under `Legacy/`.
+
 ## Plan: Force Calibration Tab
 
 Add a dedicated Force Calibration tab that fits the existing mixin-based GUI architecture. The tab will let the user select a sensor family and sensor number, start/stop a measurement window while force sensors are connected, capture the peak force and sensor response values during that window, append a row to a calibration table, and save/load calibration files per sensor family. Loaded calibration data will feed both the display legends and the processing path that maps sensor readings to force.

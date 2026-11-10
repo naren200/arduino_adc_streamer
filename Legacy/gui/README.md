@@ -98,6 +98,14 @@ Mixin building the Shear/CoP visualization tab: per-package shear cards (arrow +
 - `ShearPanelMixin.show_shear_channel_warning(current_channels, required_channels="5")` — displays a warning label when the channel count doesn't match shear requirements.
 - `ShearPanelMixin.clear_shear_channel_warning()` — clears the shear channel warning label.
 
+### force_calibration_panel.py
+
+Archived Force Calibration tab mixin (`ForceCalibrationPanelMixin`): sensor family/number and signal-source (raw piezo, heatmap, pressure/shear) selection, live measurement window capture, results table, and JSON save/load/autosave of calibration rows. Removed from the active window; its state lives in `Legacy/data_processing/force_calibration_state.py` and its constants in `Legacy/config_constants.py`. It is no longer mixed into `ADCStreamerGUI` and expects the former `create_force_calibration_tab()` / `init_force_calibration_state()` wiring plus the heatmap/pressure-shear resolvers of the host window.
+
+### pzt_decay_panel.py
+
+Archived PZT_Decay_Calc tab mixin (`PztDecayPanelMixin`): the exclusive one-address PZT voltage-decay characterization workflow (Vmid calculation, burst/single sampling, live preview, result save/open-folder) built on `Legacy/data_processing/pzt_decay.py` and `Legacy/file_operations/pzt_decay_exporter.py`. It is no longer mixed into `ADCStreamerGUI`.
+
 ### __init__.py
 
 Empty package marker file (no content).

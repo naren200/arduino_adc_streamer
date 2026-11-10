@@ -6,7 +6,7 @@ import csv
 import json
 from pathlib import Path
 
-from data_processing.pzt_decay import PztDecayResult, PztDecaySample
+from Legacy.data_processing.pzt_decay import PztDecayResult, PztDecaySample
 
 
 SAMPLE_COLUMNS = (

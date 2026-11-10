@@ -9,7 +9,6 @@ Formal feature specifications for implemented or intended app behavior. Planning
 - `gui-tabs/ROSETTE_TAB_SPEC.md` — Rosette tab specification: conditional `PZT_RS` visibility, resistance/force plotting, Rosette-specific controls, and acceptance criteria.
 - `pressure-map/PRESSURE_MAP_TAB_SPEC.md` — Pressure Map tab specification: integrated live processing, shear/normal derivation, pressure-map rendering, selectable color schemes, custom/voltage legends, settings persistence, and acceptance criteria.
 - `gui-tabs/HEATMAP_TAB_SPEC.md` — Heatmap tab specification: live PZT/PZR heatmap rendering, display geometry, overlays, persistence, and acceptance criteria.
-- `force-calibration/FORCE_CALIBRATION_TAB_SPEC.md` — Force Calibration tab specification: live calibration-row capture, sensor/source selection, table behavior, persistence, and acceptance criteria.
 - `gui-tabs/SPECTRUM_TAB_SPEC.md` — Spectrum tab specification: FFT/Welch controls, live update lifecycle, settings persistence, and acceptance criteria.
 - `gui-tabs/ANALYSIS_TAB_SPEC.md` — Analysis tab specification: offline in-memory or CSV+JSON loading, legacy CSV compatibility, raw/integrated/shear-normal/force plots, load-cell Newton conversion, calculated PZT force, matched trace colors, stable marker/layout behavior, PNG image export, settings persistence, and acceptance criteria.
 - `gui-tabs/SENSOR_TAB_SPEC.md` — Sensor tab specification: sensor-library editing, channel/array layout configuration, validation, persistence, and acceptance criteria.

@@ -6,13 +6,13 @@ Unit tests for the Force Calibration tab and live 5-sensor capture workflow.
 
 import unittest
 
-from data_processing.force_calibration_state import (
+from Legacy.data_processing.force_calibration_state import (
     ActiveMeasurementWindow,
     CalibrationRow,
     build_default_force_calibration_state,
     get_calibration_rows_for_family,
 )
-from gui.force_calibration_panel import ForceCalibrationPanelMixin
+from Legacy.gui.force_calibration_panel import ForceCalibrationPanelMixin
 
 
 class TestForceCalibrationState(unittest.TestCase):

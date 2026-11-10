@@ -5,7 +5,6 @@ Plans for work that is proposed, in progress, or awaiting hardware acceptance. C
 ## Files
 
 - `features/plan-analysisTabOfflineSignalWorkbench.prompt.md` — implementation plan for the offline Analysis workbench, including source adapters, read-only lifecycle, Spectrum filter reuse, integration/shear/normal overlays, synchronized plots, marker behavior, settings persistence, and compatibility decisions.
-- `features/plan-forceCalibration.prompt.md` — implementation plan for the Force Calibration tab: sensor family/number selection, measured calibration windows, calibration table persistence, and deferred follow-up scope.
 - `features/plan-inAnalysisTab-Calculated_PZT_Force.md` — plan/spec notes for calculated PZT force in Analysis: settings, reusable calculation ownership, quiet-window Vmid/noise estimation, noise thresholding, leakage model, automatic zeroing, plot behavior, and export expectations.
 - `features/plan-captest-measurement-revision.md` — revision of the CapTest capacitance measurement, partly implemented: TestBoard_7953 now defaults to Vmid between samples (`capalt`, firmware 1.3.0) instead of the proposed multi-period method; see its section 0 for the status of every item. Also proposed: frame-effect, read-order and mux-off `C_D` tests for TestBoard_ADC124, and the matching app and CapTest firmware changes.
 - `features/plan-pressureMap-adjacentPackageInterpolation.md` — implementation plan for adjacent-package interpolation in the Pressure Map workflow.

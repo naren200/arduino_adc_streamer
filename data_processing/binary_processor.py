@@ -254,11 +254,6 @@ class BinaryProcessorMixin:
                     and self.maybe_finalize_pzt_ghost_calibration()
                 )
 
-                # PZT_Decay_Calc receives the same canonical values as the other
-                # views once the startup ghost baseline is available.
-                if hasattr(self, 'process_pzt_decay_block') and not ghost_calibration_was_pending:
-                    self.process_pzt_decay_block(block_samples_array, sweep_timestamps_sec)
-
                 # --- Enqueue archive write (handled by background ArchiveWriterThread) ---
                 if store_capture_data and getattr(self, '_archive_writer', None):
                     if ghost_calibration_was_pending:
@@ -281,18 +276,6 @@ class BinaryProcessorMixin:
                 # GUI thread (queued Qt signal connection).
                 if store_capture_data:
                     now = time.time()
-                    if (
-                        hasattr(self, 'update_force_calibration_live_reading_from_selected_source')
-                        and getattr(self, 'force_calibration_state', None) is not None
-                        and getattr(self.force_calibration_state, 'is_capturing', False)
-                        and now - getattr(self, '_last_force_calibration_update_time', 0.0) >= PLOT_UPDATE_INTERVAL_SEC
-                    ):
-                        self._last_force_calibration_update_time = now
-                        try:
-                            self.update_force_calibration_live_reading_from_selected_source()
-                        except Exception as exc:
-                            self.log_status(f"WARNING: Force calibration live update unavailable: {exc}")
-
                     if (
                         (
                             not hasattr(self, 'should_update_live_timeseries_display')

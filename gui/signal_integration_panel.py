@@ -221,7 +221,7 @@ from data_processing.pressure_map_array_generator import (
 from data_processing.pressure_map_geometry import PressureMapGeometry
 from data_processing.force_block_worker import ForceBlockBatch, ForceBlockWorker, ForceRenderResult, WorkerState
 from data_processing.pressure_force_display import PressureForceDisplayEngine
-from data_processing.pzt_decay import PztDecayTimingContext
+from data_processing.pzt_timing_context import PztDecayTimingContext
 from data_processing.shear_detector import ShearDetector, ShearResult
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from gui.pressure_map_widget import PressureMapPackageDisplay, PressureMapWidget

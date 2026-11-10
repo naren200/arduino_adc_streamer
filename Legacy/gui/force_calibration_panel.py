@@ -17,12 +17,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from constants.force import (
+from data_processing.heatmap_signal_processing import HEATMAP_SENSOR_LABEL_ORDER
+from Legacy.config_constants import (
     FORCE_CALIBRATION_SETTINGS_DIRNAME,
     FORCE_CALIBRATION_SETTINGS_SUBDIR,
 )
-from data_processing.heatmap_signal_processing import HEATMAP_SENSOR_LABEL_ORDER
-from data_processing.force_calibration_state import (
+from Legacy.data_processing.force_calibration_state import (
     build_default_force_calibration_state,
     CalibrationRow,
     ForceCalibrationSignalSource,

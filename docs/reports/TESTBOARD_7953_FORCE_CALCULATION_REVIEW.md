@@ -2,6 +2,8 @@
 
 Reviewed: 5 November 2026.
 
+> **Update (2026-11-10):** the Force Calibration tab reviewed here was removed from the application and archived under `Legacy/`. Findings about it are historical; the Analysis and Pressure Map findings still apply.
+
 Scope: Analysis, Pressure Map, and Force Calibration in `adc_gui.py`, compared
 with the current working copy of the
 [capacitance-to-force guide](../guides/TESTBOARD_7953_CAPACITANCE_TO_FORCE_GUIDE.md).
@@ -76,7 +78,7 @@ Relevant entry points:
 [force worker](../../data_processing/force_block_worker.py),
 [force display](../../data_processing/pressure_force_display.py),
 [Pressure Map panel](../../gui/signal_integration_panel.py), and
-[Force Calibration panel](../../gui/force_calibration_panel.py).
+[Force Calibration panel](../../Legacy/gui/force_calibration_panel.py) (since archived).
 
 ### Two additional input/calibration issues
 

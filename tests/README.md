@@ -197,7 +197,7 @@ Tests automatic force-sensor re-zeroing when a capture starts.
 
 ### test_force_calibration_panel.py
 
-Tests force-calibration tab state objects: default state, live measurement window, per-sensor-family calibration rows, and the sensor-value-to-table-column mapping.
+Tests the archived (`Legacy`) force-calibration tab state objects: default state, live measurement window, per-sensor-family calibration rows, and the sensor-value-to-table-column mapping.
 
 - test_default_state_is_initialized() — verifies default calibration state values.
 - test_measurement_window_tracks_latest_sensor_values() — tracks latest 5-sensor values and their running total.

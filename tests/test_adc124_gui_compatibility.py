@@ -84,8 +84,6 @@ def gui(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, 'home', lambda: tmp_path)
     app = QApplication.instance() or QApplication([])
     from adc_gui import ADCStreamerGUI
-    monkeypatch.setattr(ADCStreamerGUI, '_pzt_decay_qsettings',
-                        lambda self: QSettings(str(tmp_path / 'decay.ini'), QSettings.Format.IniFormat))
     monkeypatch.setattr(ADCStreamerGUI, '_pressure_map_workspace_qsettings',
                         lambda self: QSettings(str(tmp_path / 'pressure.ini'), QSettings.Format.IniFormat))
     with patch('adc_gui.load_device_config', return_value={'auto_connect': False}):

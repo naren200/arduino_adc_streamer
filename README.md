@@ -161,5 +161,5 @@ python -m pytest
 ## Notes
 
 - The bundled sensor library is loaded from `sensors_library/` when present, then overlaid by the user library under `~/.adc_streamer/sensors/`.
-- The active GUI includes `Time Series`, `Pressure Map`, `Heatmap`, `Force Calibration`, `Spectrum`, and `Sensor` tabs, with `Sensor` last. `Rosette (RS)` appears when the active mode supports it.
+- The active GUI includes `Time Series`, `Pressure Map`, `Heatmap`, `Spectrum`, `Analysis`, and `Sensor` tabs, with `Sensor` last. `Rosette (RS)` appears when the active mode supports it. The former `Force Calibration` and `PZT_Decay_Calc` tabs are archived under `Legacy/`.
 - Older notes may refer to `plus_heatmap_config.json`, but this repo no longer ships that root-level sample file.

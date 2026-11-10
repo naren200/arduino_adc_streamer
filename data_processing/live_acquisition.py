@@ -145,9 +145,6 @@ class LiveAcquisitionMixin:
                 self.update_signal_integration_plot()
             elif self.should_update_heatmap_display():
                 self.update_heatmap_plot()
-            self.refresh_live_decay_preview()
-            if getattr(self.force_calibration_state, 'is_capturing', False):
-                self.update_force_calibration_live_reading_from_selected_source()
             self._pipeline_render_duration_s = time.perf_counter() - render_start
             self._pipeline_render_time = time.perf_counter()
             self._pipeline_decode_to_render_age_s = max(0.0, render_start - state['last_decoded']) if state['last_decoded'] else 0.0

@@ -85,14 +85,12 @@ from gui import (
     ControlPanelsMixin,
     DisplayPanelsMixin,
     FilePanelsMixin,
-    ForceCalibrationPanelMixin,
     HeatmapPanelMixin,
     AnalysisPanelMixin,
     PressureMapPanelMixin,
     SensorPanelMixin,
     SpectrumPanelMixin,
     StatusLoggingMixin,
-    PztDecayPanelMixin,
 )
 from data_processing import (
     DataProcessorMixin,
@@ -119,9 +117,7 @@ class ADCStreamerGUI(
     PressureMapPanelMixin,      # Pressure Map tab pipeline and controls
     HeatmapPanelMixin,          # Heatmap tab pipeline and controls
     AnalysisPanelMixin,         # Offline Analysis tab
-    ForceCalibrationPanelMixin, # Force Calibration tab and controls
     SpectrumPanelMixin,         # Spectrum panel UI
-    PztDecayPanelMixin,         # PZT decay characterization tab
     ConfigurationMixin,         # Configuration management
     DataProcessorMixin,         # Data processing
     SpectrumProcessorMixin,     # Spectrum processing
@@ -148,10 +144,8 @@ class ADCStreamerGUI(
         self.init_sensor_config_state()
         self._init_signal_integration_state()
         self.init_heatmap_processing_state()
-        self.init_force_calibration_state()
         self._init_spectrum_state()
         self._init_analysis_state()
-        self.init_pzt_decay_state()
         self._init_timers()
 
         # Build user interface
@@ -160,7 +154,6 @@ class ADCStreamerGUI(
         self.load_last_spectrum_settings()
         self.load_last_heatmap_settings()
         self.load_last_shear_settings()
-        self.load_last_force_calibration_state()
         self.load_last_analysis_settings()
         from file_operations.board_preferences import load_board_preferences
         from gui.board_controls import apply_board_controls
@@ -465,7 +458,7 @@ class ADCStreamerGUI(
         self.shutdown_adc_connect_worker()
         self.shutdown_force_connect_worker()
 
-        for name in ('_acquisition_render_timer', '_archive_completion_timer', '_pzt_decay_preview_timer'):
+        for name in ('_acquisition_render_timer', '_archive_completion_timer'):
             timer = getattr(self, name, None)
             if timer is not None:
                 timer.stop()
@@ -522,10 +515,7 @@ class ADCStreamerGUI(
 
     def should_store_capture_data(self) -> bool:
         """Return True when capture should persist/archive time-series data."""
-        # A decay-characterization run has exclusive hardware ownership, but
-        # its samples are written by PztDecayExporter rather than the normal
-        # capture archive.  This keeps it out of normal-capture history.
-        return bool(self.is_capturing) and not bool(getattr(self, "pzt_decay_active", False))
+        return bool(self.is_capturing)
 
     def should_update_live_timeseries_display(self) -> bool:
         """Return True when live ADC/force plot redraws should run."""

@@ -5,13 +5,13 @@ enum item IDs, ranges, defaults, labels, units, dependencies and capture locks;
 generic extra parameters do not require a board-name branch. Specialized
 sensor/display components retain their mixins. See [board maintenance](../config/boards/README.md).
 
-Tab construction and UI panels for the Arduino ADC streamer desktop application. Each file is a PyQt6 mixin (combined into the main GUI window class) or a standalone custom widget, together building the application's tabs: Time Series, Rosette (RS), Pressure Map, Heatmap, Force Calibration, Spectrum, Analysis, and Sensor, plus shared file/status/control panels and small utility widgets.
+Tab construction and UI panels for the Arduino ADC streamer desktop application. Each file is a PyQt6 mixin (combined into the main GUI window class) or a standalone custom widget, together building the application's tabs: Time Series, Rosette (RS), Pressure Map, Heatmap, Spectrum, Analysis, and Sensor, plus shared file/status/control panels and small utility widgets. The former Force Calibration and PZT_Decay_Calc tabs are archived under `Legacy/`.
 
 ## Files
 
 ### `__init__.py`
 
-Package init that re-exports all GUI mixins/widgets used by the main window (`ControlPanelsMixin`, `DisplayPanelsMixin`, `FilePanelsMixin`, `ForceCalibrationPanelMixin`, `HeatmapPanelMixin`, `AnalysisPanelMixin`, `PressureMapPanelMixin`, `PressureMapWidget`, `SensorPanelMixin`, `SignalIntegrationPanelMixin`, `SpectrumPanelMixin`, `StatusLoggingMixin`).
+Package init that re-exports all GUI mixins/widgets used by the main window (`ControlPanelsMixin`, `DisplayPanelsMixin`, `FilePanelsMixin`, `HeatmapPanelMixin`, `AnalysisPanelMixin`, `PressureMapPanelMixin`, `PressureMapWidget`, `SensorPanelMixin`, `SignalIntegrationPanelMixin`, `SpectrumPanelMixin`, `StatusLoggingMixin`).
 
 - No functions/classes of its own — only imports and `__all__`.
 
@@ -55,7 +55,7 @@ Mixin for serial connection, ADC configuration, acquisition settings, and run-co
 Mixin building the tabbed visualization area (`QTabWidget`) and the Time Series / Rosette time-series tabs plus their visualization controls; also owns the dual-axis (ADC/Force) plot widgets and their viewbox synchronization.
 
 - `DisplayPanelsMixin`
-  - `create_plot_section()` — builds `self.visualization_tabs` and adds Time Series, Rosette, Pressure Map, Heatmap, Force Calibration, Spectrum, and Sensor tabs (delegating tab content to the other mixins).
+  - `create_plot_section()` — builds `self.visualization_tabs` and adds Time Series, Rosette, Pressure Map, Heatmap, Spectrum, Analysis, and Sensor tabs (delegating tab content to the other mixins).
   - `create_timeseries_tab()` — builds the main Time Series tab: dual Y-axis (ADC + Force) `pyqtgraph` plot with wheel-zoom guarded during capture, legends, info/charge/discharge labels, timing section, visualization controls.
   - `create_rosette_timeseries_tab()` — builds the Rosette (RS) time-series tab: resistance/force dual-axis plot (one-directional X-range sync to avoid autorange feedback), info label, Rosette visualization controls.
   - `create_rosette_visualization_controls()` — builds the "Rosette Visualization Controls" group: channel checkboxes, baseline-subtract/zero-signals, moving-average, adaptive/fixed Y-range controls, X/Z force display checkboxes.
@@ -66,41 +66,6 @@ Mixin building the tabbed visualization area (`QTabWidget`) and the Time Series 
   - `on_rosette_yaxis_range_changed(_value=None)` — shows/hides the fixed Y-range min/max controls and triggers a redraw.
   - `create_visualization_controls()` — builds the Time Series "Visualization Controls" group: channel checkboxes, Y-range/units, window size, Reset View/Full View buttons, repeats display mode (All/Average), baseline subtract/zero.
   - `create_timing_section()` — builds the "Sampling Rate" group showing sample-interval and block-gap timing labels.
-
-### `force_calibration_panel.py`
-
-Mixin for the Force Calibration tab: lets the user select a sensor family/number and signal source (raw piezo, heatmap, or pressure/shear), capture a live measurement window from streamed data, commit rows to a results table, and save/load/autosave calibration data to JSON.
-
-- `ForceCalibrationPanelMixin`
-  - `create_force_calibration_tab()` — builds the tab widget (family/number/source selectors, start/stop, clear/save/load buttons, status label, results table).
-  - `init_force_calibration_state()` — initializes `force_calibration_state` defaults and enables autosave.
-  - `_normalize_force_calibration_signal_source(source_key)` — validates/normalizes a signal-source string to "raw"/"heatmap"/"pressure_shear".
-  - `_get_selected_force_calibration_signal_source()` — returns the active signal source from the combo box or stored state.
-  - `_set_force_calibration_table_headers()` — sets the results table's column headers.
-  - `_get_force_calibration_rows_for_current_family()` — returns calibration rows for the selected sensor family.
-  - `_get_force_calibration_rows_for_current_view()` — returns the rows to display in the table.
-  - `_sensor_values_to_calibration_fields(sensor_values)` — converts T/B/R/L/C sensor values into calibration row fields, zero-padding missing values.
-  - `_create_live_calibration_row()` — builds a new zeroed `CalibrationRow` for the current family/number/source.
-  - `_sync_active_row_with_latest_values()` — updates the in-progress table row from the live measurement window while capturing.
-  - `_get_force_calibration_selected_package_index()` — returns the zero-based package index for the selected sensor number.
-  - `_select_force_calibration_package_values(package_values_by_id)` — picks one package's values dict by selected index.
-  - `_resolve_force_calibration_heatmap_sensor_values()` — computes per-package heatmap channel intensities for the selected package.
-  - `_resolve_force_calibration_raw_sensor_values()` — averages the latest raw ADC sweep into T/B/R/L/C values for the selected package.
-  - `_resolve_force_calibration_pressure_shear_sensor_values()` — computes integrated pressure/shear values and shear T-B/L-R for the selected package.
-  - `_resolve_force_calibration_live_sensor_values()` — dispatches to the resolver matching the selected signal source.
-  - `update_force_calibration_live_reading_from_selected_source()` — resolves live values and feeds them into the live reading.
-  - `update_force_calibration_live_reading(sensor_values, shear_tb=None, shear_lr=None)` — pushes new values into the active measurement window while capturing.
-  - `enable_force_calibration_start_stop(enabled)` — enables/disables Start/Stop based on force-sensor connection state.
-  - `_on_force_calib_family_changed(family)` — handles sensor-family selection change.
-  - `_on_force_calib_source_changed(_index)` — handles signal-source selection change.
-  - `_on_force_calib_start_stop_clicked()` — Start/Stop Measure button handler.
-  - `_start_force_calibration_measurement()` — begins a new measurement window and disables family/source/number controls.
-  - `_stop_force_calibration_measurement()` — finalizes or discards the in-progress row and re-enables controls.
-  - `_on_force_calib_table_refresh()` — repopulates the table widget from current rows.
-  - `_on_force_calib_clear_clicked()` — clears all rows for the current family.
-  - `_on_force_calib_save_clicked()` / `_on_force_calib_load_clicked()` — save/load calibration data via file dialogs.
-  - `save_force_calibration_to_path(file_path, log_message=True)` / `load_force_calibration_from_path(file_path, log_message=True)` — serialize/deserialize all sensor families' calibration rows to/from JSON.
-  - `save_force_calibration_last_state()` / `load_last_force_calibration_state()` — autosave/restore the "last used" calibration file.
 
 ### `analysis_panel.py`
 
@@ -177,7 +142,7 @@ Custom `QWidget` (`PressureMapWidget`) rendering the backend pressure grid with 
 
 ### `shear_visualization_widget.py`
 
-Custom `QWidget` (`ShearVisualizationWidget`) used in the Force Calibration tab context: renders the static five-sensor piezo package layout (boundary circle, sensor squares, labels) once, then redraws only a dynamic arrow and readout for the latest detected shear vector.
+Custom `QWidget` (`ShearVisualizationWidget`): renders the static five-sensor piezo package layout (boundary circle, sensor squares, labels) once, then redraws only a dynamic arrow and readout for the latest detected shear vector.
 
 - `ShearArrowGeometry` (frozen dataclass) — immutable computed arrow geometry (visibility, origin, tip, length, width, angle); no methods.
 - `ShearVisualizationWidget(QWidget)`
