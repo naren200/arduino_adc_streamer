@@ -451,6 +451,9 @@ class ADCStreamerGUI(
         if self.force_serial_port and self.force_serial_port.is_open:
             self.disconnect_force_serial()
 
+        stop_stall_watchdog = getattr(self, '_stop_stall_watchdog', None)
+        if stop_stall_watchdog is not None:
+            stop_stall_watchdog()
         self.shutdown_filter_worker()
         self.shutdown_spectrum_worker()
         self.shutdown_force_worker()

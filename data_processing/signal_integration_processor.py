@@ -33,6 +33,7 @@ from constants.sensor_config import (
 from constants.pressure_map import (
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
+    DEFAULT_SIGNAL_INTEGRATION_BASELINE_REMOVAL,
     DEFAULT_INTEGRATION_SCALE_BY_DT,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
     DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH,
@@ -64,6 +65,7 @@ class SignalIntegrationProcessorMixin:
 
     def _init_signal_integration_state(self) -> None:
         self.signal_integration_hpf_cutoff_hz = DEFAULT_HPF_CUTOFF_HZ
+        self.signal_integration_baseline_removal = DEFAULT_SIGNAL_INTEGRATION_BASELINE_REMOVAL
         self.signal_integration_window_samples = DEFAULT_INTEGRATION_WINDOW_SAMPLES
         self.signal_integration_display_window_sec = DEFAULT_DISPLAY_WINDOW_SEC
         self.signal_integration_show_graph = DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH

@@ -22,6 +22,7 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_PIXELS_PER_MM,
     DEFAULT_PRESSURE_SHOW_MARKER,
     DEFAULT_HPF_CUTOFF_HZ,
+    DEFAULT_SIGNAL_INTEGRATION_BASELINE_REMOVAL,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
     DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH,
     SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ,
@@ -118,7 +119,7 @@ class SignalIntegrationPanelHarness(PressureMapPanelMixin):
         self.active_sensor_configuration = {"array_layout": {"cells": []}}
         self.signal_integration_display_enabled = True
         self.signal_integration_show_graph = DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH
-        self.signal_integration_use_median_baseline = False
+        self.signal_integration_baseline_removal = "none"
         self.pressure_map_pzt_rs_mode = False
         self.signal_integration_timeline_mode = "PZT"
         self.signal_integration_rosette_rs1_enabled = True
@@ -188,7 +189,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.signal_integration_rosette_y_min_spin = DummySpinBox(100.0)
         harness.signal_integration_rosette_y_max_spin = DummySpinBox(2500.0)
         harness.signal_integration_show_graph_check = DummyCheckBox(True)
-        harness.signal_integration_use_median_baseline_check = DummyCheckBox(True)
+        harness.signal_integration_baseline_removal_combo = DummyComboBox("Time Series median")
         harness.shear_noise_threshold_spin = DummySpinBox(0.75)
         harness._pressure_package_sensor_gains = {
             "PZT3": {position: float(index + 1.25) for index, position in enumerate(SHEAR_SENSOR_POSITIONS)}
@@ -361,6 +362,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
     def test_hpf_removes_constant_dc_bias_without_integration(self):
         harness = SignalIntegrationPanelHarness()
         harness.signal_integration_hpf_cutoff_hz = DEFAULT_HPF_CUTOFF_HZ
+        harness.signal_integration_baseline_removal = "hpf"
         sample_times = np.arange(self.SAMPLE_COUNT, dtype=np.float64) / self.SAMPLE_RATE_HZ
         biased_signal = np.full(self.SAMPLE_COUNT, harness.VREF_VOLTS / 2.0, dtype=np.float64)
 
@@ -368,6 +370,81 @@ class SignalIntegrationPanelTests(unittest.TestCase):
 
         self.assertEqual(filtered.shape, biased_signal.shape)
         self.assertLess(float(np.max(np.abs(filtered))), DEFAULT_HPF_CUTOFF_HZ / self.SAMPLE_RATE_HZ)
+
+    def test_baseline_removal_default_is_median_and_hpf_default_is_two_hz(self):
+        self.assertEqual(DEFAULT_SIGNAL_INTEGRATION_BASELINE_REMOVAL, "median")
+        self.assertEqual(DEFAULT_HPF_CUTOFF_HZ, 2.0)
+
+    def test_hpf_is_skipped_unless_hpf_baseline_removal_is_selected(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.signal_integration_hpf_cutoff_hz = DEFAULT_HPF_CUTOFF_HZ
+        sample_times = np.arange(self.SAMPLE_COUNT, dtype=np.float64) / self.SAMPLE_RATE_HZ
+        biased_signal = np.full(self.SAMPLE_COUNT, 1.5, dtype=np.float64)
+
+        for mode in ("median", "none"):
+            harness.signal_integration_baseline_removal = mode
+            np.testing.assert_array_equal(
+                harness._remove_signal_integration_dc_bias(biased_signal, sample_times), biased_signal
+            )
+        harness.signal_integration_baseline_removal = "hpf"
+        filtered = harness._remove_signal_integration_dc_bias(biased_signal, sample_times)
+        self.assertLess(float(np.max(np.abs(filtered))), 1e-2)
+
+    def test_median_baseline_is_not_subtracted_in_hpf_mode(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.signal_integration_window_samples = 1
+        harness.signal_integration_baseline_removal = "hpf"
+        harness.signal_integration_hpf_cutoff_hz = SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ
+        one_volt_count = ((2 ** IADC_RESOLUTION_BITS) - 1) / harness.VREF_VOLTS
+        data = np.asarray([[one_volt_count], [2.0 * one_volt_count]], dtype=np.float32)
+        spec = {"key": ("adc", 3), "sample_indices": [0]}
+        harness.plot_baselines[("adc", 3)] = float(one_volt_count)
+
+        integrated_data, _times, _latest = harness._prepare_signal_integration_integrated_series(
+            spec, data, np.asarray([0.0, 0.001]), avg_sample_time_sec=0.001, max_samples_per_series=self.SAMPLE_COUNT
+        )
+
+        np.testing.assert_allclose(integrated_data, [1.0, 2.0], rtol=1e-6, atol=1e-6)
+
+    def test_legacy_median_checkbox_settings_migrate_to_baseline_removal(self):
+        cases = [
+            ({"use_time_series_median_baseline": True, "hpf_cutoff_hz": 2.0}, "Time Series median"),
+            ({"use_time_series_median_baseline": False, "hpf_cutoff_hz": 2.0}, "High-pass filter"),
+            ({"use_time_series_median_baseline": False, "hpf_cutoff_hz": 0.0}, "None"),
+            ({"baseline_removal": "hpf", "use_time_series_median_baseline": True}, "High-pass filter"),
+            ({"baseline_removal": "none"}, "None"),
+        ]
+        for saved, expected in cases:
+            with self.subTest(saved=saved):
+                harness = SignalIntegrationPanelHarness()
+                harness.signal_integration_baseline_removal_combo = DummyComboBox("Time Series median")
+                self.assertTrue(harness._apply_signal_integration_baseline_removal_setting(saved))
+                self.assertEqual(harness.signal_integration_baseline_removal_combo.currentText(), expected)
+        harness = SignalIntegrationPanelHarness()
+        harness.signal_integration_baseline_removal_combo = DummyComboBox("None")
+        self.assertFalse(harness._apply_signal_integration_baseline_removal_setting({"hpf_cutoff_hz": 2.0}))
+        self.assertEqual(harness.signal_integration_baseline_removal_combo.currentText(), "None")
+
+    def test_baseline_removal_combo_gates_hpf_spin_in_real_tab(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.signal_integration_baseline_removal = DEFAULT_SIGNAL_INTEGRATION_BASELINE_REMOVAL
+        harness.signal_integration_hpf_cutoff_hz = DEFAULT_HPF_CUTOFF_HZ
+        harness._shear_autosave_enabled = False
+        tab = harness.create_signal_integration_tab()
+        try:
+            combo = harness.signal_integration_baseline_removal_combo
+            self.assertEqual(combo.currentText(), "Time Series median")
+            self.assertFalse(harness.signal_integration_hpf_spin.isEnabled())
+            self.assertEqual(harness.signal_integration_hpf_spin.value(), 2.0)
+            self.assertIn("baseline", combo.toolTip().lower())
+            combo.setCurrentText("High-pass filter")
+            self.assertEqual(harness.signal_integration_baseline_removal, "hpf")
+            self.assertTrue(harness.signal_integration_hpf_spin.isEnabled())
+            combo.setCurrentText("None")
+            self.assertEqual(harness.signal_integration_baseline_removal, "none")
+            self.assertFalse(harness.signal_integration_hpf_spin.isEnabled())
+        finally:
+            tab.deleteLater()
 
     def test_integration_window_produces_moving_sum(self):
         harness = SignalIntegrationPanelHarness()
@@ -441,7 +518,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness = SignalIntegrationPanelHarness()
         harness.signal_integration_window_samples = 1
         harness.signal_integration_hpf_cutoff_hz = SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ
-        harness.signal_integration_use_median_baseline_check = DummyCheckBox(True)
+        harness.signal_integration_baseline_removal = "median"
         max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
         one_volt_count = max_adc_value / harness.VREF_VOLTS
         data = np.asarray(
@@ -1146,7 +1223,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(settings["signal_integration"]["rosette_y_min_ohms"], 100.0)
             self.assertEqual(settings["signal_integration"]["rosette_y_max_ohms"], 2500.0)
             self.assertTrue(settings["signal_integration"]["show_graph"])
-            self.assertTrue(settings["signal_integration"]["use_time_series_median_baseline"])
+            self.assertEqual(settings["signal_integration"]["baseline_removal"], "median")
+            self.assertNotIn("use_time_series_median_baseline", settings["signal_integration"])
             self.assertEqual(settings["processing"]["noise_threshold"], 0.75)
             self.assertEqual(settings["processing"]["package_sensor_gains"]["PZT3"]["C"], 1.25)
             self.assertFalse(settings["visualization"]["arrow_width_scales"])
@@ -1182,7 +1260,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             harness.signal_integration_rosette_y_min_spin.setValue(-10.0)
             harness.signal_integration_rosette_y_max_spin.setValue(10.0)
             harness.signal_integration_show_graph_check.setChecked(False)
-            harness.signal_integration_use_median_baseline_check.setChecked(False)
+            harness.signal_integration_baseline_removal_combo.setCurrentText("None")
             harness.shear_noise_threshold_spin.setValue(3.0)
             harness.shear_arrow_width_scales_check.setChecked(True)
             harness.pressure_sensor_spacing_spin.setValue(2.0)
@@ -1209,7 +1287,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(harness.signal_integration_rosette_y_min_spin.value(), 100.0)
             self.assertEqual(harness.signal_integration_rosette_y_max_spin.value(), 2500.0)
             self.assertTrue(harness.signal_integration_show_graph_check.isChecked())
-            self.assertTrue(harness.signal_integration_use_median_baseline_check.isChecked())
+            self.assertEqual(harness.signal_integration_baseline_removal_combo.currentText(), "Time Series median")
             self.assertEqual(harness.shear_noise_threshold_spin.value(), 0.75)
             self.assertFalse(harness.shear_arrow_width_scales_check.isChecked())
             self.assertEqual(harness.pressure_sensor_spacing_spin.value(), 1.75)
