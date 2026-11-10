@@ -257,6 +257,8 @@ class ForceInputs:
 
     def __init__(self, data: dict):
         self.data = data
+        self.source_path = None
+        self.sensor_params_path = None
 
     # ------------------------------------------------------------------ creation
     @classmethod
@@ -538,8 +540,10 @@ class ForceInputs:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     def save(self, path) -> Path:
-        """Atomic write (temporary file + replace) with the content hash updated."""
+        """Save the full evidence manifest and its compact SensorParams companion."""
+        from . import sensor_params
         path = Path(path)
+        companion = sensor_params.companion_path(self, path)
         self.data["schema_version"] = SCHEMA_VERSION
         self._refresh()  # upgrade legacy derived readiness and stale-gain status on explicit save
         body = self._body()
@@ -560,7 +564,15 @@ class ForceInputs:
                 pass
             raise
         self.data["content_sha256"] = body["content_sha256"]
+        self.source_path = path
+        self.sensor_params_path = sensor_params.write(self, companion)
         return path
+
+    def update_sensor_params(self, group_id, state):
+        """Persist a small calibration snapshot, excluded from electrical identity."""
+        self.data.setdefault("sensor_params_state", {})[group_id] = sanitize(state)
+        if self.source_path is not None:
+            self.save(self.source_path)
 
     @classmethod
     def load(cls, path, group_map: Optional[sensor_groups.GroupMap] = None) -> "ForceInputs":
@@ -608,6 +620,10 @@ class ForceInputs:
             self.check_mapping(group_map)
         for gid in self.group_ids:
             self.relative_polarity(gid)
+        self.source_path = Path(path)
+        if self.data.get("sensor_params_export"):
+            from .sensor_params import companion_path
+            self.sensor_params_path = companion_path(self, path)
         return self
 
     def check_mapping(self, group_map: sensor_groups.GroupMap) -> None:

@@ -59,6 +59,13 @@ TestBoard_7953 only (`supports_force_calibration` in its driver; other boards do
 - `captest/force_evidence.py` saves atomic trial sidecars and replays saved raw recordings
   with their marks, frozen bias, models and applied corrections. Reset and restart create
   unique files; rejected and cancelled captures remain available for review.
+- Saving a full force-input JSON also creates a compact
+  `<Board>_SensorParams_<UTC date_time>.json` beside it. The same companion updates
+  with phase outcomes, applied polarity, unloaded drift, leakage and force validation.
+  It includes all channel statuses and calculation coefficients, with no raw packets
+  or histories. Unvalidated/stale gains remain JSON null. See the
+  [consumer format](../docs/guides/CAPTEST_SENSOR_PARAMS_FORMAT.md) for fields,
+  correction scope and conversion of existing full files. ADC_Gui loading is separate work.
 
 Electrical coverage and electrical quality are separate: a completed pass with
 `HIGH_RESIDUAL` is not force-ready. Above-VD signals are recorded as provisional

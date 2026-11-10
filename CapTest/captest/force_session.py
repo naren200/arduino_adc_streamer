@@ -129,6 +129,7 @@ class ForceCalibrationController:
         self._exploratory_reasons = []
         self._trial_sidecars = []
         self._analysis_error = ""
+        self.sensor_params_error = ""
         self.unloaded_correction = None
         self.last_unloaded = None
         self.last_polarity_check = None
@@ -199,15 +200,72 @@ class ForceCalibrationController:
                        "electrical_current": self.forces.electrical_hash()})
 
     def invalidate(self, reason):
+        had_fit = self.fit is not None or self.validation is not None
         if self.fit is not None or self.validation is not None:
             self.analysis_history.append({"reason": reason, "fit": fc._fit_json(self.fit) if self.fit else None,
                                           "validation": fc._validation_json(self.validation) if self.validation else None})
         self.fit = self.validation = None
         self._fit_basis = None
         self._stale_reason = reason
+        if had_fit:
+            self.publish_sensor_params()
+
+    def publish_sensor_params(self, phase=None):
+        """Publish outcomes at phase boundaries; never export the initial display gain."""
+        if self.forces.source_path is None:
+            return
+        gid = self.group.group_id
+        previous = self.forces.data.get("sensor_params_state", {}).get(gid, {})
+        now = fc._now()
+        try:
+            record = self.build_record() if self.fit is not None else None
+            if record:
+                status = {"validated": "calibrated", "fitted_provisional": "provisional",
+                          "stale": "stale"}.get(record["status"], "not_tested")
+            elif self.analysis_history and self._stale_reason:
+                status = "stale"
+            elif phase in ("starting", "capturing"):
+                status = "in_progress"
+            elif self.capture_purpose == "polarity_test":
+                status = ("polarity_tested" if (self.last_polarity_check or {}).get("status") == "ready_for_review"
+                          else "polarity_unclear")
+            elif self.trials:
+                last = self.trials[-1]
+                transport_bad = any(reason.startswith("CAPTURE:") for reason in last.reasons)
+                status = ("workflow_tested" if self.reference_kind == "workflow_only" and not transport_bad
+                          else "tested" if last.accepted else "failed")
+            else:
+                status = "not_tested"
+            correction = copy.deepcopy(self.unloaded_correction)
+            drift_at = (previous.get("drift_measured_at") if
+                        previous.get("unloaded_correction") == correction else now) if correction else None
+            leak = self._applied_leakage.model if self._applied_leakage else None
+            tested_at = (now if phase and phase not in ("starting", "capturing")
+                         else previous.get("tested_at"))
+            calibrated_at = (previous.get("calibrated_at") if
+                             previous.get("force_status") == "calibrated" and
+                             previous.get("d33_eff_c_per_n") == (self.fit.d33_eff if self.fit else None)
+                             else now) if status == "calibrated" else None
+            snapshot = {"electrical_manifest_sha256": self._electrical_hash,
+                "route_polarity": self.route_polarity_json(), "capture_signature": self.signature(),
+                "phase": phase or self.wizard.phase, "tested_at": tested_at, "calibrated_at": calibrated_at,
+                "force_status": status, "reference_kind": self.reference_kind,
+                "d33_eff_c_per_n": self.fit.d33_eff if status == "calibrated" else None,
+                "unloaded_correction": correction, "drift_measured_at": drift_at,
+                "last_drift_status": (self.last_unloaded or {}).get("status"),
+                "leakage": {"lam": leak.lam, "v_leak_v": leak.v_leak, "kind": leak.kind} if leak else None,
+                "validated_voltage_domain": (record or {}).get("validated_domain", {}),
+                "validated_force_range_n": (record or {}).get("validated_range", {}).get("force_n")}
+            self.forces.update_sensor_params(gid, snapshot)
+            self.sensor_params_error = ""
+        except (OSError, fc.CalibrationError, force_export.ForceExportError) as exc:
+            # A consumer export problem must not discard the original measurement.
+            self.sensor_params_error = "SensorParams export failed: %s" % exc
+            self.log.append(self.sensor_params_error)
 
     def _persist(self, state, trial=None, result=None):
         if self._sidecar is None:
+            self.publish_sensor_params(state)
             return
         self._evidence.update(state=state, phase=self.wizard.phase, updated=fc._now())
         if self.wizard.marks and self.capture_purpose == "weight_trial":
@@ -225,6 +283,7 @@ class ForceCalibrationController:
             self._evidence.update(raw_sha256=result.raw_sha256, capture_problems=result.reasons(),
                                   sweeps=result.sweeps, duration_s=result.duration_s)
         write_json(self._sidecar, self._evidence)
+        self.publish_sensor_params(state)
 
     @_locked
     def start_trial(self, accept_mismatch: bool = False, *, unloaded_duration_s=None,
@@ -555,6 +614,7 @@ class ForceCalibrationController:
             raise
         self._analysis_error = ""
         self.invalidate("unloaded correction changed; trials replayed, refit and validate")
+        self.publish_sensor_params()
 
     def clear_unloaded_correction(self):
         self._set_unloaded_correction(None)
@@ -651,6 +711,7 @@ class ForceCalibrationController:
         self._analysis_error = ""
         self.key.capture_signature = self.signature()
         self.log.append(self._stale_reason)
+        self.publish_sensor_params()
 
     def _finish_capture(self) -> None:
         session = self._need_session()
@@ -841,6 +902,7 @@ class ForceCalibrationController:
         self._stale_reason = ""
         self.log.append("fitted d33_eff %.3f pC/N (initial %.3f)"
                         % (self.fit.d33_pc_per_n, self.d33_initial * 1e12))
+        self.publish_sensor_params()
         return self.fit
 
     def validate(self, test_repeats: Optional[Sequence[int]] = None,
@@ -860,6 +922,7 @@ class ForceCalibrationController:
         # Freeze the training gain actually used to assess held-out repetitions.
         self.fit = self.validation.fit
         self._fit_basis = self._basis()
+        self.publish_sensor_params()
         return self.validation
 
     def evaluate_leakage(self) -> fm.LeakageFit:
@@ -916,6 +979,7 @@ class ForceCalibrationController:
         if previous[-1] is not None:
             self.log.append("Unloaded correction cleared because the leakage predictor changed; measure unloaded drift again.")
         self.log.append(self._stale_reason)
+        self.publish_sensor_params()
 
     def reanalyse_trials(self):
         revised = []
@@ -1048,6 +1112,7 @@ class ForceCalibrationController:
         previous = store.load(self.key)
         self._previous_record = previous
         path = store.save(self.build_record())
+        self.publish_sensor_params()
         return path
 
 

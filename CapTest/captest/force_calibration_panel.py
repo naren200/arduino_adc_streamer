@@ -639,6 +639,8 @@ class ForceCalibrationPanel(QtWidgets.QWidget):
             self.result_label.setText("Analysis did not complete: " + error)
         elif completed is not None:
             completed(value)
+        if self.controller is not None and self.controller.sensor_params_error:
+            self.window.append_log(self.controller.sensor_params_error)
 
     @QtCore.pyqtSlot()
     def _refresh_connection(self):
@@ -833,6 +835,7 @@ class ForceCalibrationPanel(QtWidgets.QWidget):
         self.clear_displays()
         self.window.append_log("Force-input file %s: %s. %s" % (target.name, "; ".join(added),
                                                               forces.summary_text()))
+        self.window.append_log("Compact sensor parameters: %s" % forces.sensor_params_path)
         self.refresh_state()
         return True
 
@@ -997,6 +1000,8 @@ class ForceCalibrationPanel(QtWidgets.QWidget):
         if error:
             self.window.append_log("Capture worker failed: %s" % error)
         ctl = self.controller
+        if ctl is not None and ctl.sensor_params_error:
+            self.window.append_log(ctl.sensor_params_error)
         if ctl is not None and ctl.capture_purpose == "polarity_test":
             report = ctl.last_polarity_check
             if report:
@@ -1292,6 +1297,8 @@ class ForceCalibrationPanel(QtWidgets.QWidget):
             self.window.append_log("Calibration not saved: %s" % exc)
             return False
         self.window.append_log("Saved %s" % path)
+        if ctl.sensor_params_error:
+            self.window.append_log(ctl.sensor_params_error)
         self.result_label.setText(self.result_label.text() + " Saved: %s" % path.name)
         self._embed_in_bundle(ctl, path)
         return True
