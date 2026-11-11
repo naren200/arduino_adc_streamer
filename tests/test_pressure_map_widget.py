@@ -8,6 +8,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
+import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtWidgets import QGraphicsEllipseItem
@@ -325,6 +326,55 @@ class PressureMapWidgetTests(unittest.TestCase):
 
         self.assertGreaterEqual(top[1], 8.0 + 6.0 + 1.5)
         self.assertFalse(abs(top[0] - center[0]) < 4.8 and abs(top[1] - center[1]) < 2.6)
+
+    def test_force_callouts_are_larger_and_sit_just_outside_the_mask_edge(self):
+        plus_mask = (
+            (-3.75, 11.25), (3.75, 11.25), (3.75, 5.5), (5.5, 3.75), (11.25, 3.75), (11.25, -3.75),
+            (5.5, -3.75), (3.75, -5.5), (3.75, -11.25), (-3.75, -11.25), (-3.75, -5.5),
+            (-5.5, -3.75), (-11.25, -3.75), (-11.25, 3.75), (-5.5, 3.75), (-3.75, 5.5),
+        )
+        mask_tip_x = 11.25
+        legacy_offset = 5.5 + max(1.5, 5.5 * 0.20)
+        self.widget.configure_mask(mask_enabled=True, mask_points_mm=plus_mask)
+        self.widget._ensure_force_callout_count(1)
+        bounds = (-30.0, 30.0, -30.0, 30.0)
+
+        right = self.widget._force_callout_position(7.5, 0.0, (0.0, 0.0), bounds, 5.5, [])
+        center = self.widget._force_callout_position(0.0, 0.0, (0.0, 0.0), bounds, 5.5, [right])
+
+        reference_item = pg.TextItem()
+        default_font = reference_item.textItem.font()
+        callout_font = self.widget.force_callout_items[0].textItem.font()
+        self.assertGreater(callout_font.pointSizeF(), default_font.pointSizeF())
+        self.assertGreater(right[0], mask_tip_x)
+        self.assertLess(right[0], 7.5 + legacy_offset)
+        self.assertAlmostEqual(right[1], 0.0)
+        self.assertFalse(abs(right[0] - center[0]) < 4.8 and abs(right[1] - center[1]) < 2.6)
+
+    def test_force_array_mask_raster_is_reused_until_the_mask_changes(self):
+        x_values = np.linspace(-5.0, 5.0, 21)
+        y_values = np.linspace(-5.0, 5.0, 21)
+
+        def frame(frame_id):
+            grid = np.zeros((y_values.size, x_values.size))
+            return ForceMapArrayResult(
+                force_grid_n=grid, magnitude_force_grid_n=grid.copy(),
+                x_coordinates_mm=x_values, y_coordinates_mm=y_values,
+                package_centers={}, frame_id=frame_id,
+            )
+
+        square = ((-3.0, -3.0), (3.0, -3.0), (3.0, 3.0), (-3.0, 3.0))
+        smaller_square = ((-2.0, -2.0), (2.0, -2.0), (2.0, 2.0), (-2.0, 2.0))
+        self.widget.configure_mask(mask_enabled=True, mask_points_mm=square)
+
+        with patch("gui.pressure_map_widget.mask_inside_grid", wraps=mask_inside_grid) as raster:
+            self.widget.update_force_array_display(frame(1), [])
+            self.widget.update_force_array_display(frame(2), [])
+            self.assertEqual(raster.call_count, 1)
+
+            self.widget.configure_mask(mask_points_mm=smaller_square)
+            self.widget.update_force_array_display(frame(3), [])
+            self.assertEqual(raster.call_count, 2)
 
     def test_update_display_skips_unchanged_image_upload(self):
         normal_result = self.calculator.compute({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})

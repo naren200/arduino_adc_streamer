@@ -922,6 +922,74 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         )
         self.assertEqual(reset_calls, [True, True])
 
+    @staticmethod
+    def _sensor_specs(sensor_ids):
+        return [
+            {
+                "key": ("sensor", sensor_id, position),
+                "label": f"{sensor_id}_{position}",
+                "sample_indices": [sensor_number * len(SHEAR_SENSOR_POSITIONS) + index],
+            }
+            for sensor_number, sensor_id in enumerate(sensor_ids)
+            for index, position in enumerate(SHEAR_SENSOR_POSITIONS)
+        ]
+
+    def test_reconfiguring_sensor_selection_discards_buffered_rows_of_other_width(self):
+        harness, _engine = self._force_block_harness()
+        harness.normal_force_calculator = NormalForceCalculator()
+        harness.shear_detector = ShearDetector()
+        harness.pressure_map_array_generator = PressureMapArrayGenerator(
+            geometry=harness.pressure_map_geometry
+        )
+        harness._render_pressure_force_display = lambda: None
+        harness.plot_baselines = {
+            ("sensor", sensor_id, position): 0.0
+            for sensor_id in ("PZT1", "PZT2")
+            for position in SHEAR_SENSOR_POSITIONS
+        }
+        positions_per_sensor = len(SHEAR_SENSOR_POSITIONS)
+        times = np.asarray([0.0], dtype=np.float64)
+        harness._force_refresh_rate_hz = lambda: 1e-6  # gate closed: rows stay buffered
+
+        harness.get_display_channel_specs = lambda: self._sensor_specs(["PZT1"])
+        harness.process_pressure_force_block(
+            np.zeros((1, positions_per_sensor)), times, first_sweep_id=0, avg_sample_time_us=100.0
+        )
+        harness._force_display_specs_cache = None
+        harness.get_display_channel_specs = lambda: self._sensor_specs(["PZT1", "PZT2"])
+        harness._force_refresh_rate_hz = lambda: 1e6  # gate open: dispatch now
+        harness.process_pressure_force_block(
+            np.zeros((1, 2 * positions_per_sensor)), times, first_sweep_id=1, avg_sample_time_us=100.0
+        )
+
+        self.assertEqual(harness._force_sweep_accumulator, [])
+        harness._force_worker.drain_synchronous()
+
+    def test_only_selected_sensor_is_computed_and_unselected_stays_zero(self):
+        harness, engine = self._force_block_harness()
+        harness._get_force_display_grid_positions = lambda: {"PZT1": (0, 0), "PZT2": (0, 1)}
+        harness.get_display_channel_specs = lambda: self._sensor_specs(["PZT1"])
+        harness.plot_baselines = {
+            ("sensor", "PZT1", position): 0.0 for position in SHEAR_SENSOR_POSITIONS
+        }
+        block = np.array([[130.0] * len(SHEAR_SENSOR_POSITIONS)] * 3, dtype=np.float64)
+        times = np.asarray([0.0, 0.01, 0.02], dtype=np.float64)
+
+        harness.process_pressure_force_block(
+            block, times, first_sweep_id=0, avg_sample_time_us=10000.0
+        )
+        harness._force_worker.drain_synchronous()
+
+        unselected = engine._packages["PZT2"]
+        self.assertEqual(unselected.normal_force_n, 0.0)
+        self.assertTrue(all(
+            state.accumulated_force_n == 0.0 for state in unselected.channel_states.values()
+        ))
+        self.assertTrue(any(
+            state.accumulated_force_n != 0.0
+            for state in engine._packages["PZT1"].channel_states.values()
+        ))
+
     def test_ghost_net_centered_block_skips_plot_baseline_subtraction(self):
         # PZT ghost removal writes net-space data (already ~0-centred); the
         # captured ``plot_baselines`` are raw-equivalent mid-scale ADC
@@ -1325,6 +1393,25 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.pressure_map_array_generator = PressureMapArrayGenerator(geometry=harness.pressure_map_geometry)
         harness._rebuild_pressure_force_engine()
         self.assertEqual(harness.pressure_force_engine.settings["force_zero_band_min_n"], 0.05)
+
+    def test_force_refresh_rate_round_trips_through_saved_settings(self):
+        harness = SignalIntegrationPanelHarness()
+        self._install_shear_setting_widgets(harness)
+        harness.force_refresh_rate_spin = DummySpinBox(PZT_FORCE_DEFAULT_SETTINGS["force_refresh_rate_hz"])
+
+        self.assertEqual(
+            harness._pzt_force_settings()["force_refresh_rate_hz"],
+            PZT_FORCE_DEFAULT_SETTINGS["force_refresh_rate_hz"],
+        )
+
+        changed = harness._apply_shear_settings({"pzt_force": {"force_refresh_rate_hz": 30}})
+        self.assertTrue(changed)
+        self.assertEqual(harness.force_refresh_rate_spin.value(), 30)
+        self.assertEqual(harness._pzt_force_settings()["force_refresh_rate_hz"], 30)
+
+        # A payload saved before this setting existed must keep the current rate.
+        harness._apply_shear_settings({"pzt_force": {"rleak_ohm": 2e6}})
+        self.assertEqual(harness.force_refresh_rate_spin.value(), 30)
 
     def test_invalid_pzt_force_settings_revert_to_last_good_and_warn(self):
         """An invalid d33 (<= 0) must never crash the engine rebuild: the

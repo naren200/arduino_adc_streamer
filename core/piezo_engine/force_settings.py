@@ -44,6 +44,8 @@ PZT_FORCE_DEFAULT_SETTINGS = {
     # Visualization-only default for new settings. Persisted user values keep
     # their existing value when loaded.
     "display_max_force_n": 0.25,
+    # Rate at which accumulated sweeps are dispatched to the force worker.
+    "force_refresh_rate_hz": 20,
     # Force-specific shear-arrow parameters (newtons, not the Jerk display's
     # volts). With the default 0.25 N color max and a ~5 mm package radius, a
     # full-scale shear draws a full-radius arrow.

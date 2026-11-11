@@ -157,6 +157,44 @@ def test_force_array_superposes_packages_without_double_counting_magnitude():
     np.testing.assert_allclose(magnitude, np.abs(opposite))
 
 
+ARRAY_LAYOUT = {"PZT1": (0, 1), "PZT2": (1, 0), "PZT3": (1, 1), "PZT4": (1, 2), "PZT5": (2, 1)}
+
+
+@pytest.mark.parametrize(
+    "active_ids",
+    [(), ("PZT3",), ("PZT1", "PZT3"), ("PZT2", "PZT4", "PZT5"), tuple(ARRAY_LAYOUT)],
+)
+def test_force_array_composes_any_combination_of_active_sensors(active_ids):
+    geometry = PressureMapGeometry()
+    engine = PressureForceDisplayEngine(geometry=geometry)
+    generator = PressureMapArrayGenerator(geometry=geometry)
+    rng = np.random.default_rng(7)
+    shape = (engine._y_coordinates_mm.size, engine._x_coordinates_mm.size)
+    fields = {sensor_id: rng.uniform(0.1, 1.0, size=shape) for sensor_id in ARRAY_LAYOUT}
+
+    def compose(selected_ids):
+        packages = [
+            PressureMapArrayForcePackage(
+                sensor_id, position,
+                fields[sensor_id] if sensor_id in selected_ids else np.zeros(shape),
+                engine._x_coordinates_mm, engine._y_coordinates_mm,
+            )
+            for sensor_id, position in ARRAY_LAYOUT.items()
+        ]
+        return generator.compose_force_grids(packages)
+
+    composed, _magnitude, _x, _y, centers = compose(active_ids)
+
+    # The layout, hence every centre, is fixed by the configured array and
+    # not by which sensors are active; superposition is linear in the fields.
+    assert set(centers) == set(ARRAY_LAYOUT)
+    expected = np.zeros_like(composed)
+    for sensor_id in active_ids:
+        expected += compose((sensor_id,))[0]
+    np.testing.assert_allclose(composed, expected, atol=1e-12)
+    assert bool(np.any(composed)) == bool(active_ids)
+
+
 def _jerk_display(sensor_id: str, grid: np.ndarray):
     return SimpleNamespace(
         sensor_id=sensor_id,

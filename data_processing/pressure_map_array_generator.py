@@ -326,6 +326,10 @@ class PressureMapArrayGenerator:
             local_y = np.asarray(package.y_coordinates_mm, dtype=np.float64)
             if local_grid.shape != (local_y.size, local_x.size):
                 raise ValueError("force package grid and coordinate shapes do not match")
+            if not local_grid.any():
+                # An all-zero field adds exactly nothing; skipping it keeps
+                # the per-frame cost proportional to the active sensors.
+                continue
             center_x, center_y = centers[package.sensor_id]
             local_world_x = x_grid - center_x
             local_world_y = y_grid - center_y

@@ -19,7 +19,7 @@ import math
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QPointF, QRectF, Qt
-from PyQt6.QtGui import QBrush, QColor, QPen, QPolygonF
+from PyQt6.QtGui import QBrush, QColor, QFontMetricsF, QPen, QPolygonF
 from PyQt6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsLineItem,
@@ -43,6 +43,12 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
     DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
     DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS,
+    FORCE_CALLOUT_FALLBACK_MM_PER_PIXEL,
+    FORCE_CALLOUT_FONT_SCALE,
+    FORCE_CALLOUT_MASK_GAP_MM,
+    FORCE_CALLOUT_PARALLEL_EPSILON,
+    FORCE_CALLOUT_RAY_MAX_MM,
+    FORCE_CALLOUT_REFERENCE_TEXT,
     PRESSURE_DISPLAY_MODE_MAGNITUDE,
     PRESSURE_DISPLAY_MODE_SIGNED,
     PRESSURE_MAP_BACKGROUND_COLOR,
@@ -311,6 +317,7 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         self.package_arrow_items: list[tuple[QGraphicsLineItem, QGraphicsPolygonItem]] = []
         self.force_callout_items: list[pg.TextItem] = []
         self._image_cache: _PressureMapImageCache | None = None
+        self._force_visibility_mask_cache: tuple[tuple, np.ndarray] | None = None
         self._package_image_caches: list[_PressureMapImageCache | None] = []
         self._view_mode: str | None = None
         self._view_range_signature: tuple[object, ...] | None = None
@@ -702,14 +709,9 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         # This is separately composited from absolute local package fields;
         # never use abs(signed_array_grid), since overlaps can cancel there.
         grid = self._force_display_grid(force_array.magnitude_force_grid_n)
-        visibility_mask = None
-        if self.mask_enabled and self.mask_points_mm:
-            x_grid, y_grid = np.meshgrid(force_array.x_coordinates_mm, force_array.y_coordinates_mm)
-            visibility_mask = mask_inside_grid(self.mask_points_mm, x_grid, y_grid)
+        visibility_mask = self._force_visibility_mask(force_array)
         if self.mirror:
             grid = np.fliplr(grid)
-            if visibility_mask is not None:
-                visibility_mask = np.fliplr(visibility_mask)
         levels, fade_levels = self._force_render_levels(grid)
         image_rect = image_rect_from_centers(
             force_array.x_coordinates_mm, force_array.y_coordinates_mm, mirror_x=self.mirror
@@ -742,6 +744,26 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         if signature != self._view_range_signature:
             self._set_single_ranges(view_rect, signature)
         self.plot_widget.getPlotItem().getViewBox().update()
+
+    def _force_visibility_mask(self, force_array) -> np.ndarray | None:
+        """Return the mirrored mask-inside raster, rebuilt only when its inputs change.
+
+        The mask depends on the outline and the grid coordinates, never on the
+        force values, so recomputing it every frame is wasted work.
+        """
+        if not (self.mask_enabled and self.mask_points_mm):
+            return None
+        x_values, y_values = force_array.x_coordinates_mm, force_array.y_coordinates_mm
+        key = (
+            tuple(self.mask_points_mm), self.mirror,
+            x_values.size, float(x_values[0]), float(x_values[-1]),
+            y_values.size, float(y_values[0]), float(y_values[-1]),
+        )
+        if self._force_visibility_mask_cache is None or self._force_visibility_mask_cache[0] != key:
+            x_grid, y_grid = np.meshgrid(x_values, y_values)
+            mask = mask_inside_grid(self.mask_points_mm, x_grid, y_grid)
+            self._force_visibility_mask_cache = (key, np.fliplr(mask) if self.mirror else mask)
+        return self._force_visibility_mask_cache[1]
 
     def _update_force_array_package_overlays(self, packages, centers) -> None:
         """Reuse the Jerk package background for the Force content layer."""
@@ -798,9 +820,19 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
                 fill=QColor(0, 0, 0, 210),
                 ensureInBounds=False,
             )
+            self._enlarge_callout_font(item)
             item.setZValue(PRESSURE_MAP_SENSOR_Z + 4)
             self.plot_widget.addItem(item)
             self.force_callout_items.append(item)
+
+    @staticmethod
+    def _enlarge_callout_font(item: pg.TextItem) -> None:
+        font = item.textItem.font()
+        if font.pointSizeF() > 0:
+            font.setPointSizeF(font.pointSizeF() * FORCE_CALLOUT_FONT_SCALE)
+        else:
+            font.setPixelSize(round(font.pixelSize() * FORCE_CALLOUT_FONT_SCALE))
+        item.textItem.setFont(font)
 
     def _hide_force_callouts(self) -> None:
         for item in self.force_callout_items:
@@ -887,8 +919,9 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         ]) if self.mask_enabled and self.mask_points_mm else None
         candidates: list[tuple[bool, float, float]] = []
         for direction_x, direction_y in directions:
-            candidate_x = center_x + direction_x * offset
-            candidate_y = center_y + direction_y * offset
+            candidate_x, candidate_y = self._force_callout_candidate(
+                mask_polygon, (center_x, center_y), (direction_x, direction_y), offset
+            )
             if not (min_x <= candidate_x <= max_x and min_y <= candidate_y <= max_y):
                 continue
             inside_mask = bool(mask_polygon and mask_polygon.containsPoint(
@@ -905,6 +938,72 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
             )
             return candidate_x, candidate_y
         return (center_x, center_y - offset)
+
+    def _force_callout_candidate(
+        self,
+        mask_polygon: QPolygonF | None,
+        center: tuple[float, float],
+        direction: tuple[float, float],
+        fallback_offset: float,
+    ) -> tuple[float, float]:
+        """Place the label just outside the mask edge along ``direction``.
+
+        Without a mask, or when the package centre is not inside it, keep the
+        outer-boundary offset so the label never lands on the sensor itself.
+        """
+        center_x, center_y = center
+        if mask_polygon is None or not mask_polygon.containsPoint(
+            QPointF(center_x, center_y), Qt.FillRule.OddEvenFill
+        ):
+            return center_x + direction[0] * fallback_offset, center_y + direction[1] * fallback_offset
+        length = math.hypot(*direction)
+        unit_x, unit_y = direction[0] / length, direction[1] / length
+        half_width, half_height = self._force_callout_half_extent_mm()
+        clearance = abs(unit_x) * half_width + abs(unit_y) * half_height + FORCE_CALLOUT_MASK_GAP_MM
+        distance = self._mask_exit_distance_mm(mask_polygon, center, (unit_x, unit_y)) + clearance
+        return center_x + unit_x * distance, center_y + unit_y * distance
+
+    @staticmethod
+    def _mask_exit_distance_mm(
+        mask_polygon: QPolygonF, start: tuple[float, float], unit: tuple[float, float]
+    ) -> float:
+        """Distance along ``unit`` from the inside point ``start`` to the outline.
+
+        Solves ``start + t*unit = a + s*(b - a)`` for every outline edge and
+        keeps the nearest forward crossing.
+        """
+        exit_distance = FORCE_CALLOUT_RAY_MAX_MM
+        vertex_count = mask_polygon.size()
+        for index in range(vertex_count):
+            edge_start = mask_polygon.at(index)
+            edge_end = mask_polygon.at((index + 1) % vertex_count)
+            edge_x, edge_y = edge_end.x() - edge_start.x(), edge_end.y() - edge_start.y()
+            denominator = unit[0] * edge_y - unit[1] * edge_x
+            if abs(denominator) < FORCE_CALLOUT_PARALLEL_EPSILON:
+                continue
+            offset_x, offset_y = edge_start.x() - start[0], edge_start.y() - start[1]
+            along_ray = (offset_x * edge_y - offset_y * edge_x) / denominator
+            along_edge = (offset_x * unit[1] - offset_y * unit[0]) / denominator
+            if along_ray > 0.0 and 0.0 <= along_edge <= 1.0:
+                exit_distance = min(exit_distance, along_ray)
+        return exit_distance
+
+    def _force_callout_half_extent_mm(self) -> tuple[float, float]:
+        """Half the on-screen label size in data units, from a fixed reference text.
+
+        A fixed reference string keeps the placement from shifting with the
+        digits currently shown in the label.
+        """
+        if not self.force_callout_items:
+            return (0.0, 0.0)
+        font = self.force_callout_items[0].textItem.font()
+        label_px = QFontMetricsF(font).boundingRect(
+            QRectF(0.0, 0.0, 10000.0, 10000.0), int(Qt.AlignmentFlag.AlignLeft), FORCE_CALLOUT_REFERENCE_TEXT
+        )
+        mm_per_px_x, mm_per_px_y = self.plot_widget.getPlotItem().getViewBox().viewPixelSize()
+        if not (math.isfinite(mm_per_px_x) and mm_per_px_x > 0.0 and math.isfinite(mm_per_px_y) and mm_per_px_y > 0.0):
+            mm_per_px_x = mm_per_px_y = FORCE_CALLOUT_FALLBACK_MM_PER_PIXEL
+        return (label_px.width() * mm_per_px_x / 2.0, label_px.height() * mm_per_px_y / 2.0)
 
     def _force_render_levels(self, force_grid: np.ndarray) -> tuple[tuple[float, float], tuple[float, float]]:
         """Use a physical-N raster scale; Jerk's fixed voltage scale is inapplicable."""

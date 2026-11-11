@@ -1371,7 +1371,7 @@ class PressureMapPanelMixin:
         layout.addWidget(QLabel("Force refresh:"), 7, 0)
         self.force_refresh_rate_spin = QSpinBox()
         self.force_refresh_rate_spin.setRange(1, 60)
-        self.force_refresh_rate_spin.setValue(20)
+        self.force_refresh_rate_spin.setValue(int(PZT_FORCE_DEFAULT_SETTINGS["force_refresh_rate_hz"]))
         self.force_refresh_rate_spin.setSuffix(" Hz")
         self.force_refresh_rate_spin.setToolTip(
             "Rate at which accumulated sweeps are dispatched to the force worker. "
@@ -1410,10 +1410,11 @@ class PressureMapPanelMixin:
         return group
 
     def _on_force_refresh_rate_changed(self, _value: int = 0) -> None:
-        """Reset drop counters when refresh rate changes."""
+        """Reset drop counters and persist the rate when it changes."""
         self._force_drop_count = 0
         self._force_drops_per_sec = 0.0
         self._force_drop_window_start = time.monotonic()
+        self.save_last_shear_settings()
 
     def _pzt_force_settings(self) -> dict[str, object]:
         return {
@@ -1426,6 +1427,7 @@ class PressureMapPanelMixin:
             "off_mux_leak_enabled": self._check_bool("force_pzt_off_mux_check", False),
             "off_mux_rleak_ohm": self._spin_float("force_pzt_off_mux_rleak_spin", float(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])),
             "display_max_force_n": self._spin_float("force_display_max_n_spin", float(PZT_FORCE_DEFAULT_SETTINGS["display_max_force_n"])),
+            "force_refresh_rate_hz": self._spin_int("force_refresh_rate_spin", int(PZT_FORCE_DEFAULT_SETTINGS["force_refresh_rate_hz"])),
             "force_arrow_gain_mm_per_n": self._spin_float("force_arrow_gain_spin", float(PZT_FORCE_DEFAULT_SETTINGS["force_arrow_gain_mm_per_n"])),
             "force_arrow_min_threshold_n": self._spin_float("force_arrow_threshold_spin", float(PZT_FORCE_DEFAULT_SETTINGS["force_arrow_min_threshold_n"])),
             "stuck_force_failsafe_enabled": self._check_bool("force_pzt_stuck_failsafe_check", bool(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"])),
@@ -1747,6 +1749,7 @@ class PressureMapPanelMixin:
             self._force_last_print_time = 0.0
             self._latest_jerk_package_displays = []
             self._jerk_updates_since_dispatch = 0
+        self._reset_force_if_acquisition_layout_changed(block, complete_packages)
         accumulator = self._force_sweep_accumulator
         if not accumulator:
             self._force_accumulator_first_sweep_id = first_sweep_id
@@ -1762,6 +1765,25 @@ class PressureMapPanelMixin:
         self._force_dispatch_accumulated(avg_sample_time_us, complete_packages)
         self._force_update_drop_window(now)
         self._force_maybe_print_drop_warning(now)
+
+    def _reset_force_if_acquisition_layout_changed(
+        self, block: np.ndarray, complete_packages: dict
+    ) -> None:
+        """Drop buffered sweeps and integrals when the selected sensors change.
+
+        Reconfiguring the microcontroller changes the block width and which
+        sensors are read.  Rows of different widths cannot be stacked into one
+        batch, and an integral is meaningless across a different sensor set.
+        """
+        layout = (int(block.shape[1]), tuple(sorted(complete_packages)))
+        previous_layout = getattr(self, "_force_acquisition_layout", None)
+        self._force_acquisition_layout = layout
+        if previous_layout is None or previous_layout == layout:
+            return
+        self._force_sweep_accumulator = []
+        if getattr(self, "pressure_force_engine", None) is not None:
+            self._rebuild_pressure_force_engine()
+            self._render_pressure_force_display()
 
     def _force_dispatch_accumulated(
         self, avg_sample_time_us: float, complete_packages: dict
@@ -3062,6 +3084,7 @@ class PressureMapPanelMixin:
         changed |= self._set_spin_value("force_pzt_quiet_release_spin", pzt_force, "quiet_hold_release_fraction", float)
         changed |= self._set_spin_value("force_pzt_quiet_hold_spin", pzt_force, "quiet_hold_clear_s", float)
         changed |= self._set_spin_value("force_display_max_n_spin", pzt_force, "display_max_force_n", float)
+        changed |= self._set_spin_value("force_refresh_rate_spin", pzt_force, "force_refresh_rate_hz", int)
         changed |= self._set_spin_value("force_arrow_gain_spin", pzt_force, "force_arrow_gain_mm_per_n", float)
         changed |= self._set_spin_value("force_arrow_threshold_spin", pzt_force, "force_arrow_min_threshold_n", float)
 
