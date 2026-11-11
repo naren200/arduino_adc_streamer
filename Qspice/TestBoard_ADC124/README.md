@@ -78,7 +78,25 @@ Without the VMID visit (`vmid_visit_after_each = false`) the sequence is: sensor
 | `adc_acquisition_clocks` | 3 | Track clocks before the hold; the **sample instant** is `settle + acquisition`. |
 | `t_vmid_settle_us` | 5 | VMID-channel settle (separate variable). No conversion, like the current firmware; the model samples the end of it only as a ghosting diagnostic. |
 | `sampling_rate_hz` | not set | Optional per-sensor revisit rate. When set, the VMID park time is derived from it (error if the rate is too high for the other timing). |
-| `t_vmid_park_us` | 7 | **Placeholder.** Time parked on VMID while the other mux groups are sampled and data is sent. Replace with the real value. With `vmid_visit_after_each = true` it follows the VMID settle after every address; with `false` the sensors follow each other directly and the mux parks on VMID **once per sweep**, after the last address. |
+| `park_on_vmid` | true | **Park on VMID.** On: the park time is spent on VMID (the behaviour described above). Off: the mux is not switched to VMID, the last sampled channel stays connected for the park time (see *Parking on the last channel* below). |
+| `t_vmid_park_us` | 7 | **Park time** (placeholder; the key keeps its old name). Time between the conversions of one sweep and the next while the other mux groups are sampled and data is sent. Replace with the real value. Park on VMID: with `vmid_visit_after_each = true` it follows the VMID settle after every address; with `false` the sensors follow each other directly and the mux parks on VMID **once per sweep**, after the last address. Park on VMID off: the last channel of the sweep stays connected for this time, once per sweep. |
+
+### Parking on the last channel (`park_on_vmid = false`)
+
+With the toggle off (System tab, *Park on VMID*) the mux never goes to VMID after the first address command (also not in the tail after the last
+cycle): `vmid_visit_after_each` and `t_vmid_settle_us` are not used. A sweep is the addresses of `scan_order` in turn, each connected for
+settle + `n_mux` × `repeat` words, and the **last** address stays connected for the park time before the next sweep starts.
+
+A visit to the channel that is *already connected* needs no mux command and no settle wait (assumed: the MG24 dual-MUX firmware returns immediately when the requested
+channel is already selected; not checked for the ADC124 board firmware), so it costs only its `n_mux` × `repeat` words. With **one mux, one channel** this gives a continuous connection:
+the enable of the channel is switched on once at the first command and never again, so there is no break-before-make gap, no charge injection
+and no charge redistribution from re-connecting after the first conversion; the same channel is sampled again and again at a uniform period of
+`n_mux × repeat × word + park` (17 µs = 58.8 kHz for 1 mux, 10 repeats and the 7 µs park). The first connection of the run still pays the settle.
+With several channels every visit is a real switch (the cycle is the sum of the visits plus the park, with no VMID visit). `sampling_rate_hz`
+derives the park time as before (`1 / rate` minus the visits).
+
+For 1 mux, 1 channel, 10 repeats the real QSPICE run shows about 42 mV peak-to-peak on `ain` with VMID parking (the injection at every reconnect)
+against about 0.6 mV with the channel kept connected.
 
 The former `t_conversion_us`, `adc_acquisition_ns` and `t_after_conversion_us` keys are replaced by the derived values above. The saved results and
 reports in `results/` and `reports/` were generated **before** this change (7 µs connected per visit); rerun the scenarios to get results for the new
@@ -111,7 +129,7 @@ unverified guesses; several were wrong (Ron 5 Ω vs 120 Ω, leakage 20x too smal
 | `c_feedthrough_pF` | 0.1 | **Derived**: off isolation / crosstalk −90 dB at 1 MHz, 50 Ω (−110 dB at 100 kHz) ⇒ C ≈ 0.1 pF. |
 | `qinj_pC` | −0.8 | §6.7 QINJ −0.8 pC (RS = 0 Ω, CL = 100 pF). Assumed to be the step seen when the channel turns off, opposite sign on turn-on. |
 | `qinj_src_fraction` | 0 | The datasheet figure is the drain-side injection; the source-side share is not specified. |
-| `ileak_s_off_nA`, `ileak_d_nA` | 1 | §6.6 IS(OFF), ID(OFF), ID(ON) ±1 nA typ at 25 °C. Limits: ±25 nA at 85 °C, ±800 nA at 125 °C (use `leak_scale`). The model applies the same sign to every channel, which is the worst case for offset. |
+| `ileak_s_off_nA`, `ileak_d_nA` | 1 | §6.6 IS(OFF), ID(OFF), ID(ON) ±1 nA typ at 25 °C. Limits: ±25 nA at 85 °C, ±800 nA at 125 °C (use `leak_scale`). The model applies the same sign to every channel, which is the worst case for offset. While one channel is connected the other 7 channels each push `ileak_s_off_nA` from their source into the drain, so the connected node sees a net `7 · ileak_s_off_nA − ileak_d_nA` (+6 nA by default, about +2.8 mV across the 470 kΩ bias); the Simulator's leakage compensation uses this net value. |
 | `switch_on_ns` | 25 | §6.8 tTRAN typ 23 ns / tON(EN) typ 26 ns (max 51 / 40). |
 | `switch_off_ns`, `control_edge_ns` | 1, 2 | Chosen so the break-before-make gap is `25 − 1 − 2 = 22 ns`, close to tBBM typ 24 ns (min 1 ns). tOFF(EN) typ 40 ns (max 65) is not modelled separately. |
 | `roff_ohm` | 1e12 | Modelling choice; off isolation comes from the feedthrough capacitor. |
@@ -124,6 +142,8 @@ unverified guesses; several were wrong (Ron 5 Ω vs 120 Ω, leakage 20x too smal
 | `eps33_r` | 3500 | Same table: εT33/ε0 = 3500 at 1 kHz. |
 | `tan_delta` | 0.025 | Same table: 2.5 % at 1 kHz. |
 | `width_mm`, `length_mm`, `thickness_mm` | 0.7, 0.7, 0.25 | Confirmed by the user. Gives Cp ≈ 61 pF and 9.9 V/N open circuit, so forces above ~0.17 N push the sensor pin past the 3.3 V rail. |
+| `cp_pF` | empty | Optional capacitance of the sensor in pF (also per address in `sensor_overrides`). Empty = the value calculated from the size above; a measured value replaces it everywhere Cp is used. |
+| `adc.bits` | 12 | ADC124S101 resolution, used by the simulator for the derived ADC-Out value (range `0 .. VDD`; with `vmid_v = 0`: `-VDD .. +VDD` and symmetric buffer rails, see the Simulator README). |
 | OPA365 `gbw_hz`, `slew_v_per_us`, `aol`, `vos_uV` | 50 MHz, 25 V/µs, 120 dB, 100 µV | SBOS365G §7.6 typ (GBW/SR specified at VS = 5 V, reused at 3.3 V). |
 | `ib_pA` | 0.2 | §7.6 IB ±0.2 pA typ (±10 pA max, rises strongly above ~85 °C). |
 | `cdiff_pF`, `ccm_pF` | 6, 2 | §7.6 input capacitance: differential 6 pF, common-mode 2 pF. |

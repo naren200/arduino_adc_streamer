@@ -36,6 +36,14 @@
      "tip": "Steminc SM311: 3500 at 1 kHz."
     },
     {
+     "path": "sensor_defaults.cp_pF",
+     "label": "Capacitance (override)",
+     "unit": "pF",
+     "type": "float",
+     "nullable": true,
+     "tip": "empty = calculated from size, thickness and eps33. A value replaces the calculated sensor capacitance Cp (a per-sensor value can be set in sensor_overrides)."
+    },
+    {
      "path": "sensor_defaults.d33_pC_per_N",
      "label": "d33 charge constant",
      "unit": "pC/N",
@@ -154,7 +162,8 @@
      "label": "Initial sensor node voltage",
      "unit": "V",
      "type": "float",
-     "tip": ""
+     "tip": "Start condition of every sensor node. Empty = follows the VMID reference.",
+     "nullable": true
     }
    ]
   },
@@ -187,6 +196,13 @@
   {
    "group": "ADS7953 (datasheet SLAS605C where stated)",
    "items": [
+    {
+     "path": "adc.bits",
+     "label": "Resolution (ADC-Out)",
+     "unit": "bit",
+     "type": "int",
+     "tip": "Bits of the derived ADC-Out value. Range 0 .. VREF, or -VREF .. +VREF when VMID = 0; LSB = span / 2^bits."
+    },
     {
      "path": "adc.c_sample_pF",
      "label": "Sample capacitor (input capacitance)",
@@ -389,11 +405,18 @@
      "tip": ""
     },
     {
-     "path": "timing.other_adc_frames",
-     "label": "Frames of the other ADC while this mux is parked on VMID",
+     "path": "timing.n_adc",
+     "label": "Number of ADCs in the sweep",
      "unit": "",
      "type": "int",
-     "tip": "Default 12: ADC1 streams 10 routes + 2 drain frames before ADC2 (full routing, repeat 1)."
+     "tip": "This ADC plus the others that are clocked one after another on the shared sequence while this mux is parked on VMID. 1 = this ADC alone. The frames of the other ADCs are derived from the ADC frame timing."
+    },
+    {
+     "path": "timing.other_adc_channels",
+     "label": "Channels streamed by each other ADC",
+     "unit": "",
+     "type": "int",
+     "tip": "Default 10 (ADC1/ADC3 route 10 channels). Each other ADC clocks channels x repeats + 2 pipeline frames per sweep, at the same frame period as this ADC."
     },
     {
      "path": "timing.sweep_gap_us",
@@ -484,6 +507,25 @@
      "tip": "5 ns resolves the mux switching edges; coarser steps give noisy baselines."
     }
    ]
+  },
+  {
+   "group": "ADC output",
+   "items": [
+    {
+     "path": "simulation.adc_noise_mV",
+     "label": "White noise (RMS)",
+     "unit": "mV",
+     "type": "float",
+     "tip": "RMS (standard deviation) of independent Gaussian white noise added to the ADC input value at every conversion, before quantisation: v_out = quant(v_in + N(0, sigma)). It is applied at the conversion instants, not to the continuous waveform (sampling an ideal white source gives independent samples), so it needs no new simulation. 0 = off."
+    },
+    {
+     "path": "simulation.noise_seed",
+     "label": "Noise seed",
+     "unit": "",
+     "type": "int",
+     "tip": "Seed of the noise generator: the same seed gives the same noise, so runs stay repeatable and comparable against a held reference."
+    }
+   ]
   }
  ],
  "tables": [
@@ -531,6 +573,50 @@
     "rise_us": 40.0,
     "width_us": 150.0,
     "fall_us": 40.0,
+    "amp_N": 0.05
+   }
+  },
+  {
+   "path": "forces_sin",
+   "title": "Input profile: sine waves",
+   "add_label": "Add sin",
+   "tip": "One row per sinusoidal force on a sensor: F = amplitude x sin(2 pi f t) for the given number of cycles starting at Start (zero before and after, so it swings both ways around the VMID level). Rows on the same address add up and also add to the pulses above.",
+   "columns": [
+    {
+     "key": "address",
+     "label": "Channel",
+     "type": "int",
+     "min": 0,
+     "max": 14
+    },
+    {
+     "key": "t_start_us",
+     "label": "Start [us]",
+     "type": "float"
+    },
+    {
+     "key": "freq_hz",
+     "label": "Frequency [Hz]",
+     "type": "float",
+     "min": 0
+    },
+    {
+     "key": "cycles",
+     "label": "Cycles",
+     "type": "float",
+     "min": 0
+    },
+    {
+     "key": "amp_N",
+     "label": "Amplitude [N]",
+     "type": "float"
+    }
+   ],
+   "new_row": {
+    "address": 2,
+    "t_start_us": 20.0,
+    "freq_hz": 20000.0,
+    "cycles": 3,
     "amp_N": 0.05
    }
   }
@@ -833,5 +919,25 @@
  "sample_marker": {
   "node": "sh",
   "label": "ADC hold samples"
+ },
+ "adc_out": {
+  "node": "sh",
+  "label": "ADC-Out (quantised)",
+  "group": "adc",
+  "channels": 15,
+  "bits_path": "adc.bits",
+  "vref_path": "circuit.vref_v",
+  "vmid_path": "circuit.vmid_v",
+  "bipolar_rails": true,
+  "noise_mv_path": "simulation.adc_noise_mV",
+  "noise_seed_path": "simulation.noise_seed"
+ },
+ "force_calc": {
+  "enabled": true,
+  "force_node": "f{k}",
+  "force_tables": [
+   "forces",
+   "forces_sin"
+  ]
  }
 }

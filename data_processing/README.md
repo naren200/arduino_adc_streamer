@@ -160,18 +160,15 @@ Mixin providing ADC filter state, static/live reprocessing, and live timeseries 
 - FilterProcessorMixin.filter_sweeps_block(block_data, total_fs_hz, sweep_timestamps_sec=None) — filters one block synchronously using the cached runtime.
 - FilterProcessorMixin.reprocess_filtered_buffer() — rebuilds the entire processed buffer from raw data (used after capture or settings change).
 
-### force_calibration_state.py
+### pzt_timing_context.py
 
-Typed dataclasses for the Force Calibration tab's persisted rows and active measurement window (separate from load-cell zero-offset state in `force_state.py`).
+Per-ADC-input PZT sampling-timing context derived from the MUX timing model (no Qt or serial code). Used by the Force Display block worker and Pressure Map panel.
 
-- CalibrationRow (dataclass) — one measured calibration entry (sensor family/number, signal source, per-sensor readings, max force/sensor values, timestamp).
-- ForceCalibrationState (dataclass) — full Force Calibration tab state: per-family calibration rows, active measurement window, UI selections, autosave flag.
-- ActiveMeasurementWindow (dataclass) — tracks live sensor/force peaks during an active measurement window.
-- ActiveMeasurementWindow.update_live_sensor_values(sensor_values, total_value=None) — appends the latest live readings.
-- ActiveMeasurementWindow.get_max_force_x() / get_max_force_z() / get_max_sensor_value() / get_min_sensor_value() — peak/extreme accessors.
-- ActiveMeasurementWindow.reset() — clears all accumulated samples.
-- build_default_force_calibration_state() — constructs a fresh `ForceCalibrationState`.
-- get_calibration_rows_for_family(state, family) — returns the row list for PZT/PZR/Rosette.
+- PztDecayTimingContext (frozen dataclass) — sensor-connected/pre-sample-decay/post-sample times, repeat count, loop interval and measured-interval statistics for one ADC input.
+- PztDecayTimingContext.from_adc_mux_timing(timing, physical_adc_input) — builds the context from an `AdcMuxTiming` for CH1/CH2.
+- PztDecayTimingContext.with_sample_intervals(wall_intervals, connected_intervals) — attaches measured wall/connected interval statistics.
+- PztDecayTimingContext.export_dict() — JSON-friendly dict of the context.
+- PztDecayTimingContext.observation_offset_s(repeat_index) / connected_exposure_between(previous_repeat, current_repeat) / connected_exposure_for_transition(previous, ...) — repeat-level timing and connected-exposure helpers.
 
 ### force_feedback.py
 

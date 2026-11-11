@@ -1,6 +1,6 @@
 # TestBoard 7953 GUI performance review
 
-Initial GUI review: 2026-10-05. Firmware benchmark addendum: 2026-10-07. The host repair and synthetic replay validation are now implemented; see [GUI repair results](../../testing/results/testboard-7953/TESTBOARD_7953_GUI_REPAIR_RESULTS.md). The findings and original measurements below describe the pre-repair pipeline. The selected production LPSPI firmware is preserved; hardware GUI acceptance remains separate from its completed full-matrix and forced-stall validation.
+Initial GUI review: 2026-10-05. Firmware benchmark addendum: 2026-10-07. The host repair and synthetic replay validation are now implemented; see [GUI repair results](../../testing/results/testboard-7953/TESTBOARD_7953_GUI_REPAIR_RESULTS.md). The findings and original measurements below describe the pre-repair pipeline. The PZT_Decay_Calc tab (`process_pzt_decay_block`, `gui/pzt_decay_panel.py`) discussed below was later removed and archived under `Legacy/gui/pzt_decay_panel.py`. The selected production LPSPI firmware is preserved; hardware GUI acceptance remains separate from its completed full-matrix and forced-stall validation.
 
 ## Finding
 

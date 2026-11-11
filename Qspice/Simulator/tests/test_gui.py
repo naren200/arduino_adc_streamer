@@ -53,7 +53,7 @@ def _wait_for_run(window, timeout_ms=120_000):
 
 def test_screens_exist(window):
     names = [window.tabs.tabText(i) for i in range(window.tabs.count())]
-    assert names == ["Model", "Components", "System", "Simulation", "Visualization"]
+    assert names == ["Model", "Components", "System", "Simulation", "Force", "Visualization"]
     assert len(_field(window, "mux.ileak_s_off_nA").widgets()) == 4
     assert window.node_tree.topLevelItemCount() >= 4
 
@@ -105,6 +105,22 @@ def test_input_profile_table_edits_forces(window):
     assert window.cfg["forces"][n]["amp_N"] == pytest.approx(0.05)
     table._clear()
     assert window.cfg["forces"] == []
+
+
+def test_add_sin_button_edits_the_sine_table(window):
+    table = next(t for t in window._tables if t.path == "forces_sin")
+    assert [b.text() for b in table.findChildren(QtWidgets.QPushButton)][0] == "Add sin"
+    assert window.cfg["forces_sin"] == []
+    table._add()
+    row = window.cfg["forces_sin"][0]
+    assert set(row) == {"address", "t_start_us", "freq_hz", "cycles", "amp_N"}
+    table.table.item(0, 2).setText("100k")
+    table.table.item(0, 3).setText("2.5")
+    table.table.item(0, 4).setText("0.03")
+    assert (window.cfg["forces_sin"][0]["freq_hz"], window.cfg["forces_sin"][0]["cycles"], window.cfg["forces_sin"][0]["amp_N"]) == (1e5, 2.5, 0.03)
+    assert len(window.cfg["forces"]) == 2                  # the pulse table is untouched
+    table._clear()
+    assert window.cfg["forces_sin"] == []
 
 
 def test_run_plot_reference_and_export(window, tmp_path):
@@ -244,3 +260,36 @@ def test_several_runs_compare_against_the_original_reference(window, monkeypatch
     answers["value"] = QtWidgets.QMessageBox.StandardButton.Yes   # an explicit confirmation replaces it
     window.hold_reference()
     assert window.reference is not original and "R13" in window.reference["desc"]
+
+
+def test_capacitance_override_field_is_nullable_shows_the_hint_and_resets(window):
+    row = _field(window, "sensor_defaults.cp_pF")
+    assert window.cfg["sensor_defaults"]["cp_pF"] is None
+    assert row.editor.text() == "" and row.editor.placeholderText() == "calculated: 60.7 pF"
+    row.editor.setText("45")
+    row.editor.editingFinished.emit()
+    assert window.cfg["sensor_defaults"]["cp_pF"] == 45.0 and row.reset.isEnabled()
+    assert dict(window.model.summary(window.cfg))["Sensor capacitance (sensor 0)"] == "45.0 pF (override)"
+    row.editor.setText("")                                  # an empty field stores null again
+    row.editor.editingFinished.emit()
+    assert window.cfg["sensor_defaults"]["cp_pF"] is None and not row.reset.isEnabled()
+    row.editor.setText("45")
+    row.editor.editingFinished.emit()
+    row._on_reset()
+    assert window.cfg["sensor_defaults"]["cp_pF"] is None and row.editor.text() == ""
+    thickness = _field(window, "sensor_defaults.thickness_mm")      # the hint follows the size parameters
+    thickness.editor.setText("0.5")
+    thickness.editor.editingFinished.emit()
+    assert row.editor.placeholderText() == "calculated: 30.4 pF"
+
+
+def test_park_on_vmid_checkbox_and_park_time_label(window):
+    row = _field(window, "timing.park_on_vmid")
+    assert row.item["label"] == "Park on VMID" and row.editor.isChecked() and window.cfg["timing"]["park_on_vmid"] is True
+    assert _field(window, "timing.t_vmid_park_us").item["label"] == "Park time"
+    assert dict(window.model.summary(window.cfg))["Park mode"] == "on VMID"
+    row.editor.setChecked(False)
+    assert window.cfg["timing"]["park_on_vmid"] is False and row.reset.isEnabled()
+    assert dict(window.model.summary(window.cfg))["Park mode"].startswith("stays on the last channel")
+    row._on_reset()
+    assert window.cfg["timing"]["park_on_vmid"] is True and row.editor.isChecked()

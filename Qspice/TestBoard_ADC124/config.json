@@ -12,7 +12,7 @@
     "r_bias_ohm": 470000.0,
     "r_out_ohm": 33.0,
     "c_out_pF": 470.0,
-    "initial_sensor_node_v": 1.65
+    "initial_sensor_node_v": null
   },
 
   "sensor_defaults": {
@@ -26,13 +26,15 @@
     "tan_delta": 0.025,
     "tan_delta_ref_hz": 1000.0,
     "r_insulation_ohm": 1e10,
-    "force_gain": 1.0
+    "force_gain": 1.0,
+    "cp_pF": null
   },
   "sensor_overrides": {
     "_note": "Per-address overrides, e.g. \"3\": {\"thickness_mm\": 0.5, \"force_gain\": 0.9}",
     "3": {}
   },
 
+  "forces_sin": [],
   "forces": [
     {"address": 2, "t_start_us": 30.0,  "rise_us": 40.0, "width_us": 250.0, "fall_us": 40.0, "amp_N": 0.10},
     {"address": 4, "t_start_us": 150.0, "rise_us": 40.0, "width_us": 260.0, "fall_us": 40.0, "amp_N": 0.15}
@@ -46,6 +48,11 @@
     "muxd_trace_c_pF": 2.0,
     "r_bias_par_c_pF": 0.1,
     "ain_stray_c_pF": 1.0
+  },
+
+  "adc": {
+    "_note": "ADC124S101: 12-bit SAR ADC with VA = vdd_v as the reference. bits = resolution used for the derived ADC-Out value (range: 0 .. VDD, or -VDD .. +VDD when VMID = 0).",
+    "bits": 12
   },
 
   "mux": {
@@ -84,6 +91,7 @@
     "_note": "Per sensor visit, from the MUX address command: all n_mux muxes switch together and share t_sensor_settle; the ADC then converts the muxes one after the other, one SPI word (adc_word_clocks clocks at adc_spi_clk_hz) each. The simulated mux is the first one: its sample is held adc_acquisition_clocks after the settle time, and it waits (n_mux - 1) words on the channel while the others are converted. Connected time per visit = settle + n_mux words (5 us with 4 muxes at 16 MHz). Then, with vmid_visit_after_each, a VMID visit of t_vmid_settle + t_vmid_park, otherwise one VMID park per sweep. ADC124S101: 16-clock word, 3 acquisition clocks.",
     "scan_order": [0, 1, 2, 3, 4, 5, 6],
     "vmid_visit_after_each": true,
+    "park_on_vmid": true,
     "t_start_us": 20.0,
     "t_sensor_settle_us": 1.0,
     "repeat": 1,
@@ -101,7 +109,9 @@
 
   "simulation": {
     "max_step_ns": 5.0,
-    "periodic_min_cycles": 200
+    "periodic_min_cycles": 200,
+    "adc_noise_mV": 0.0,
+    "noise_seed": 1
   },
 
   "scenarios": {

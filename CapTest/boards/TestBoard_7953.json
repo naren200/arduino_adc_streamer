@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "id": "TestBoard_7953",
+  "name": "TestBoard_7953 (4 x ADS7953, Teensy 4.1)",
+  "adc": {"bits": 12, "vref_volts": 2.5},
+  "vmid_volts": 1.25,
+  "spi": {"min_hz": 100000, "max_hz": 20000000, "default_hz": 20000000},
+  "channels": {
+    "syntax": "adc:channel",
+    "example": "2:0,2:5,4:1-3",
+    "routed": {"1": 10, "2": 15, "3": 10, "4": 15},
+    "vmid_channel": 15,
+    "grid_columns": 8,
+    "group_title": "ADC{group}",
+    "group_noun": "ADC",
+    "id_columns": [["ADC", "adc", "%d"], ["Ch", "channel", "%d"]],
+    "display": "ADC{0}:{1}"
+  },
+  "bias": {
+    "file": "Arduino_Sketches/TestBoard_7953/benchmarks/testboard_7953_bias_resistors.json",
+    "group_defaults": {"1": 1000000, "2": 470000, "3": 470000, "4": 249000}
+  },
+  "connection_model": "single_channel",
+  "touches": "the measured channel only (its ADC multiplexer)",
+  "defaults": {
+    "bias_tolerance": 0.01, "n_samples": null, "c_guess_pf": 100.0, "park_us": 200,
+    "gap_ns": 200, "first_clock_delay_ns": 25, "spi_clock_hz": 20000000, "bursts": 1,
+    "discharge_ms": 300.0, "discard_k": 2, "vref": 2.5, "v_s0": 0.0, "c_parasitic_pf": 5.0,
+    "fit_model": "2exp", "method": "alternate", "vmid_frames": 1, "gap_long_ns": 0
+  },
+  "settings_fields": ["n_samples", "c_guess_pf", "park_us", "gap_ns", "first_clock_delay_ns",
+                       "spi_clock_hz", "bursts", "discharge_ms", "discard_k", "vref", "v_s0",
+                       "c_parasitic_pf", "bias_tolerance", "fit_model", "method", "vmid_frames",
+                       "gap_long_ns"],
+  "discharge_check": {"default_channel": "2:0", "waits_ms": [10, 30, 100, 300]},
+  "vmid_read": {"targets": [1, 2, 3, 4], "label": "ADC{0}"},
+  "simulator": {"c_pzt_pf": 70.0, "c_d_pf": 12.0, "leak_tau_s": 0.005, "noise_lsb": 1.0}
+}

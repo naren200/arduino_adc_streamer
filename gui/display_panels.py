@@ -17,10 +17,8 @@ from constants.ui import (
     CHANNEL_SCROLL_HEIGHT,
     ANALYSIS_TAB_NAME,
     DEFAULT_WINDOW_SIZE,
-    FORCE_CALIBRATION_TAB_NAME,
     HEATMAP_TAB_NAME,
     PRESSURE_MAP_TAB_NAME,
-    PZT_DECAY_TAB_NAME,
     PZT_RS_PZT_TAB_NAME,
     ROSETTE_TAB_NAME,
     SENSOR_TAB_NAME,
@@ -83,19 +81,12 @@ class DisplayPanelsMixin:
         heatmap_tab = self.create_heatmap_tab()
         self.heatmap_tab_index = self.visualization_tabs.addTab(heatmap_tab, HEATMAP_TAB_NAME)
 
-        # Create force calibration tab (from ForceCalibrationPanelMixin)
-        force_calib_tab = self.create_force_calibration_tab()
-        self.force_calibration_tab_index = self.visualization_tabs.addTab(force_calib_tab, FORCE_CALIBRATION_TAB_NAME)
-
         # Create spectrum tab (from SpectrumPanelMixin)
         spectrum_tab = self.create_spectrum_tab()
         self.spectrum_tab_index = self.visualization_tabs.addTab(spectrum_tab, SPECTRUM_TAB_NAME)
 
         analysis_tab = self.create_analysis_tab()
         self.analysis_tab_index = self.visualization_tabs.addTab(analysis_tab, ANALYSIS_TAB_NAME)
-
-        pzt_decay_tab = self.create_pzt_decay_tab()
-        self.pzt_decay_tab_index = self.visualization_tabs.addTab(pzt_decay_tab, PZT_DECAY_TAB_NAME)
 
         # Create sensor tab last (from SensorPanelMixin)
         sensor_tab = self.create_sensor_tab()

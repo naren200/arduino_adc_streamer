@@ -193,6 +193,10 @@ class ADCSerialMixin:
         self.log_status(message)
 
         if str(message).startswith('Acquisition pipeline error:'):
+            from data_processing.stall_watchdog import dump_all_threads
+            path = dump_all_threads(message)
+            if path is not None:
+                self.log_status(f'Thread stacks at pipeline error written to {path}')
             if self.is_capturing:
                 self._capture_incomplete_reason = str(message)
             if str(message).startswith('Acquisition pipeline error: raw reader:'):

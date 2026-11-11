@@ -116,7 +116,7 @@ class AcquisitionRuntimeMixin(LegacyArrayAPI):
             self.update_channel_list()
             for key, cb in self.channel_checkboxes.items():
                 cb.setChecked(self._array_channel_choices.get(key, True))
-        for name in ("refresh_spectrum_package_options", "refresh_pzt_decay_signals", "refresh_force_calibration_sources"):
+        for name in ("refresh_spectrum_package_options",):
             if hasattr(self, name):
                 getattr(self, name)()
         for name in ("_last_spectrum_signature", "_pressure_map_render_cache_key"):
@@ -129,5 +129,3 @@ class AcquisitionRuntimeMixin(LegacyArrayAPI):
         for name in ("update_spectrum", "update_signal_integration_plot", "update_heatmap_plot", "_render_pressure_force_display"):
             if hasattr(self, name):
                 getattr(self, name)()
-        if hasattr(self, 'refresh_live_decay_preview'):
-            self.refresh_live_decay_preview()

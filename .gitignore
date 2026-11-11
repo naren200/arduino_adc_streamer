@@ -64,7 +64,13 @@ Thumbs.db
 /docs/testing/datasets/
 /docs/testing/results/**/*.json
 /docs/testing/results/**/*.csv
+/docs/testing/results/**/*.hex
 token_dont_read_ai
 .archived/
 CLAUDE.local.md
 *.npz
+
+# CapTest measurement output and local per-board settings
+CapTest/Results/
+CapTest/settings/
+CapTest/-q

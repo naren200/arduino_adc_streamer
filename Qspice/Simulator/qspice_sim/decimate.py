@@ -22,8 +22,8 @@ def envelope(t: np.ndarray, v: np.ndarray, x0: float, x1: float, n_buckets: int 
     idx = np.searchsorted(seg_t, edges[:-1], side="left")
     idx = np.unique(idx[idx < len(seg_t)])
     seg = v[i0:i1]
-    lo = np.minimum.reduceat(seg, idx)
-    hi = np.maximum.reduceat(seg, idx)
+    lo = np.fmin.reduceat(seg, idx)      # fmin / fmax skip NaN (undefined points of derived traces); all-NaN buckets stay NaN
+    hi = np.fmax.reduceat(seg, idx)
     x = np.repeat(seg_t[idx], 2)
     y = np.empty(2 * len(idx))
     y[0::2], y[1::2] = lo, hi

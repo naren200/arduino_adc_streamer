@@ -184,6 +184,20 @@ not disable parking. Active ADCs are parked on channel 15:
 - before another ADC takes ownership of the same SPI bus;
 - at normal stop, timed stop, or acquisition failure.
 
+In manual mode, `vmid true` inserts one discarded Vmid conversion between
+sensor routes on each ADC to reset the MUX drain node and suppress ghosting.
+This reset is independent of the two-frame ADC response latency. Each ADC scan
+still ends with two pipeline-flush frames to retrieve the final sensor result;
+these select Vmid when optional sampling or mandatory bus-handoff parking is
+enabled. For example, repeat 1 with channels 0, 1, 2 and Vmid enabled sends
+`0, 15, 1, 15, 2, 15, 15`. Only sensor results enter the payload.
+
+The [single-Vmid speed test](../../docs/testing/benchmarks/testboard-7953/TESTBOARD_7953_SINGLE_VMID_RESULTS.md)
+measured 9,615 samples/s per channel at 20 MHz and 11,111 at 30 MHz with both
+full arrays, LPSPI, manual sequencing and repeat 1. See the
+[capacitance-to-force guide](../../docs/guides/TESTBOARD_7953_CAPACITANCE_TO_FORCE_GUIDE.md)
+for matching this production sequence to offline calibration.
+
 When only one ADC is active on a bus, it is not parked between sweeps unless
 optional manual Vmid sampling is enabled. When both buses change ADC ownership,
 their parking frames are started together by DMA or direct LPSPI mode.
@@ -233,6 +247,12 @@ validated on the connected TestBoard before benchmarking:
 6. Compare channel identity, signal level, noise, and crosstalk across engines,
    manual/Auto-1 modes, repeats, and Vmid settings.
 7. Run long captures and verify all error counters remain zero.
+8. With manual mode and `vmid true`, confirm one channel-15 command between
+   sensor routes and two trailing flush commands per ADC scan. Compare
+   before/after ghosting, signal level, and noise with driven adjacent channels
+   at repeats 1/2/3 across blocking, DMA, and LPSPI. The digital tests check
+   command sequencing and final-result delivery; analog reset effectiveness
+   still requires this on-board check.
 
 The board-specific host runner, route manifest, preparation steps, and output
 format are documented in [`benchmarks/README.md`](benchmarks/README.md).

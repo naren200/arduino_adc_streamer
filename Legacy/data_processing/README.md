@@ -80,6 +80,14 @@ Mixin coordinating live extraction of 5-channel piezo data into shear/CoP visual
 - `ShearProcessorMixin._extract_shear_sensor_samples(settings)` — pulls a recent sweep window and splits it into per-sensor sample streams per package using the channel-to-sensor map.
 - `ShearProcessorMixin.compute_shear_visualization(settings)` — runs `ShearCoPProcessor.process` per package, builds a clipped Gaussian blob for display, and returns heatmap buffer + result pairs.
 
+### force_calibration_state.py
+
+Archived typed dataclasses for the Force Calibration tab: `CalibrationRow`, `ActiveMeasurementWindow`, `ForceCalibrationState`, `build_default_force_calibration_state()` and `get_calibration_rows_for_family(state, family)`.
+
+### pzt_decay.py
+
+Archived PZT voltage-decay characterization domain model (no Qt/serial code): `PztDecayState`, `PztDecayTimestampBasis`, `PztDecaySignalMapping`, `resolve_pzt_decay_signal_mapping(...)`, `PztDecaySample`, `PztDecaySettings`, `PztDecayResult` and the `PztDecayAnalyzer` state machine. `PztDecayTimingContext` stays active in `data_processing/pzt_timing_context.py` because the Force Display worker uses it.
+
 ### __init__.py
 
 Empty package marker file (no content).

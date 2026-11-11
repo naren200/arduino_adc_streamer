@@ -142,7 +142,6 @@ class IsolatedReplayPort:
 
 def run_case(app, directory, width, rate, duration, stall=False, tab='Time Series', filters=False, isolated_reader=False, fragmented_reads=False):
     with patch('adc_gui.load_device_config', return_value={'auto_connect': False}), patch.object(Path, 'home', return_value=directory), \
-         patch.object(ADCStreamerGUI, '_pzt_decay_qsettings', lambda self: QSettings(str(directory / 'decay.ini'), QSettings.Format.IniFormat)), \
          patch.object(ADCStreamerGUI, '_pressure_map_workspace_qsettings', lambda self: QSettings(str(directory / 'pressure.ini'), QSettings.Format.IniFormat)), ExitStack() as cleanup:
         gui = ADCStreamerGUI()
         cleanup.callback(gui.close)

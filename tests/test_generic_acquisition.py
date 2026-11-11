@@ -170,8 +170,6 @@ def test_json_only_board_gui_configure_capture_archive_and_transition(future_boa
     context, layout, _ = future_board
     monkeypatch.setenv('QT_QPA_PLATFORM', 'offscreen')
     monkeypatch.setattr(Path, 'home', lambda: tmp_path)
-    monkeypatch.setattr(ADCStreamerGUI, '_pzt_decay_qsettings',
-                        lambda self: QSettings(str(tmp_path / 'decay.ini'), QSettings.Format.IniFormat))
     monkeypatch.setattr(ADCStreamerGUI, '_pressure_map_workspace_qsettings',
                         lambda self: QSettings(str(tmp_path / 'pressure.ini'), QSettings.Format.IniFormat))
     app = QApplication.instance() or QApplication([])

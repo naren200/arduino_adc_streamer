@@ -1,6 +1,7 @@
 ## Plan: TestBoard_7953 GUI Capabilities and Two-Array Display
 
 Status: IMPLEMENTED - automated validation passed; hardware acceptance pending.
+Note (2026-11-10): the Force Calibration and PZT_Decay_Calc tabs referenced below were later removed from the app and archived under `Legacy/` (`gui/pzt_decay_panel.py`, `gui/force_calibration_panel.py` and their processing modules).
 Date: 2026-10-02
 Workspace: `C:/Code/arduino_adc_streamer/`
 

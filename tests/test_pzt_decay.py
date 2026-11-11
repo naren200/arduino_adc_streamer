@@ -5,17 +5,17 @@ import numpy as np
 import pytest
 
 from data_processing.adc_mux_timing import Mg24DualMuxTimingCalculator
-from data_processing.pzt_decay import (
+from Legacy.data_processing.pzt_decay import (
     PztDecayAnalyzer,
     PztDecaySample,
     PztDecaySettings,
     PztDecaySignalMapping,
     PztDecayState,
     PztDecayTimestampBasis,
-    PztDecayTimingContext,
     resolve_pzt_decay_signal_mapping,
 )
-from file_operations.pzt_decay_exporter import PztDecayExporter, SAMPLE_COLUMNS
+from data_processing.pzt_timing_context import PztDecayTimingContext
+from Legacy.file_operations.pzt_decay_exporter import PztDecayExporter, SAMPLE_COLUMNS
 
 
 def _timing():

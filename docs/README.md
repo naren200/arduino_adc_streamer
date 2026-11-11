@@ -5,7 +5,7 @@ All project documentation, organized by document purpose and lifecycle. Code-loc
 | Folder | Contents |
 |---|---|
 | [`architecture/`](architecture/README.md) | How the current system is built: GUI, firmware designs and implementation notes. |
-| [`specifications/`](specifications/README.md) | Behavior contracts: main app, GUI tabs, pressure map, force calibration. |
+| [`specifications/`](specifications/README.md) | Behavior contracts: main app and GUI tabs, including the pressure map. |
 | [`plans/`](plans/README.md) | Proposed, in-progress, or hardware-pending plans (features, refactoring, firmware, testing). |
 | [`testing/`](testing/README.md) | Test and benchmark evidence: results, benchmarks, datasets (raw data, figures). |
 | [`reports/`](reports/README.md) | Reviews, diagnoses, and exported formal reports (PDF, DOCX). |

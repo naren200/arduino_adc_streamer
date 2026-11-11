@@ -30,14 +30,8 @@ class ArrayPanelMixin:
                 self._refresh_sensor_tab_ui()
         self._array_controls_active = active
         self._array_control_profile_id = context.profile.id if active else None
-        if hasattr(self, 'force_calib_family_combo'):
-            if active:
-                self.force_calib_family_combo.setCurrentText('PZT')
-            self.force_calib_family_combo.setEnabled(not active and not self.force_calibration_state.is_capturing)
         # The registry binder runs after MCU presentation; these are specialized view components.
         self.refresh_display_array_control()
-        if hasattr(self, 'refresh_pzt_decay_signals'):
-            self.refresh_pzt_decay_signals()
 
     def refresh_array_sequence_controls(self):
         if not getattr(self, '_array_controls_active', False):

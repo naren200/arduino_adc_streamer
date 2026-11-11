@@ -9,6 +9,16 @@ from constants.sensor_config import DEFAULT_SENSOR_CONFIGURATION
 
 
 # ============================================================================
+# Archived Force Calibration and PZT_Decay_Calc Tab Constants
+# ============================================================================
+
+FORCE_CALIBRATION_TAB_NAME = "Force Calibration"
+PZT_DECAY_TAB_NAME = "PZT_Decay_Calc"
+FORCE_CALIBRATION_SETTINGS_DIRNAME = ".adc_streamer"
+FORCE_CALIBRATION_SETTINGS_SUBDIR = "force_calibration"
+
+
+# ============================================================================
 # Heatmap Display Constants
 # ============================================================================
 

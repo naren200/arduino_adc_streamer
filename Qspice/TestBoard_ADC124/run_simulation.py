@@ -94,8 +94,9 @@ def analyse_pulses(cfg: dict, sig: dict, base: dict, slots: list[dict]) -> list[
                "t_sample_us": ts * 1e6, "v_ain": v, "v_ain_baseline": v0, "delta_mV": (v - v0) * 1e3,
                "force_N": 0.0, "open_circuit_mV": 0.0}
         if s["kind"] == "sensor":
-            pts = bm.force_pwl(cfg, s["address"], t_stop)
+            pts = bm.pulse_pwl(cfg, s["address"], t_stop)
             f = float(np.interp(ts, [p[0] for p in pts], [p[1] for p in pts]))
+            f += sum(bm.sine_value(sn, ts) for sn in cfg.get("forces_sin", []) if int(sn["address"]) == s["address"])
             sp = bm.sensor_params(cfg, s["address"])
             row["force_N"] = f
             row["open_circuit_mV"] = sp["d33"] * f / sp["cp"] * 1e3
@@ -105,7 +106,7 @@ def analyse_pulses(cfg: dict, sig: dict, base: dict, slots: list[dict]) -> list[
 
 def summarise(cfg: dict, rows: list[dict]) -> dict:
     """Signal = slots of sensors that have a force pulse; ghost = every other sensor slot + VMID slots."""
-    driven = {int(f["address"]) for f in cfg["forces"]}
+    driven = {int(f["address"]) for f in cfg["forces"] + cfg.get("forces_sin", [])}
     sig_rows = [r for r in rows if r["kind"] == "sensor" and r["address"] in driven]
     ghost = [r for r in rows if r["kind"] == "vmid" or r["address"] not in driven]
     return {

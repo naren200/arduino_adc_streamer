@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -44,11 +45,30 @@ def sensor_params(cfg: dict, addr: int) -> dict:
     p = dict(cfg["sensor_defaults"])
     p.update({k: v for k, v in cfg.get("sensor_overrides", {}).get(str(addr), {}).items() if not k.startswith("_")})
     area = (p["width_mm"] * MILLI) * (p["length_mm"] * MILLI)
-    cp = EPS0 * p["eps33_r"] * area / (p["thickness_mm"] * MILLI)
+    cp_calc = EPS0 * p["eps33_r"] * area / (p["thickness_mm"] * MILLI)
+    override = p.get("cp_pF")
+    if override is None:
+        cp, source = cp_calc, "calculated"
+    else:
+        if not float(override) > 0:
+            raise ValueError(f"sensor {addr}: capacitance override cp_pF must be positive (leave it empty to calculate it from the size)")
+        cp, source = float(override) * PICO, "override"
     rp = None
     if p.get("loss_model", "none") == "parallel_r" and p["tan_delta"] > 0:
         rp = 1.0 / (6.283185307 * p["tan_delta_ref_hz"] * cp * p["tan_delta"])
-    return {"cp": cp, "d33": p["d33_pC_per_N"] * PICO * p["force_gain"], "rp": rp, "rins": p["r_insulation_ohm"]}
+    return {"cp": cp, "d33": p["d33_pC_per_N"] * PICO * p["force_gain"], "rp": rp, "rins": p["r_insulation_ohm"],
+            "cp_calc": cp_calc, "cp_source": source}
+
+
+def adc_range(cfg: dict) -> dict:
+    """ADC input range: 0 .. VREF when VMID is above 0, -VREF .. +VREF (bipolar, twice the span) when VMID is 0."""
+    bits = int(cfg["adc"].get("bits", 12))
+    if bits < 2:
+        raise ValueError("adc.bits must be at least 2")
+    vref = float(cfg["circuit"]["vref_v"])
+    bipolar = float(cfg["circuit"]["vmid_v"]) == 0
+    v_low = -vref if bipolar else 0.0
+    return {"bits": bits, "vref": vref, "v_low": v_low, "v_high": vref, "bipolar": bipolar, "lsb": (vref - v_low) / 2 ** bits}
 
 
 def leakage_levels(cfg: dict) -> tuple[float, float, float]:
@@ -109,17 +129,29 @@ def stream_channels(cfg: dict) -> list[int]:
     return seq
 
 
+def other_adc_frames(cfg: dict) -> int:
+    """Frames the other ADCs of the sequence clock while this mux is parked: each streams its channels x repeat + 2 pipeline frames."""
+    t = cfg["timing"]
+    n_other = int(t["n_adc"]) - 1
+    if n_other < 0:
+        raise ValueError("timing.n_adc must be at least 1")
+    return n_other * (int(t["other_adc_channels"]) * int(t["repeat"]) + 2) if n_other else 0
+
+
 def build_schedule(cfg: dict) -> dict:
     t = cfg["timing"]
     ft = frame_timing(cfg)
     seq = stream_channels(cfg)
-    n_park = int(t["other_adc_frames"])
+    n_park = other_adc_frames(cfg)
     frames_per_cycle = n_park + len(seq)
     cycle = frames_per_cycle * ft["period"] + t["sweep_gap_us"] * MICRO
     n_cycles = int(t["num_cycles"])
     if t.get("run_duration_s"):
         n_cycles = max(1, int((t["run_duration_s"] - t["t_start_us"] * MICRO) / cycle))
     start = t["t_start_us"] * MICRO
+    a_cfg = cfg["adc"]
+    t_off_delay = (a_cfg["mux_off_delay_ns"] + a_cfg["mux_edge_ns"] / 2) * NANO       # release: command + off delay + half an edge
+    t_on_delay = (a_cfg["mux_on_delay_ns"] + a_cfg["mux_edge_ns"] / 2) * NANO
     frames: list[dict] = []
     samples: list[dict] = []
     for k in range(n_cycles):
@@ -136,16 +168,70 @@ def build_schedule(cfg: dict) -> dict:
             while e + 1 < len(seq) and seq[e + 1] == ch:
                 e += 1
             if ch != VMID_CH:
-                samples.append({"t": base + (n_park + e + 1) * ft["period"], "address": ch, "cycle": k,
-                                "t_connect": base + (n_park + s) * ft["period"] + ft["delta"]})
+                t_hold = base + (n_park + e + 1) * ft["period"]
+                t_connect = base + (n_park + s) * ft["period"] + ft["delta"]
+                samples.append({"t": t_hold, "address": ch, "cycle": k, "t_connect": t_connect,
+                                "t_on": t_connect + t_on_delay, "t_off": t_hold + ft["delta"] + t_off_delay,
+                                "node_reset": seq[s - 1] == VMID_CH})
             s = e + 1
     t_stop = start + n_cycles * cycle + t["tail_us"] * MICRO
     return {"timing": ft, "frames": frames, "samples": samples, "cycle": cycle, "n_cycles": n_cycles, "t_stop": t_stop,
             "frames_per_cycle": frames_per_cycle, "stream_frames": len(seq), "start": start}
 
 
+def _parallel(*r: float | None) -> float:
+    g = sum(1.0 / x for x in r if x)
+    return 1.0 / g if g else float("inf")
+
+
+def leak_info(cfg: dict, addr: int) -> dict:
+    """Leakage and charge-sharing data of sensor `addr` for the simulator's force calculation (SI units).
+
+    The pin leakage of the datasheet (a current to ground at every channel pin, also while connected) is taken at the VMID voltage.
+    """
+    c, par, a, op = cfg["circuit"], cfg["parasitics"], cfg["adc"], cfg["opamp"]
+    sp = sensor_params(cfg, addr)
+    i0, i1, i2 = leakage_levels(cfg)
+    v = c["vmid_v"]
+    i_pin = i0 + (i1 - i0) * min(max(v, 0.0), 1.25) / 1.25 + (i2 - i1) * min(max(v - 1.25, 0.0), 1.25) / 1.25
+    return {"c_side_F": (par["sensor_trace_c_pF"] + a["cs_off_pF"]) * PICO,
+            "c_node_F": (c["c_mxo_pF"] + op["ccm_pF"]) * PICO,      # the differential capacitance is bootstrapped by the follower
+            "r_conn_ohm": _parallel(c["r_bias_ohm"], sp["rp"]), "v_conn_V": v, "i_conn_A": i_pin,
+            "r_float_ohm": _parallel(sp["rins"], sp["rp"]), "v_float_V": 0.0, "i_float_A": i_pin}
+
+
 # ----------------------------------------------------------------------------- waveforms
-def force_pwl(cfg: dict, addr: int, t_stop: float) -> list[tuple[float, float]]:
+def check_sines(cfg: dict) -> None:
+    seen: set[int] = set()
+    for s in cfg.get("forces_sin", []):
+        if float(s["freq_hz"]) <= 0 or float(s["cycles"]) <= 0:
+            raise ValueError(f"sine force on address {s['address']}: frequency and number of cycles must be positive")
+        if int(s["address"]) in seen:
+            raise ValueError(f"sine force on address {s['address']}: only one sine row per sensor is supported")
+        seen.add(int(s["address"]))
+
+
+def sine_value(s: dict, t: float) -> float:
+    """Force [N] of the sine row at time t, as the netlist's SIN source gives it: amp * sin(2 pi f (t - t_start)) for `cycles` periods,
+    zero before, and after the last cycle the value it ended on (QSPICE holds it; zero for whole and half cycles)."""
+    t0, f = s["t_start_us"] * MICRO, float(s["freq_hz"])
+    t = min(max(t, t0), t0 + float(s["cycles"]) / f)
+    return s["amp_N"] * math.sin(2 * math.pi * f * (t - t0))
+
+
+def sine_ends_off_zero(s: dict) -> bool:
+    """The sine stops away from a zero crossing (cycles not a multiple of 0.5): the source then holds its last value."""
+    return abs(math.sin(2 * math.pi * float(s["cycles"]))) > 1e-3
+
+
+def sine_source(name: str, node: str, ref: str, s: dict) -> str:
+    """QSPICE sine source: SIN(offset amplitude frequency delay damping phase cycles), smooth and exact (no corners)."""
+    return (f"{name} {node} {ref} SIN(0 {s['amp_N']:.9e} {float(s['freq_hz']):.9e} {s['t_start_us'] * MICRO:.9e} 0 0 "
+            f"{float(s['cycles']):.9e})")
+
+
+def pulse_pwl(cfg: dict, addr: int, t_stop: float) -> list[tuple[float, float]]:
+    """Piecewise-linear force of the pulse rows; the sine row is a separate SIN source (see force_source)."""
     pulses = [f for f in cfg["forces"] if int(f["address"]) == addr]
 
     def trap(f, t):
@@ -167,7 +253,20 @@ def force_pwl(cfg: dict, addr: int, t_stop: float) -> list[tuple[float, float]]:
         t0 = f["t_start_us"] * MICRO
         r, w, fl = f["rise_us"] * MICRO, f["width_us"] * MICRO, f["fall_us"] * MICRO
         times.update(x for x in (t0, t0 + r, t0 + r + w, t0 + r + w + fl) if x <= t_stop)
-    return [(x, sum(trap(f, x) for f in pulses)) for x in sorted(times)]
+    return [(t, sum(trap(f, t) for f in pulses)) for t in sorted(times)]
+
+
+def force_source(cfg: dict, addr: int, t_stop: float) -> str:
+    """Netlist of the applied-force source of sensor `addr` (node f<addr>, newtons as volts): a PWL source for the pulse rows and, when the
+    sensor has a sine row, QSPICE's SIN source (at most one per sensor), in series with the pulses if there are any."""
+    check_sines(cfg)
+    pwl = pulse_pwl(cfg, addr, t_stop)
+    sn = next((f for f in cfg.get("forces_sin", []) if int(f["address"]) == addr), None)
+    if sn is None:
+        return fmt_pwl(f"Vf{addr}", f"f{addr}", pwl)
+    if any(v for _, v in pwl):
+        return fmt_pwl(f"Vf{addr}", f"f{addr}_pulse", pwl) + "\n" + sine_source(f"Vfs{addr}", f"f{addr}", f"f{addr}_pulse", sn)
+    return sine_source(f"Vf{addr}", f"f{addr}", "0", sn)
 
 
 def fmt_pwl(name: str, node: str, pts: list[tuple[float, float]]) -> str:
@@ -245,14 +344,20 @@ def build(cfg: dict) -> tuple[str, dict]:
         add((HERE / "models" / lib).read_text(encoding="utf-8").rstrip())
         add(f"* --- end models/{lib} ---")
     add("")
-    add(f"Vdd vdd 0 {c['vdd_v']}")
+    rng = adc_range(cfg)
+    if rng["bipolar"]:
+        add("* VMID = 0: bipolar analog supply, the buffer rails are -VREF .. +VREF (the real ADS7953 inputs cannot go below 0 V)")
+        add(f"Vdd vdd 0 {rng['vref']}")
+        add(f"Vss vss 0 {-rng['vref']}")
+    else:
+        add(f"Vdd vdd 0 {c['vdd_v']}")
     add(f"Vvmid vmid 0 {c['vmid_v']}")
     add("")
     add("* ---- PZT sensors: force [N] as volts -> charge source d33*dF/dt || Cp || insulation ----")
     for k in range(N_SENSORS):
         sp = sensor_params(cfg, k)
         add(f"* sensor {k} -> Ch{k}: Cp={sp['cp'] / PICO:.1f} pF, d33={sp['d33'] / PICO:.1f} pC/N")
-        add(fmt_pwl(f"Vf{k}", f"f{k}", force_pwl(cfg, k, t_stop)))
+        add(force_source(cfg, k, t_stop))
         add(f"Bq{k} 0 p{k} I={sp['d33']:.9e}*ddt(V(f{k}))")
         add(f"Cp{k} p{k} 0 {sp['cp']:.9e}")
         if sp["rp"]:
@@ -278,7 +383,7 @@ def build(cfg: dict) -> tuple[str, dict]:
     add("")
     add("* ---- OPA365 unity buffer, bias resistor to VMID, buffer output -> AINP, ADC sample-and-hold ----")
     add(f"Rbias mxo vmid {c['r_bias_ohm']}")
-    add("XU mxo bufo bufo vdd 0 OPA365_BEH")
+    add(f"XU mxo bufo bufo vdd {'vss' if rng['bipolar'] else '0'} OPA365_BEH")
     add(f"Rout bufo ain {c['r_out_ohm']}")
     add(f"Cain ain 0 {c['c_ain_pF'] * PICO:.9e}")
     add(f"Bsh ain sh I=V(ain,sh)*limit(V(shc),0,1)/{a['r_track_ohm']}")
@@ -286,7 +391,7 @@ def build(cfg: dict) -> tuple[str, dict]:
     add(f"Blkain ain 0 I={leak[0]:.9e} + ({leak[1]:.9e}-{leak[0]:.9e})*limit(V(ain),0,1.25)/1.25 + ({leak[2]:.9e}-{leak[1]:.9e})*limit(V(ain)-1.25,0,1.25)/1.25")
     add(fmt_pwl("Vshc", "shc", hold_pwl(cfg, sched)))
     add("")
-    ic = c["initial_sensor_node_v"]
+    ic = c["vmid_v"] if c["initial_sensor_node_v"] is None else c["initial_sensor_node_v"]     # empty = follows VMID
     add(" ".join([".ic"] + [f"V(s{k})={ic} V(p{k})={ic}" for k in range(N_SENSORS)] + [f"V(sh)={c['vmid_v']}"]))
     add(f".tran 0 {t_stop:.9e} 0 {sim['max_step_ns'] * NANO:.9e}")
     names = ["ain", "mxo", "bufo", "sh", "shc", "vmid"] + [f"s{k}" for k in range(16)] + [f"f{k}" for k in range(N_SENSORS)] \

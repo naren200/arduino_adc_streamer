@@ -96,6 +96,11 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
+    DEFAULT_SIGNAL_INTEGRATION_BASELINE_REMOVAL,
+    SIGNAL_INTEGRATION_BASELINE_HPF,
+    SIGNAL_INTEGRATION_BASELINE_LABELS,
+    SIGNAL_INTEGRATION_BASELINE_MEDIAN,
+    SIGNAL_INTEGRATION_BASELINE_NONE,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
     DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH,
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS1_ENABLED,
@@ -223,7 +228,7 @@ from data_processing.pressure_map_array_generator import (
 from data_processing.pressure_map_geometry import PressureMapGeometry
 from data_processing.force_block_worker import ForceBlockBatch, ForceBlockWorker, ForceRenderResult, WorkerState
 from data_processing.pressure_force_display import PressureForceDisplayEngine
-from data_processing.pzt_decay import PztDecayTimingContext
+from data_processing.pzt_timing_context import PztDecayTimingContext
 from core.piezo_engine.shear_detector import ShearDetector, ShearResult
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from gui.pressure_map_widget import PressureMapPackageDisplay, PressureMapWidget
@@ -355,8 +360,9 @@ class PressureMapPanelMixin:
         controls_layout = QGridLayout(controls_group)
 
         hpf_tooltip = (
-            "Display-only high-pass cutoff applied before integration to remove DC bias. "
-            "Lower values keep slower drift; 0 disables the HPF."
+            "Display-only high-pass cutoff applied before integration when Baseline removal is "
+            "'High-pass filter'. Lower values keep slower drift; 0 disables the HPF. "
+            "The Analysis tab also reads this cutoff."
         )
         controls_layout.addWidget(self._create_tooltip_label("HPF cutoff:", hpf_tooltip), 0, 0)
         self.signal_integration_hpf_spin = QDoubleSpinBox()
@@ -439,17 +445,33 @@ class PressureMapPanelMixin:
         )
         controls_layout.addWidget(self.signal_integration_show_graph_check, 2, 0, 1, 2)
 
-        median_baseline_tooltip = (
-            "Subtract the latest Time Series median baseline from each channel before HPF/integration. "
-            "Baselines come from the first auto-capture window or Time Series Zero Signals."
+        baseline_removal_tooltip = (
+            "How each channel's DC baseline is removed before integration. "
+            "'Time Series median' subtracts the Time Series median baseline (first auto-capture window "
+            "or Zero Signals) as a fixed offset and needs no filtering. "
+            "'High-pass filter' re-filters the live window with the HPF cutoff, which follows slow drift "
+            "but costs extra processing per refresh. 'None' leaves the offset in place."
         )
-        self.signal_integration_use_median_baseline_check = QCheckBox("Use Time Series median baseline")
-        self.signal_integration_use_median_baseline_check.setChecked(
-            bool(getattr(self, "signal_integration_use_median_baseline", False))
+        controls_layout.addWidget(
+            self._create_tooltip_label("Baseline removal:", baseline_removal_tooltip),
+            2,
+            2,
         )
-        self.signal_integration_use_median_baseline_check.setToolTip(median_baseline_tooltip)
-        self.signal_integration_use_median_baseline_check.toggled.connect(self.on_signal_integration_settings_changed)
-        controls_layout.addWidget(self.signal_integration_use_median_baseline_check, 2, 2, 1, 3)
+        self.signal_integration_baseline_removal_combo = QComboBox()
+        self.signal_integration_baseline_removal_combo.addItems(list(SIGNAL_INTEGRATION_BASELINE_LABELS.values()))
+        self.signal_integration_baseline_removal_combo.setToolTip(baseline_removal_tooltip)
+        self.signal_integration_baseline_removal_combo.setCurrentText(
+            SIGNAL_INTEGRATION_BASELINE_LABELS[self._normalize_signal_integration_baseline_removal(
+                getattr(self, "signal_integration_baseline_removal", DEFAULT_SIGNAL_INTEGRATION_BASELINE_REMOVAL)
+            )]
+        )
+        self.signal_integration_baseline_removal_combo.currentTextChanged.connect(
+            self.on_signal_integration_settings_changed
+        )
+        controls_layout.addWidget(self.signal_integration_baseline_removal_combo, 2, 3, 1, 2)
+        self.signal_integration_hpf_spin.setEnabled(
+            self._get_signal_integration_baseline_removal() == SIGNAL_INTEGRATION_BASELINE_HPF
+        )
 
         timeline_mode_tooltip = (
             "Choose whether the Pressure Map timeline shows integrated PZT signals "
@@ -2746,10 +2768,7 @@ class PressureMapPanelMixin:
                     "signal_integration_show_graph_check",
                     bool(getattr(self, "signal_integration_show_graph", DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH)),
                 ),
-                "use_time_series_median_baseline": self._check_bool(
-                    "signal_integration_use_median_baseline_check",
-                    bool(getattr(self, "signal_integration_use_median_baseline", False)),
-                ),
+                "baseline_removal": self._get_signal_integration_baseline_removal(),
             },
             "processing": {
                 "noise_threshold": self._spin_float(
@@ -3071,11 +3090,7 @@ class PressureMapPanelMixin:
             signal_integration,
             "show_graph",
         )
-        changed |= self._set_check_value(
-            "signal_integration_use_median_baseline_check",
-            signal_integration,
-            "use_time_series_median_baseline",
-        )
+        changed |= self._apply_signal_integration_baseline_removal_setting(signal_integration)
         legacy_rosette_channel = str(signal_integration.get("rosette_channel", "")).strip().upper()
         if legacy_rosette_channel in {"RS1", "RS2"}:
             changed |= self._set_check_value(
@@ -3497,7 +3512,10 @@ class PressureMapPanelMixin:
         self.signal_integration_window_samples = int(self.signal_integration_window_spin.value())
         self.signal_integration_display_window_sec = float(self.signal_integration_display_window_spin.value())
         self.signal_integration_show_graph = self._get_signal_integration_show_graph()
-        self.signal_integration_use_median_baseline = self._get_signal_integration_use_median_baseline()
+        self.signal_integration_baseline_removal = self._get_signal_integration_baseline_removal()
+        hpf_spin = getattr(self, "signal_integration_hpf_spin", None)
+        if hpf_spin is not None and hasattr(hpf_spin, "setEnabled"):
+            hpf_spin.setEnabled(self.signal_integration_baseline_removal == SIGNAL_INTEGRATION_BASELINE_HPF)
         self._apply_signal_integration_graph_visibility()
         self._signal_integration_filter_warning = ""
         self.update_signal_integration_plot()
@@ -3957,11 +3975,47 @@ class PressureMapPanelMixin:
             return bool(graph_check.isChecked())
         return bool(getattr(self, "signal_integration_show_graph", DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH))
 
+    @staticmethod
+    def _normalize_signal_integration_baseline_removal(value) -> str:
+        text = str(value).strip().lower()
+        for mode, label in SIGNAL_INTEGRATION_BASELINE_LABELS.items():
+            if text in (mode, label.lower()):
+                return mode
+        return DEFAULT_SIGNAL_INTEGRATION_BASELINE_REMOVAL
+
+    def _get_signal_integration_baseline_removal(self) -> str:
+        """Return the active baseline-removal mode: median, hpf or none."""
+        combo = getattr(self, "signal_integration_baseline_removal_combo", None)
+        if combo is not None and hasattr(combo, "currentText"):
+            return self._normalize_signal_integration_baseline_removal(combo.currentText())
+        return self._normalize_signal_integration_baseline_removal(
+            getattr(self, "signal_integration_baseline_removal", DEFAULT_SIGNAL_INTEGRATION_BASELINE_REMOVAL)
+        )
+
     def _get_signal_integration_use_median_baseline(self) -> bool:
-        baseline_check = getattr(self, "signal_integration_use_median_baseline_check", None)
-        if baseline_check is not None and hasattr(baseline_check, "isChecked"):
-            return bool(baseline_check.isChecked())
-        return bool(getattr(self, "signal_integration_use_median_baseline", False))
+        return self._get_signal_integration_baseline_removal() == SIGNAL_INTEGRATION_BASELINE_MEDIAN
+
+    def _apply_signal_integration_baseline_removal_setting(self, signal_integration: dict) -> bool:
+        """Apply a saved baseline-removal choice, migrating the older median checkbox format."""
+        if "baseline_removal" in signal_integration:
+            mode = self._normalize_signal_integration_baseline_removal(signal_integration["baseline_removal"])
+        elif "use_time_series_median_baseline" in signal_integration:
+            if signal_integration["use_time_series_median_baseline"]:
+                mode = SIGNAL_INTEGRATION_BASELINE_MEDIAN
+            else:
+                cutoff = float(signal_integration.get("hpf_cutoff_hz", DEFAULT_HPF_CUTOFF_HZ) or 0.0)
+                mode = (
+                    SIGNAL_INTEGRATION_BASELINE_HPF
+                    if cutoff > SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ
+                    else SIGNAL_INTEGRATION_BASELINE_NONE
+                )
+        else:
+            return False
+        return self._set_combo_value(
+            "signal_integration_baseline_removal_combo",
+            {"baseline_removal": SIGNAL_INTEGRATION_BASELINE_LABELS[mode]},
+            "baseline_removal",
+        )
 
     def _apply_signal_integration_graph_visibility(self) -> None:
         graph_visible = self._get_signal_integration_show_graph()
@@ -4579,6 +4633,9 @@ class PressureMapPanelMixin:
         voltage_samples: np.ndarray,
         sample_times_sec: np.ndarray,
     ) -> np.ndarray:
+        if self._get_signal_integration_baseline_removal() != SIGNAL_INTEGRATION_BASELINE_HPF:
+            return voltage_samples
+
         cutoff_hz = float(getattr(self, "signal_integration_hpf_cutoff_hz", DEFAULT_HPF_CUTOFF_HZ))
         if cutoff_hz <= SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ:
             return voltage_samples

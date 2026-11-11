@@ -39,7 +39,7 @@ The outer tab contains `Display` and `Settings` inner tabs.
 ### Settings
 
 - Save/load actions for the complete Pressure Map and shear settings payload.
-- Signal Integration controls: HPF cutoff, rectangular integration-window length, displayed-history duration, optional Time Series median baseline, graph visibility, and PZT/PZR timeline selection.
+- Signal Integration controls: Baseline removal (Time Series median, High-pass filter or None), HPF cutoff, rectangular integration-window length, displayed-history duration, graph visibility, and PZT/PZR timeline selection.
 - Shear processing: a noise threshold and per-package, per-position gains.
 - Shear visualization: length gain, minimum visible magnitude, maximum length as a radius fraction, shaft base width, and optional width scaling.
 - Pressure-map geometry: sensor spacing, circular footprint diameter, resolution, outer margin, pressure-point height shaping, array gap, gap contrast, and gap fade width.
@@ -70,7 +70,7 @@ For each selected channel specification, sample positions are flattened from the
 
 ### 1. Optional baseline subtraction and ADC conversion
 
-When **Use Time Series median baseline** is enabled, the stored per-spec Time Series baseline is subtracted in ADC-count space before voltage conversion. If a baseline is missing, the app tries to capture it from the current Time Series path.
+**Baseline removal** selects exactly one DC-removal method; the default is **Time Series median**, and older settings files with the previous median checkbox are migrated (checked becomes Time Series median, unchecked becomes High-pass filter when the cutoff is above 0, otherwise None). When Time Series median is selected, the stored per-spec Time Series baseline is subtracted in ADC-count space before voltage conversion. If a baseline is missing, the app tries to capture it from the current Time Series path.
 
 For an `N`-bit ADC count `d` and active voltage reference `Vref`:
 
@@ -82,7 +82,7 @@ This conversion deliberately ignores Time Series display units; the derived pipe
 
 ### 2. DC removal
 
-With an HPF cutoff of 0, no DC-removal filter is applied. Otherwise the code estimates the channel's rate from the median positive timestamp interval. Provided the cutoff is below Nyquist and SciPy filtering is available, it applies the application's first-order high-pass filter to the complete processing snapshot.
+The HPF runs only when Baseline removal is **High-pass filter** (the cutoff spin box is disabled otherwise; the default cutoff is 2 Hz, and the Analysis tab still reads the cutoff value). With an HPF cutoff of 0, no DC-removal filter is applied. Otherwise the code estimates the channel's rate from the median positive timestamp interval. Provided the cutoff is below Nyquist and SciPy filtering is available, it applies the application's first-order high-pass filter to the complete processing snapshot.
 
 If a rate cannot be estimated, the cutoff is at/above Nyquist, SciPy is unavailable, or filtering fails, it uses the safe fallback:
 

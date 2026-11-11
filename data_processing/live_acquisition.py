@@ -7,6 +7,7 @@ from PyQt6.QtCore import QTimer, QCoreApplication, QEventLoop
 
 from constants.pzt_blip_filter import PZT_BLIP_FILTER_DEFAULT_ENABLED, PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES
 from data_processing.acquisition_worker import AcquisitionWorker
+from data_processing.stall_watchdog import StallWatchdog, dump_all_threads
 
 
 class LiveAcquisitionMixin:
@@ -61,6 +62,7 @@ class LiveAcquisitionMixin:
             self._acquisition_render_timer.timeout.connect(self._refresh_live_acquisition)
         self._acquisition_render_timer.setInterval(policy.render_interval_ms)
         self._acquisition_render_timer.start()
+        self._start_stall_watchdog()
         from serial_communication.capture_awake import set_capture_awake
         set_capture_awake(True)
 
@@ -70,6 +72,36 @@ class LiveAcquisitionMixin:
             getattr(self, 'pzt_blip_filter_enabled', PZT_BLIP_FILTER_DEFAULT_ENABLED))
         worker.set_pzt_blip_filter_window_samples(
             getattr(self, 'pzt_blip_filter_window_samples', PZT_BLIP_FILTER_DEFAULT_WINDOW_SAMPLES))
+
+    def _start_stall_watchdog(self):
+        self._stop_stall_watchdog()
+        self._stall_watchdog = StallWatchdog()
+        self._stall_watchdog.start()
+        if not hasattr(self, '_stall_beat_timer'):
+            self._stall_beat_timer = QTimer(self)
+            self._stall_beat_timer.setInterval(50)
+            self._stall_beat_timer.timeout.connect(self._beat_stall_watchdog)
+        self._stall_beat_timer.start()
+
+    def _beat_stall_watchdog(self):
+        watchdog = getattr(self, '_stall_watchdog', None)
+        if watchdog is not None:
+            watchdog.beat()
+
+    def _log_stall_watchdog_messages(self):
+        watchdog = getattr(self, '_stall_watchdog', None)
+        for message in watchdog.pop_messages() if watchdog is not None else ():
+            self.log_status(message)
+
+    def _stop_stall_watchdog(self):
+        timer = getattr(self, '_stall_beat_timer', None)
+        if timer is not None:
+            timer.stop()
+        watchdog = getattr(self, '_stall_watchdog', None)
+        if watchdog is not None:
+            watchdog.stop()
+            self._log_stall_watchdog_messages()
+            self._stall_watchdog = None
 
     def _watch_acquisition_archive(self):
         pending = []
@@ -112,6 +144,7 @@ class LiveAcquisitionMixin:
         worker = getattr(self, '_acquisition_worker', None)
         if worker is None:
             return
+        self._log_stall_watchdog_messages()
         state = worker.snapshot()
         reader_status = self.serial_thread.pipeline_status() if self.serial_thread else {}
         writer_status = self._archive_writer.get_status_snapshot() if self._archive_writer else {}
@@ -154,9 +187,6 @@ class LiveAcquisitionMixin:
                 self.update_signal_integration_plot()
             elif self.should_update_heatmap_display():
                 self.update_heatmap_plot()
-            self.refresh_live_decay_preview()
-            if getattr(self.force_calibration_state, 'is_capturing', False):
-                self.update_force_calibration_live_reading_from_selected_source()
             self._pipeline_render_duration_s = time.perf_counter() - render_start
             self._pipeline_render_time = time.perf_counter()
             self._pipeline_decode_to_render_age_s = max(0.0, render_start - state['last_decoded']) if state['last_decoded'] else 0.0
@@ -208,7 +238,11 @@ class LiveAcquisitionMixin:
             QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
             worker.join(0.01)
         if worker.is_alive():
+            path = dump_all_threads('acquisition drain timed out after 15 s')
+            self.log_status(f'Acquisition worker did not exit within 15 s; thread stacks written to {path}')
+            self._stop_stall_watchdog()
             raise RuntimeError('acquisition drain timed out; restart is blocked until the worker exits')
+        self._stop_stall_watchdog()
         self._acquisition_render_timer.stop()
         self._refresh_live_acquisition()
         error = getattr(self, '_capture_incomplete_reason', None) or worker.error

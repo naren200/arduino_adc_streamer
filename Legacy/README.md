@@ -12,6 +12,7 @@ Current runtime tabs include:
 - Pressure Map
 - Heatmap
 - Spectrum
+- Analysis
 - Sensor
 
 The legacy regression tests import these modules through the `Legacy` package so the archived processing behavior remains executable while new implementations are developed.
@@ -26,5 +27,6 @@ Legacy-only visualization defaults live in `Legacy/config_constants.py`; active 
 ## Subfolders
 
 - `data_processing/` — archived heatmap (piezo and 555/PZR) and shear/CoP signal-processing pipelines. See `data_processing/README.md` for a per-file function listing.
-- `gui/` — archived PyQt6 mixins building the 2D Heatmap, Shear, and combined Display tabs and their settings panels. See `gui/README.md` for a per-file function listing.
+- `gui/` — archived PyQt6 mixins building the 2D Heatmap, Shear, and combined Display tabs and their settings panels, plus the former Force Calibration and PZT_Decay_Calc tabs. See `gui/README.md` for a per-file function listing.
+- `file_operations/` — archived PZT_Decay_Calc result exporter. See `file_operations/README.md`.
 - `__pycache__/` — Python bytecode cache, not source; ignored.

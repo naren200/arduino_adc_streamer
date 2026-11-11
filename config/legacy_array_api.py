@@ -49,7 +49,6 @@ class LegacyArrayAPI:
     on_testboard_sequence_changed = _legacy_attribute('on_board_sequence_changed')
     on_testboard_array_selection_changed = _legacy_attribute('on_array_selection_changed')
     on_testboard_scan_order_changed = _legacy_attribute('on_array_scan_order_changed')
-    refresh_testboard_decay_preview = _legacy_attribute('refresh_live_decay_preview')
     _testboard_controls_active = _legacy_attribute('_array_controls_active')
     _pre_testboard_config = _legacy_attribute('_pre_array_config')
     _pre_testboard_sensor_name = _legacy_attribute('_pre_array_sensor_name')

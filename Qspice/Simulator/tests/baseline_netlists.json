@@ -1,0 +1,58 @@
+{
+ "TestBoard_ADC124/default": {
+  "sha256": "b7726f3e55777642636bc9c28e1276c39eeda6c86fa62908674c46f8611069ff",
+  "length": 14817,
+  "t_stop": 0.0005160000000000004,
+  "n_samples": 28,
+  "warnings": []
+ },
+ "TestBoard_ADC124/two_pulses": {
+  "sha256": "b7726f3e55777642636bc9c28e1276c39eeda6c86fa62908674c46f8611069ff",
+  "length": 14817,
+  "t_stop": 0.0005160000000000004,
+  "n_samples": 28,
+  "warnings": []
+ },
+ "TestBoard_ADC124/baseline": {
+  "sha256": "ad1700196aee4add1465716a75857a4ac54c63a5dd4b5844c5e9cb5ef9c28dfc",
+  "length": 9474,
+  "t_stop": 0.05999599999999615,
+  "n_samples": 3528,
+  "warnings": []
+ },
+ "TestBoard_ADC124/baseline_vmid1ms": {
+  "sha256": "b3261ef5d593f7b4886558c5798724226dfab00f2a0c63e836d2a3fe80f26e53",
+  "length": 9474,
+  "t_stop": 0.09919599999999996,
+  "n_samples": 98,
+  "warnings": []
+ },
+ "TestBoard_7953/default": {
+  "sha256": "d56901382a9d462fbf2c6f203fc7a6a79f21bfb0cd5c390a7701462550afbebf",
+  "length": 36232,
+  "t_stop": 0.00036800000000000005,
+  "n_samples": 90,
+  "warnings": []
+ },
+ "TestBoard_7953/two_pulses": {
+  "sha256": "d56901382a9d462fbf2c6f203fc7a6a79f21bfb0cd5c390a7701462550afbebf",
+  "length": 36232,
+  "t_stop": 0.00036800000000000005,
+  "n_samples": 90,
+  "warnings": []
+ },
+ "TestBoard_7953/baseline": {
+  "sha256": "88d7f6530155953a11694235fea73ecca1c9f11b93b5ce1da2ac659ddd9f6dc8",
+  "length": 379172,
+  "t_stop": 0.005007999999999999,
+  "n_samples": 1290,
+  "warnings": []
+ },
+ "TestBoard_7953/repeat_3_vmid_between": {
+  "sha256": "7ac52387351606500b819f3348a2c9984320e25cae6d522e95aaf27e2a177887",
+  "length": 51442,
+  "t_stop": 0.0006620000000000002,
+  "n_samples": 45,
+  "warnings": []
+ }
+}

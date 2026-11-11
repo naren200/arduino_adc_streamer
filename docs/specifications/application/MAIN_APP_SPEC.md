@@ -29,7 +29,6 @@ The app includes the following visualization tabs:
 - Rosette (RS), shown only when the active mode supports `PZT_RS`.
 - Pressure Map.
 - Heatmap.
-- Force Calibration.
 - Spectrum.
 - Analysis.
 - Sensor.
@@ -61,7 +60,7 @@ When Rosette mode is active, the Time Series tab is relabeled to the PZT-specifi
 ## Persistence
 
 - Sensor-library edits persist in the user sensor configuration store.
-- Last-used settings for Spectrum, Heatmap, Pressure Map, Force Calibration state, and Analysis persist under the user home `.adc_streamer` directory.
+- Last-used settings for Spectrum, Heatmap, Pressure Map, and Analysis persist under the user home `.adc_streamer` directory.
 - Export directory, filenames, notes, and capture artifacts are user-managed through the Data Export section.
 
 ## Acceptance Criteria

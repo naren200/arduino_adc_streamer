@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "id": "TestBoard_ADC124",
+  "name": "TestBoard_ADC124 (2 x ADC124S101 + 8 external muxes, Teensy 4.1)",
+  "adc": {"bits": 12, "vref_volts": 3.3},
+  "vmid_volts": 1.65,
+  "spi": {"min_hz": 8000000, "max_hz": 16000000, "default_hz": 16000000},
+  "channels": {
+    "syntax": "array:mux:input",
+    "example": "1:1:0,1:4:6,2:2:0",
+    "arrays": [1, 2],
+    "muxes": [1, 2, 3, 4],
+    "inputs": {"1": [0, 1, 2, 3, 4, 5], "2": [0, 1, 2, 3, 4, 5], "3": [0, 1, 2, 3, 4, 5],
+                "4": [0, 1, 2, 3, 4, 5, 6]},
+    "vmid_address": 7,
+    "mux_to_adc_input": [1, 2, 3, 4],
+    "mux_to_adc_input_note": "Assumed PCB wiring (firmware kMuxToAdcInput); verify on the board.",
+    "group_title": "Array {group}",
+    "group_noun": "Array",
+    "id_columns": [["Array", "array", "%d"], ["MUX", "mux", "%d"], ["Input", "input", "%d"]],
+    "display": "{0}:{1}:{2}"
+  },
+  "bias": {
+    "routes_file": "Arduino_Sketches/TestBoard_ADC124/benchmarks/testboard_adc124_routes.json",
+    "firmware_header": "Arduino_Sketches/TestBoard_ADC124/include/ConfigurableParameters.h",
+    "firmware_table": [[470000, 1000000, 470000, 1000000], [1000000, 470000, 1000000, 470000]]
+  },
+  "connection_model": "shared_address_all_muxes",
+  "touches": "input X of all four muxes of the array (the same address)",
+  "defaults": {
+    "bias_tolerance": 0.01, "n_samples": null, "c_guess_pf": 100.0, "park_us": 200,
+    "spi_clock_hz": 16000000, "bursts": 1, "discharge_ms": 300.0, "discard_k": 2,
+    "vref": 3.3, "v_s0": 0.0, "c_parasitic_pf": 5.0, "fit_model": "1exp",
+    "pre_samples": 8, "hold_clocks": 3.0, "enable_delay_ns": 25.0, "pop_latency_ns": 100.0,
+    "baseline_samples": 4, "per_address": true
+  },
+  "settings_fields": ["n_samples", "c_guess_pf", "park_us", "pre_samples", "spi_clock_hz",
+                       "hold_clocks", "enable_delay_ns", "pop_latency_ns", "baseline_samples",
+                       "per_address", "bursts", "discharge_ms", "discard_k", "vref", "v_s0",
+                       "c_parasitic_pf", "bias_tolerance", "fit_model"],
+  "discharge_check": {"default_channel": "1:1:0", "waits_ms": [10, 30, 100, 300, 1000],
+                       "relative_to_baseline": true},
+  "vmid_read": {"targets": [1, 2], "label": "Array {0}"},
+  "simulator": {"c_pzt_pf": 70.0, "c_d_pf": 12.0, "leak_tau_s": 0.005, "noise_lsb": 1.0,
+                 "vmid_pedestal_v": 0.0}
+}
