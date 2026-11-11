@@ -9,7 +9,8 @@ import shutil
 from datetime import datetime, timezone
 
 import pytest
-import torch
+
+torch = pytest.importorskip("torch")
 
 from core.texture_piezo.application.inference_config import InferenceConfig, ModelSelection
 from core.texture_piezo.models import model_discovery

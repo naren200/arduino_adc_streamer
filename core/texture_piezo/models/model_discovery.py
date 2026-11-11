@@ -312,6 +312,8 @@ def _read_default_models() -> tuple[object | None, str | None]:
     """-> (texture_piezo's DefaultModels, None), or (None, why there is no usable file)."""
     try:
         return texture_piezo_adapter.read_default_models(DEFAULT_MODELS_PATH), None
+    except texture_piezo_adapter.TexturePiezoUnavailableError as exc:
+        return None, f"texture_piezo is unavailable ({_first_line(exc)})"
     except FileNotFoundError:
         return None, "default models file (configs/default_models.json) not found"
     except (OSError, ValueError) as exc:

@@ -13,6 +13,12 @@ from core.texture_piezo.application.inference_config import (
     MODEL_FALLBACK_LOG_EVENT, InferenceConfig, load_touchid_settings, model_checkpoint_of, model_version_of,
 )
 from core.texture_piezo.models.model_discovery import DiscoveredModel, ModelArtifacts
+from inference import texture_piezo_adapter
+from inference._paths import TEXTURE_PIEZO_ROOT
+
+REAL_TEXTURE_PIEZO = texture_piezo_adapter.source_dir(TEXTURE_PIEZO_ROOT) / "touchid_inference" / "runtime" / "__init__.py"
+# These tests read default_models.json through texture_piezo's own parser, so they need the checkout.
+needs_texture_piezo = pytest.mark.skipif(not REAL_TEXTURE_PIEZO.is_file(), reason="texture_piezo checkout not found")
 
 DEFAULT_PENTA = ("v1", "default")
 CHUNK_VERSION = "v3"
@@ -59,6 +65,7 @@ def assert_default_penta(config):
     assert (model_version_of(config), model_checkpoint_of(config)) == DEFAULT_PENTA
 
 
+@needs_texture_piezo
 def test_valid_selection_is_restored_without_a_fallback(fake_discovery_and_settings_file, caplog):
     with caplog.at_level(logging.WARNING):
         config = load_with_saved(fake_discovery_and_settings_file, model_type="chunk",
@@ -69,6 +76,7 @@ def test_valid_selection_is_restored_without_a_fallback(fake_discovery_and_setti
     assert not caplog.records
 
 
+@needs_texture_piezo
 def test_unknown_type_keeps_the_default_type_and_reports(fake_discovery_and_settings_file, caplog):
     with caplog.at_level(logging.WARNING):
         config = load_with_saved(fake_discovery_and_settings_file, model_type=UNKNOWN,
@@ -78,6 +86,7 @@ def test_unknown_type_keeps_the_default_type_and_reports(fake_discovery_and_sett
     assert caplog.records[0].saved_type == UNKNOWN
 
 
+@needs_texture_piezo
 def test_unknown_version_keeps_the_default_model_of_the_saved_type(fake_discovery_and_settings_file, caplog):
     with caplog.at_level(logging.WARNING):
         config = load_with_saved(fake_discovery_and_settings_file, model_type="chunk",
@@ -90,6 +99,7 @@ def test_unknown_version_keeps_the_default_model_of_the_saved_type(fake_discover
     assert (record.saved_version, record.fallback_version) == ("v99", CHUNK_VERSION)
 
 
+@needs_texture_piezo
 def test_unknown_checkpoint_tag_keeps_the_default_model_and_reports(fake_discovery_and_settings_file, caplog):
     with caplog.at_level(logging.WARNING):
         config = load_with_saved(fake_discovery_and_settings_file, model_type="chunk",
