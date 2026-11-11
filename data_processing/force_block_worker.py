@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import queue
 from dataclasses import dataclass, field
 from enum import Enum
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from data_processing.force_worker_mailbox import ForceWorkMailbox
 from data_processing.pressure_force_display import PressureForceDisplayEngine
 
 
@@ -19,6 +19,12 @@ class WorkerState(Enum):
 
 _RESET_SENTINEL = object()
 _STOP_SENTINEL = object()
+_IDLE_WAIT_S = 0.05
+
+
+@dataclass(frozen=True)
+class _EngineSwap:
+    engine: PressureForceDisplayEngine
 
 
 @dataclass(frozen=True)
@@ -54,8 +60,9 @@ class ForceBlockWorker(QThread):
 
     The GUI thread enqueues ``ForceBlockBatch`` objects; this worker drains
     them and emits ``result_ready`` with a ``ForceRenderResult`` after each
-    batch.  The queue is bounded to 1: a full queue drops the old batch so
-    the newest physics data is always processed.
+    batch.  Only one batch is pending: a newer one replaces it so the newest
+    physics data is always processed.  Engine swaps and resets are never
+    replaced by a batch (see ``ForceWorkMailbox``).
     """
 
     result_ready = pyqtSignal(object)
@@ -64,7 +71,7 @@ class ForceBlockWorker(QThread):
     def __init__(self, engine: PressureForceDisplayEngine) -> None:
         super().__init__()
         self._engine = engine
-        self._queue: queue.Queue[object] = queue.Queue(maxsize=1)
+        self._mailbox = ForceWorkMailbox()
         self._state = WorkerState.RUNNING
 
     # ------------------------------------------------------------------
@@ -75,42 +82,20 @@ class ForceBlockWorker(QThread):
         """Enqueue a batch; return number of sweeps dropped from the old batch."""
         if self._state is WorkerState.STOPPING:
             return int(batch.sweeps.shape[0])
-        try:
-            self._queue.put_nowait(batch)
-            return 0
-        except queue.Full:
-            pass
-        # Queue full — evict the stale batch and insert the fresh one.
-        try:
-            old = self._queue.get_nowait()
-        except queue.Empty:
-            old = None
-        dropped = int(old.sweeps.shape[0]) if isinstance(old, ForceBlockBatch) else 0
-        try:
-            self._queue.put_nowait(batch)
-        except queue.Full:
-            pass
-        return dropped
+        replaced = self._mailbox.put_batch(batch)
+        return int(replaced.sweeps.shape[0]) if replaced is not None else 0
 
     def send_reset(self) -> None:
-        """Drain queue and enqueue a RESET sentinel."""
+        """Discard the pending batch and queue an engine reset."""
         if self._state is WorkerState.STOPPING:
             return
-        self._drain_queue()
-        try:
-            self._queue.put_nowait(_RESET_SENTINEL)
-        except queue.Full:
-            pass
+        self._mailbox.post_control(_RESET_SENTINEL)
 
     def swap_engine(self, new_engine: PressureForceDisplayEngine) -> None:
-        """Replace the engine atomically: drain, then enqueue an engine object."""
+        """Discard the pending batch and queue the replacement engine."""
         if self._state is WorkerState.STOPPING:
             return
-        self._drain_queue()
-        try:
-            self._queue.put_nowait(new_engine)
-        except queue.Full:
-            pass
+        self._mailbox.post_control(_EngineSwap(new_engine))
 
     def set_state(self, state: WorkerState) -> None:
         """Change operational state.  PAUSED drains the queue; RUNNING → reset."""
@@ -120,26 +105,18 @@ class ForceBlockWorker(QThread):
         was_paused = self._state is WorkerState.PAUSED
         self._state = state
         if state is WorkerState.PAUSED:
-            self._drain_queue()
+            self._mailbox.drop_pending_batch()
         elif state is WorkerState.RUNNING and was_paused:
             self.send_reset()
 
     def stop(self) -> None:
         """Request shutdown and wake the worker if it is waiting for work."""
         self._state = WorkerState.STOPPING
-        self._drain_queue()
-        try:
-            self._queue.put_nowait(_STOP_SENTINEL)
-        except queue.Full:
-            pass
+        self._mailbox.post_control(_STOP_SENTINEL)
 
     def drain_synchronous(self) -> None:
-        """Test-only: process everything in the queue on the calling thread."""
-        while True:
-            try:
-                item = self._queue.get_nowait()
-            except queue.Empty:
-                break
+        """Test-only: process everything pending on the calling thread."""
+        while (item := self._mailbox.take()) is not None:
             self._handle_item(item)
 
     # ------------------------------------------------------------------
@@ -150,9 +127,8 @@ class ForceBlockWorker(QThread):
         while True:
             if self._state is WorkerState.STOPPING:
                 return
-            try:
-                item = self._queue.get(timeout=0.05)
-            except queue.Empty:
+            item = self._mailbox.take(timeout=_IDLE_WAIT_S)
+            if item is None:
                 continue
             if item is _STOP_SENTINEL or self._state is WorkerState.STOPPING:
                 return
@@ -164,8 +140,8 @@ class ForceBlockWorker(QThread):
         if item is _RESET_SENTINEL:
             self._safe_reset()
             return
-        if isinstance(item, PressureForceDisplayEngine):
-            self._engine = item
+        if isinstance(item, _EngineSwap):
+            self._engine = item.engine
             return
         if isinstance(item, ForceBlockBatch):
             self._process_batch(item)
@@ -330,14 +306,3 @@ class ForceBlockWorker(QThread):
             )
         except (TypeError, ValueError, AttributeError):
             pass
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _drain_queue(self) -> None:
-        while True:
-            try:
-                self._queue.get_nowait()
-            except queue.Empty:
-                break
